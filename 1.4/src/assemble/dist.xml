@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements.  See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+  The ASF licenses this file to You under the Apache License, Version 2.0
+  (the "License"); you may not use this file except in compliance with
+  the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<assembly>
+  <id>dist</id>
+  <formats>
+    <format>tar.gz</format>
+  </formats>
+  <baseDirectory>accumulo-${project.version}</baseDirectory>
+  <fileSets>
+    <fileSet>
+      <includes>
+        <include>bin/**</include>
+        <include>**/*.sh</include>
+        <include>**/*.pl</include>
+        <include>**/run.py</include>
+      </includes>
+      <excludes>
+        <exclude>**/target/**</exclude>
+        <exclude>**/accumulo-env.sh</exclude>
+        <exclude>**/continuous-env.sh</exclude>
+      </excludes>
+      <fileMode>0755</fileMode>
+      <directoryMode>0755</directoryMode>
+    </fileSet>
+    <fileSet>
+      <includes>
+        <include>conf/examples/**</include>
+        <include>conf/*_logger.xml</include>
+        <include>conf/log4j.properties</include>
+        <include>**/*.py</include>
+      </includes>
+      <directoryMode>0700</directoryMode>
+      <fileMode>0600</fileMode>
+    </fileSet>
+    <fileSet>
+      <includes>
+        <include>logs/</include>
+      </includes>
+      <directoryMode>0700</directoryMode>
+      <excludes>
+        <exclude>logs/**.**</exclude>
+      </excludes>
+    </fileSet>
+    <fileSet>
+      <includes>
+        <include>walogs/</include>
+      </includes>
+      <directoryMode>0700</directoryMode>
+      <excludes>
+        <exclude>walogs/.lock</exclude>
+        <exclude>walogs/**-**</exclude>
+      </excludes>
+    </fileSet>
+    <fileSet>
+      <includes>
+        <include>CHANGES</include>
+        <include>LICENSE</include>
+        <include>NOTICE</include>
+        <include>README</include>                
+        <include>pom.xml</include>
+        <include>contrib/**</include>
+        <include>docs/**</include>
+        <include>lib/**</include>
+        <include>src/**</include>
+        <include>test/**</include>
+      </includes>
+      <excludes>
+        <!-- the following directories ignored because they should not be in the tarball -->
+        <exclude>**/.*/**</exclude>
+        <exclude>**/target*/**</exclude>
+
+        <!-- the following files ignored because they should not be in the tarball -->
+        <exclude>**/.*</exclude>
+        <exclude>**/test-*</exclude>
+        <exclude>**/wikipedia.xml</exclude>
+        <exclude>**/walkers.txt</exclude>
+        <exclude>**/ingesters.txt</exclude>
+        <exclude>**/continuous-env.sh</exclude>
+        <exclude>**/*.pyc</exclude>
+        <exclude>**/randomwalk/conf/logger.xml</exclude>
+        <exclude>**/randomwalk/conf/randomwalk.conf</exclude>
+        <exclude>**/randomwalk/conf/walkers</exclude>
+        <exclude>**/*.py</exclude>
+        <exclude>**/*.pl</exclude>
+        <exclude>**/*.sh</exclude>
+        <exclude>bin/**</exclude>
+      </excludes>
+      <fileMode>0644</fileMode>
+      <directoryMode>0755</directoryMode>
+    </fileSet>
+  </fileSets>
+</assembly>
