@@ -1,0 +1,79 @@
+This library will change hadoop 1.0.X to use the DistributedNameNode.
+
+Features
+========
+
+Create files, allocates blocks, deletes files/blocks, renames files.
+
+Non-features
+============
+Replication
+File Permissions
+Atomic deletion, rename, directory creation, file creation... really, anything.
+Balancing
+Decommissioning
+Client Locality (selecting a datanode for a replica close to the client)
+Deleting large directories may fail due to OOM
+
+Installation
+============
+
+Add this near the start of your hadoop-env.sh file:
+
+ACCUMULO=/my/accumulo/directory
+ZOOKEEPER=/my/zookeeper/directory
+export HADOOP_CLASSPATH=/local/ecnewt2/workspace/distnn/target/classes:/local/ecnewt2/Installed/hbase/hbase-0.94.0.jar:zookeeper-3.4.3.jar
+export HADOOP_CLASSPATH="$HADOOP_CLASSPATH:$ACCUMULO/lib/*"
+export HADOOP_CLASSPATH="$HADOOP_CLASSPATH:$ACCUMULO/conf"
+export HADOOP_CLASSPATH="$HADOOP_CLASSPATH:$ZOOKEEPER/zookeeper-3.4.3.jar"
+export HADOOP_USER_CLASSPATH_FIRST=true
+
+Edit bin/start-dfs.sh to prevent the namenode and secondary namenode from starting.
+
+Add the following to your hadoop-core.xml file:
+
+  <property>
+    <name>fs.default.name</name>
+    <value>dnn://localhost:1337/user:passwd@instance:zookeeper1,zookeeper2,zookeeper3</value>
+  </property>
+
+  <property>
+    <name>fs.dnn.impl</name>
+    <value>org.apache.hadoop.hdfs.DNNFileSystem</value>
+  </property>
+
+TODO: make this unnecessary
+Add the following to your hdfs-site.xml file:
+
+  <property>
+    <name>accumulo.zookeeper.instance</name>
+    <value>test</value>
+  </property>
+
+  <property>
+    <name>accumulo.zookeeper.keepers</name>
+    <value>rd6ul-14706v.tycho.ncsc.mil</value>
+  </property>
+
+Replace the classpath in your accumulo-site.xml:
+
+    <property>
+      <name>general.classpaths</name>
+      <value>
+      /my/local/distnn/target/classes,
+    $ACCUMULO_HOME/src/server/target/classes/,
+    $ACCUMULO_HOME/src/core/target/classes/,
+    $ACCUMULO_HOME/src/start/target/classes/,
+    $ACCUMULO_HOME/src/examples/target/classes/,
+        $ACCUMULO_HOME/lib/[^.].$ACCUMULO_VERSION.jar,
+        $ACCUMULO_HOME/lib/[^.].*.jar,
+        $ZOOKEEPER_HOME/zookeeper[^.].*.jar,
+        $HADOOP_HOME/conf,
+        $HADOOP_HOME/[^.].*.jar,
+        $HADOOP_HOME/lib/[^.].*.jar,
+      </value>
+      <description>Classpaths that accumulo checks for updates and class files.
+      When using the Security Manager, please remove the ".../target/classes/" values.
+      </description>
+    </property>
+
