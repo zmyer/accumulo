@@ -157,6 +157,7 @@ public class Auditor implements Authenticator {
   
   @Override
   public boolean hasTablePermission(AuthInfo credentials, String user, String table, TablePermission permission) throws AccumuloSecurityException {
+    log.info("hasTablePermission " + credentials.user);
     try {
       boolean result = impl.hasTablePermission(credentials, user, table, permission);
       audit(credentials, "checked permission %s on table %s for %s", permission, table, user);

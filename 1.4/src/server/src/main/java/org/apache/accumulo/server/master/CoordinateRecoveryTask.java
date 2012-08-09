@@ -326,17 +326,19 @@ public class CoordinateRecoveryTask implements Runnable {
       Configuration conf = CachedConfiguration.getInstance();
       @SuppressWarnings("deprecation")
       JobClient jc = new JobClient(new org.apache.hadoop.mapred.JobConf(conf));
-      for (JobStatus status : jc.getAllJobs()) {
-        if (!status.isJobComplete()) {
-          RunningJob job = jc.getJob(status.getJobID());
-          if (job.getJobName().equals(LogSort.getJobName())) {
-            log.info("found a running " + job.getJobName());
-            Configuration jobConfig = new Configuration(false);
-            log.info("fetching configuration from " + job.getJobFile());
-            jobConfig.addResource(TraceFileSystem.wrap(FileUtil.getFileSystem(conf, ServerConfiguration.getSiteConfiguration())).open(
-                new Path(job.getJobFile())));
-            if (HdfsZooInstance.getInstance().getInstanceID().equals(jobConfig.get(LogSort.INSTANCE_ID_PROPERTY))) {
-              log.info("Killing job " + job.getID().toString());
+      if (jc != null) {
+        for (JobStatus status : jc.getAllJobs()) {
+          if (!status.isJobComplete()) {
+            RunningJob job = jc.getJob(status.getJobID());
+            if (job.getJobName().equals(LogSort.getJobName())) {
+              log.info("found a running " + job.getJobName());
+              Configuration jobConfig = new Configuration(false);
+              log.info("fetching configuration from " + job.getJobFile());
+              jobConfig.addResource(TraceFileSystem.wrap(FileUtil.getFileSystem(conf, ServerConfiguration.getSiteConfiguration())).open(
+                  new Path(job.getJobFile())));
+              if (HdfsZooInstance.getInstance().getInstanceID().equals(jobConfig.get(LogSort.INSTANCE_ID_PROPERTY))) {
+                log.info("Killing job " + job.getID().toString());
+              }
             }
           }
         }

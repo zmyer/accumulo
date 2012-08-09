@@ -106,13 +106,14 @@ public class LogReader {
       LogFileKey key = new LogFileKey();
       LogFileValue value = new LogFileValue();
       
-      if (fs.isFile(path)) {
-        // read log entries from a simple hdfs file
-        org.apache.hadoop.io.SequenceFile.Reader reader = new SequenceFile.Reader(fs, new Path(file), conf);
-        while (reader.next(key, value)) {
-          printLogEvent(key, value, row, rowMatcher, ke, tabletIds, max);
-        }
-      } else if (local.isFile(path)) {
+//      if (fs.isFile(path)) {
+//        // read log entries from a simple hdfs file
+//        org.apache.hadoop.io.SequenceFile.Reader reader = new SequenceFile.Reader(fs, new Path(file), conf);
+//        while (reader.next(key, value)) {
+//          printLogEvent(key, value, row, rowMatcher, ke, tabletIds, max);
+//        }
+//      } else 
+        if (local.isFile(path)) {
         // read log entries from a simple file
         org.apache.hadoop.io.SequenceFile.Reader reader = new SequenceFile.Reader(local, new Path(file), conf);
         while (reader.next(key, value)) {

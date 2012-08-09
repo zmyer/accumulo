@@ -19,8 +19,11 @@ package org.apache.accumulo.server.util;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.TreeMap;
 import java.util.UUID;
 
 import jline.ConsoleReader;
@@ -39,6 +42,7 @@ import org.apache.accumulo.core.iterators.user.VersioningIterator;
 import org.apache.accumulo.core.master.state.tables.TableState;
 import org.apache.accumulo.core.master.thrift.MasterGoalState;
 import org.apache.accumulo.core.util.CachedConfiguration;
+import org.apache.accumulo.core.util.UtilWaitThread;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.core.zookeeper.ZooUtil.NodeExistsPolicy;
 import org.apache.accumulo.core.zookeeper.ZooUtil.NodeMissingPolicy;
@@ -60,8 +64,10 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Logger;
+import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.ZooDefs.Ids;
+import org.apache.zookeeper.ZooKeeper;
 
 /**
  * This class is used to setup the directory structure and the root tablet to get an instance started
@@ -212,6 +218,7 @@ public class Initialize {
     // create an instance id
     fs.mkdirs(ServerConstants.getInstanceIdLocation());
     fs.createNewFile(new Path(ServerConstants.getInstanceIdLocation(), uuid.toString()));
+    fs.mkdirs(new Path(ServerConstants.getRecoveryDir()));
     
     // initialize initial metadata config in zookeeper
     initMetadataConfig();
@@ -248,8 +255,8 @@ public class Initialize {
       // populate the root tablet with info about the default tablet
       // the root tablet contains the key extent and locations of all the
       // metadata tablets
-      String initRootTabFile = ServerConstants.getMetadataTableDir() + "/root_tablet/00000_00000."
-          + FileOperations.getNewFileExtension(AccumuloConfiguration.getDefaultConfiguration());
+      String suffix = FileOperations.getNewFileExtension(AccumuloConfiguration.getDefaultConfiguration()); 
+      String initRootTabFile = ServerConstants.getMetadataTableDir() + "/root_tablet/00000_00000." + suffix;
       FileSKVWriter mfw = FileOperations.getInstance().openWriter(initRootTabFile, fs, conf, AccumuloConfiguration.getDefaultConfiguration());
       mfw.startDefaultLocalityGroup();
       
@@ -267,6 +274,11 @@ public class Initialize {
       // ----------] table tablet info
       Text tableExtent = new Text(KeyExtent.getMetadataEntry(new Text(Constants.METADATA_TABLE_ID), Constants.METADATA_RESERVED_KEYSPACE_START_KEY.getRow()));
       
+      // add a file that will contain references to the initial namespace tables
+      String default_file = Constants.TABLE_TABLET_LOCATION + "/00000_00001." + suffix;
+      Key defaultFileKey = new Key(tableExtent, Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(default_file), 0);
+      mfw.append(defaultFileKey, new Value("1,0".getBytes()));
+
       // table tablet's directory
       Key tableDirKey = new Key(tableExtent, Constants.METADATA_DIRECTORY_COLUMN.getColumnFamily(), Constants.METADATA_DIRECTORY_COLUMN.getColumnQualifier(), 0);
       mfw.append(tableDirKey, new Value(Constants.TABLE_TABLET_LOCATION.getBytes()));
@@ -274,7 +286,7 @@ public class Initialize {
       // table tablet time
       Key tableTimeKey = new Key(tableExtent, Constants.METADATA_TIME_COLUMN.getColumnFamily(), Constants.METADATA_TIME_COLUMN.getColumnQualifier(), 0);
       mfw.append(tableTimeKey, new Value((TabletTime.LOGICAL_TIME_ID + "0").getBytes()));
-      
+
       // table tablet's prevrow
       Key tablePrevRowKey = new Key(tableExtent, Constants.METADATA_PREV_ROW_COLUMN.getColumnFamily(), Constants.METADATA_PREV_ROW_COLUMN.getColumnQualifier(),
           0);
@@ -296,7 +308,40 @@ public class Initialize {
       Key defaultPrevRowKey = new Key(defaultExtent, Constants.METADATA_PREV_ROW_COLUMN.getColumnFamily(),
           Constants.METADATA_PREV_ROW_COLUMN.getColumnQualifier(), 0);
       mfw.append(defaultPrevRowKey, KeyExtent.encodePrevEndRow(Constants.METADATA_RESERVED_KEYSPACE_START_KEY.getRow()));
+      mfw.close();
       
+      String defaultTabletFile = ServerConstants.getMetadataTableDir() + default_file;
+      mfw = FileOperations.getInstance().openWriter(defaultTabletFile, fs, conf, AccumuloConfiguration.getDefaultConfiguration());
+      mfw.startDefaultLocalityGroup();
+      Map<Key, Value> defaultData = new TreeMap<Key, Value>();
+      String ids[] = "0,1,2".split(",");
+      long now = System.currentTimeMillis();
+      for (int i = 0; i < ids.length; i++) {
+        Text extent = new Text(KeyExtent.getMetadataEntry(new Text(ids[i]), null));
+        defaultData.put(new Key(extent, Constants.METADATA_TIME_COLUMN.getColumnFamily(), Constants.METADATA_TIME_COLUMN.getColumnQualifier(), now), 
+            new Value((TabletTime.MILLIS_TIME_ID + "0").getBytes()));
+        Key dirKey = new Key(extent, Constants.METADATA_DIRECTORY_COLUMN.getColumnFamily(), Constants.METADATA_DIRECTORY_COLUMN.getColumnQualifier(), now);
+        defaultData.put(dirKey, new Value(Constants.DEFAULT_TABLET_LOCATION.getBytes()));
+        defaultData.put(new Key(extent, Constants.METADATA_PREV_ROW_COLUMN.getColumnFamily(), Constants.METADATA_PREV_ROW_COLUMN.getColumnQualifier(), now), 
+            new Value(new byte[]{0}));
+        fs.mkdirs(new Path(ServerConstants.getTablesDir() + "/" + ids[i] + Constants.DEFAULT_TABLET_LOCATION));
+      }
+      // Add the file entry for the namespace root entry
+      Text extent = new Text(KeyExtent.getMetadataEntry(new Text("0"), null));
+      String rootNSFile = Constants.DEFAULT_TABLET_LOCATION + "/00000_00002." + suffix;
+      defaultData.put(new Key(extent, Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(rootNSFile), 0), new Value("1,0".getBytes()));
+      for (Entry<Key,Value> entry : defaultData.entrySet()) {
+          mfw.append(entry.getKey(), entry.getValue());
+      }
+      mfw.close();
+      
+      // write out the namespace data for / in the DistributedNameNode 
+      String rootNSDataFile = ServerConstants.getTablesDir() + "/0" + rootNSFile;
+      mfw = FileOperations.getInstance().openWriter(rootNSDataFile, fs, conf, AccumuloConfiguration.getDefaultConfiguration());
+      mfw.startDefaultLocalityGroup();
+      Text infoFam = new Text("info");
+      mfw.append(new Key(new Text("/"), infoFam, new Text("create_time"), now), new Value(Long.toString(now).getBytes()));
+      mfw.append(new Key(new Text("/"), infoFam, new Text("isDir"), now), new Value("Y".getBytes()));
       mfw.close();
     }
     
@@ -328,39 +373,59 @@ public class Initialize {
         return;
       }
     }
+    
   }
   
   private static void initZooKeeper(String uuid, String instanceNamePath) throws KeeperException, InterruptedException {
     // setup basic data in zookeeper
-    IZooReaderWriter zoo = ZooReaderWriter.getInstance();
-    ZooUtil.putPersistentData(zoo.getZooKeeper(), Constants.ZROOT, new byte[0], -1, NodeExistsPolicy.SKIP, Ids.OPEN_ACL_UNSAFE);
-    ZooUtil.putPersistentData(zoo.getZooKeeper(), Constants.ZROOT + Constants.ZINSTANCES, new byte[0], -1, NodeExistsPolicy.SKIP, Ids.OPEN_ACL_UNSAFE);
+    ZooUtil.putPersistentData(ZooReaderWriter.getInstance().getZooKeeper(), Constants.ZROOT, new byte[0], -1, NodeExistsPolicy.SKIP, Ids.OPEN_ACL_UNSAFE);
+    ZooUtil.putPersistentData(ZooReaderWriter.getInstance().getZooKeeper(), Constants.ZROOT + Constants.ZINSTANCES, new byte[0], -1, NodeExistsPolicy.SKIP, Ids.OPEN_ACL_UNSAFE);
     
     // setup instance name
     if (clearInstanceName)
-      zoo.recursiveDelete(instanceNamePath, NodeMissingPolicy.SKIP);
-    zoo.putPersistentData(instanceNamePath, uuid.getBytes(), NodeExistsPolicy.FAIL);
+      ZooReaderWriter.getInstance().recursiveDelete(instanceNamePath, NodeMissingPolicy.SKIP);
+    ZooReaderWriter.getInstance().putPersistentData(instanceNamePath, uuid.getBytes(), NodeExistsPolicy.FAIL);
+    
+    ZooKeeper keeper = ZooReaderWriter.getInstance().getZooKeeper();
+    for (String path : "/dnn,/dnn/datanodes,/dnn/blocks".split(",")) {
+      try {
+        keeper.create(path, new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+      } catch (KeeperException.NodeExistsException e) {
+        // ignored
+      }
+    }
+    // wait for some datanodes to show up in zookeeper
+    log.info("Waiting for DFS DataNodes to start");
+    do {
+      List<String> children = keeper.getChildren("/dnn/datanodes", null);
+      if (children != null && !children.isEmpty())
+        break;
+      UtilWaitThread.sleep(250);
+    } while (true);
     
     // setup the instance
     String zkInstanceRoot = Constants.ZROOT + "/" + uuid;
-    zoo.putPersistentData(zkInstanceRoot, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZTABLES, Constants.ZTABLES_INITIAL_ID, NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZTABLES, Constants.ZTABLES_INITIAL_ID, NodeExistsPolicy.FAIL);
     TableManager.prepareNewTableState(uuid, Constants.METADATA_TABLE_ID, Constants.METADATA_TABLE_NAME, TableState.ONLINE, NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZTSERVERS, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZPROBLEMS, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZROOT_TABLET, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZROOT_TABLET_WALOGS, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZLOGGERS, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZTRACERS, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZMASTERS, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZMASTER_LOCK, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZMASTER_GOAL_STATE, MasterGoalState.NORMAL.toString().getBytes(), NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZGC, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZGC_LOCK, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZCONFIG, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZTABLE_LOCKS, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZHDFS_RESERVATIONS, new byte[0], NodeExistsPolicy.FAIL);
-    zoo.putPersistentData(zkInstanceRoot + Constants.ZNEXT_FILE, new byte[] {'0'}, NodeExistsPolicy.FAIL);
+    TableManager.prepareNewTableState(uuid, "0", "namespace", TableState.ONLINE, NodeExistsPolicy.FAIL);
+    TableManager.prepareNewTableState(uuid, "1", "blocks", TableState.ONLINE, NodeExistsPolicy.FAIL);
+    TableManager.prepareNewTableState(uuid, "2", "datanodes", TableState.ONLINE, NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZTSERVERS, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZPROBLEMS, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZROOT_TABLET, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZROOT_TABLET_WALOGS, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZLOGGERS, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZTRACERS, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZMASTERS, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZMASTER_LOCK, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZMASTER_GOAL_STATE, MasterGoalState.NORMAL.toString().getBytes(), NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZGC, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZGC_LOCK, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZCONFIG, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZTABLE_LOCKS, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZHDFS_RESERVATIONS, new byte[0], NodeExistsPolicy.FAIL);
+    ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZNEXT_FILE, new byte[] {'1'}, NodeExistsPolicy.FAIL);
   }
   
   private static String getInstanceNamePath() throws IOException, KeeperException, InterruptedException {

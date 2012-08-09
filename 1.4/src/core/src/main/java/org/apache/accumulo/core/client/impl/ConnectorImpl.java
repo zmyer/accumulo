@@ -40,8 +40,11 @@ import org.apache.accumulo.core.master.state.tables.TableState;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.security.thrift.AuthInfo;
 import org.apache.accumulo.core.util.ArgumentChecker;
+import org.apache.log4j.Logger;
 
 public class ConnectorImpl extends Connector {
+  static private final Logger log = Logger.getLogger(ConnectorImpl.class);
+  
   private Instance instance;
   private AuthInfo credentials;
   private SecurityOperations secops = null;
@@ -71,7 +74,7 @@ public class ConnectorImpl extends Connector {
     
     // hardcoded string for SYSTEM user since the definition is
     // in server code
-    if (!user.equals("!SYSTEM")) {
+    if (false && !user.equals("!SYSTEM")) {
       ServerClient.execute(instance, new ClientExec<ClientService.Iface>() {
         @Override
         public void execute(ClientService.Iface iface) throws Exception {

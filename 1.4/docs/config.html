@@ -517,6 +517,13 @@ $HADOOP_HOME/lib/[^.].*.jar,
     <td><pre>1G</pre></td>
     <td>The maximum size for each write-ahead log.  See comment for property tserver.memory.maps.max</td>
    </tr>
+   <tr >
+    <td>tserver.workq.threads</td>
+    <td><b><a href='#COUNT'>count</a></b></td>
+    <td>yes</td>
+    <td><pre>2</pre></td>
+    <td>The number of threads for the distributed workq.  These threads are used for copying failed bulk files.</td>
+   </tr>
    <tr><td colspan='5'><a name='LOGGER_PREFIX' class='large'>logger.*</a></td></tr>
    <tr><td colspan='5'><i>Properties in this category affect the behavior of the write-ahead logger servers</i></td></tr>
    <tr><th>Property</th><th>Type</th><th>Zookeeper Mutable</th><th>Default Value</th><th>Description</th></tr>

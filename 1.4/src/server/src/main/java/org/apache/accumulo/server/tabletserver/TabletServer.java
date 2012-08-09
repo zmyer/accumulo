@@ -205,7 +205,6 @@ import org.apache.thrift.TServiceClient;
 import org.apache.thrift.server.TServer;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.NoNodeException;
-import org.mortbay.log.Log;
 
 enum ScanRunState {
   QUEUED, RUNNING, FINISHED
@@ -213,7 +212,9 @@ enum ScanRunState {
 
 public class TabletServer extends AbstractMetricsImpl implements org.apache.accumulo.server.tabletserver.metrics.TabletServerMBean {
   private static final Logger log = Logger.getLogger(TabletServer.class);
-  
+
+  static private final Set<String> METASET = new HashSet<String>(Arrays.asList("!0,0,1,2".split(",")));
+
   private static HashMap<String,Long> prevGcTime = new HashMap<String,Long>();
   private static long lastMemorySize = 0;
   private static long gcTimeIncreasedCount;
@@ -1071,7 +1072,6 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
         throws NotServingTabletException, ThriftSecurityException, org.apache.accumulo.core.tabletserver.thrift.TooManyFilesException {
       
       Authorizations userauths = null;
-      
       try {
         if (!authenticator.hasTablePermission(credentials, credentials.user, new String(textent.getTable()), TablePermission.READ))
           throw new ThriftSecurityException(credentials.user, SecurityErrorCode.PERMISSION_DENIED);
@@ -1462,7 +1462,7 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
       
       boolean containsMetadataTablet = false;
       for (Tablet tablet : us.queuedMutations.keySet())
-        if (tablet.getExtent().getTableId().toString().equals(Constants.METADATA_TABLE_ID))
+        if (METASET.contains(tablet.getExtent().getTableId().toString()))
           containsMetadataTablet = true;
       
       if (!containsMetadataTablet && us.queuedMutations.size() > 0)
@@ -1649,7 +1649,7 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
         throw new NotServingTabletException(tkeyExtent);
       }
       
-      if (!keyExtent.getTableId().toString().equals(Constants.METADATA_TABLE_ID))
+      if (!METASET.contains(keyExtent.getTableId().toString()))
         TabletServer.this.resourceManager.waitUntilCommitsAreEnabled();
       
       long opid = writeTracker.startWrite(TabletType.type(keyExtent));
@@ -1865,7 +1865,7 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
           }
         }.start();
       } else {
-        if (extent.getTableId().compareTo(new Text(Constants.METADATA_TABLE_ID)) == 0) {
+        if (METASET.contains(extent.getTableId().toString())) {
           resourceManager.addMetaDataAssignment(ah);
         } else {
           resourceManager.addAssignment(ah);
@@ -2324,7 +2324,7 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
     public void run() {
       log.info(clientAddress + ": got assignment from master: " + extent);
       
-      final boolean isMetaDataTablet = extent.getTableId().toString().compareTo(Constants.METADATA_TABLE_ID) == 0;
+      final boolean isMetaDataTablet = METASET.contains(extent.getTableId().toString());
       
       synchronized (unopenedTablets) {
         synchronized (openingTablets) {
