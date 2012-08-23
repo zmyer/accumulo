@@ -417,7 +417,7 @@ public class Initialize {
     for (String tableId  :"0,1,2".split(",")) {
       String configPath = zkInstanceRoot + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_CONF + "/";
       ZooReaderWriter.getInstance().putPersistentData(configPath + Property.TABLE_MAJC_RATIO.getKey(), "1".getBytes(), NodeExistsPolicy.FAIL);
-      //ZooReaderWriter.getInstance().putPersistentData(configPath + Property.TABLE_BLOCKCACHE_ENABLED, "true".getBytes(), NodeExistsPolicy.FAIL);
+      ZooReaderWriter.getInstance().putPersistentData(configPath + Property.TABLE_BLOCKCACHE_ENABLED, "true".getBytes(), NodeExistsPolicy.FAIL);
     }
     ZooReaderWriter zoo = ZooReaderWriter.getInstance();
     zoo.putPersistentData(zkInstanceRoot + Constants.ZTSERVERS, new byte[0], NodeExistsPolicy.FAIL);
