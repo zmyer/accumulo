@@ -150,7 +150,7 @@ public class ServerClient {
       if (!opened) {
         if (!warnedAboutTServersBeingDown) {
           if (servers.isEmpty()) {
-            log.warn("There are no tablet servers: check that zookeeper and accumulo are running.");
+            log.warn("There are no tablet servers: check that zookeeper and accumulo are running.", new Throwable());
           } else {
             log.warn("Failed to find an available server in the list of servers: " + servers);
           }

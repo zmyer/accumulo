@@ -54,7 +54,7 @@ public class TabletServerBatchReader extends ScannerOptions implements BatchScan
   }
   
   private final int batchReaderInstance = getNextBatchReaderInstance();
-  
+
   public TabletServerBatchReader(Instance instance, AuthInfo credentials, String table, Authorizations authorizations, int numQueryThreads) {
     ArgumentChecker.notNull(instance, credentials, table, authorizations);
     this.instance = instance;

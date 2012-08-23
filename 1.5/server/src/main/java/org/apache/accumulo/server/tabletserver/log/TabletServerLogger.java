@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -40,6 +41,7 @@ import org.apache.accumulo.server.tabletserver.Tablet;
 import org.apache.accumulo.server.tabletserver.Tablet.CommitSession;
 import org.apache.accumulo.server.tabletserver.TabletServer;
 import org.apache.accumulo.server.tabletserver.log.DfsLogger.LoggerOperation;
+import org.apache.accumulo.server.util.time.SimpleTimer;
 import org.apache.log4j.Logger;
 
 /**
@@ -206,13 +208,19 @@ public class TabletServerLogger {
     }
     try {
       for (DfsLogger logger : loggers) {
-        try {
-          logger.close();
-        } catch (DfsLogger.LogClosedException ex) {
-          // ignore
-        } catch (Throwable ex) {
-          log.error("Unable to cleanly close log " + logger.getFileName() + ": " + ex);
-        }
+        final DfsLogger finalLogger = logger;
+          SimpleTimer.getInstance().schedule(new TimerTask() {
+            @Override
+            public void run() {
+              try {
+                finalLogger.close();
+              } catch (DfsLogger.LogClosedException ex) {
+                // ignore
+              } catch (Throwable ex) {
+                log.error("Unable to cleanly close log " + finalLogger.getFileName() + ": " + ex);
+              }
+            }
+          }, 0);
       }
       loggers.clear();
       logSizeEstimate.set(0);

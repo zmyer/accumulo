@@ -31,6 +31,7 @@ import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.SortedMap;
@@ -50,6 +51,11 @@ import org.apache.hadoop.io.WritableComparable;
 public class KeyExtent implements WritableComparable<KeyExtent> {
   
   private static WeakHashMap<Text,WeakReference<Text>> tableIds = new WeakHashMap<Text,WeakReference<Text>>();
+  static private final Set<Text> METASET = new HashSet<Text>();
+  static {
+    for (String id : "!0,0,1,2".split(","))
+      METASET.add(new Text(id));
+  }
   
   private static Text dedupeTableId(Text tableId) {
     synchronized (tableIds) {
@@ -774,7 +780,7 @@ public class KeyExtent implements WritableComparable<KeyExtent> {
   }
   
   public boolean isMeta() {
-    return getTableId().toString().equals(Constants.METADATA_TABLE_ID);
+    return METASET.contains(getTableId());
   }
   
   public boolean isRootTablet() {

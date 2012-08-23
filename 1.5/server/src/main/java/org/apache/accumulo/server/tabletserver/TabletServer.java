@@ -219,7 +219,7 @@ enum ScanRunState {
 
 public class TabletServer extends AbstractMetricsImpl implements org.apache.accumulo.server.tabletserver.metrics.TabletServerMBean {
   private static final Logger log = Logger.getLogger(TabletServer.class);
-  
+
   private static HashMap<String,Long> prevGcTime = new HashMap<String,Long>();
   private static long lastMemorySize = 0;
   private static long gcTimeIncreasedCount;
@@ -1084,7 +1084,6 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
         throws NotServingTabletException, ThriftSecurityException, org.apache.accumulo.core.tabletserver.thrift.TooManyFilesException {
       
       Authorizations userauths = null;
-      
       try {
         if (!authenticator.hasTablePermission(credentials, credentials.user, new String(textent.getTable()), TablePermission.READ))
           throw new ThriftSecurityException(credentials.user, SecurityErrorCode.PERMISSION_DENIED);

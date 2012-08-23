@@ -99,7 +99,7 @@ public class MinorCompactor extends Compactor {
         
         return ret;
       } catch (IOException e) {
-        log.warn("MinC failed (" + e.getMessage() + ") to create " + getOutputFile() + " retrying ...");
+        log.warn("MinC failed (" + e.getMessage() + ") to create " + getOutputFile() + " retrying ...", e);
         ProblemReports.getInstance().report(new ProblemReport(getExtent().getTableId().toString(), ProblemType.FILE_WRITE, getOutputFile(), e));
         reportedProblem = true;
       } catch (RuntimeException e) {

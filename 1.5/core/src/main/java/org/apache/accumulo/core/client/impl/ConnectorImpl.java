@@ -42,8 +42,11 @@ import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.security.thrift.AuthInfo;
 import org.apache.accumulo.core.security.thrift.SecurityErrorCode;
 import org.apache.accumulo.core.util.ArgumentChecker;
+import org.apache.log4j.Logger;
 
 public class ConnectorImpl extends Connector {
+  static private final Logger log = Logger.getLogger(ConnectorImpl.class);
+  
   private Instance instance;
   private AuthInfo credentials;
   private SecurityOperations secops = null;
@@ -73,15 +76,15 @@ public class ConnectorImpl extends Connector {
     
     // hardcoded string for SYSTEM user since the definition is
     // in server code
-    if (!user.equals("!SYSTEM")) {
-      ServerClient.execute(instance, new ClientExec<ClientService.Client>() {
-        @Override
-        public void execute(ClientService.Client iface) throws Exception {
-          if (!iface.authenticateUser(Tracer.traceInfo(), credentials, credentials.user, credentials.password))
-            throw new AccumuloSecurityException("Authentication failed, access denied", SecurityErrorCode.BAD_CREDENTIALS);
-        }
-      });
-    }
+//    if (!user.equals("!SYSTEM")) {
+//      ServerClient.execute(instance, new ClientExec<ClientService.Client>() {
+//        @Override
+//        public void execute(ClientService.Client iface) throws Exception {
+//          if (!iface.authenticateUser(Tracer.traceInfo(), credentials, credentials.user, credentials.password))
+//            throw new AccumuloSecurityException("Authentication failed, access denied", SecurityErrorCode.BAD_CREDENTIALS);
+//        }
+//      });
+//    }
   }
   
   private String getTableId(String tableName) throws TableNotFoundException {

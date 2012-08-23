@@ -26,6 +26,8 @@ import java.util.Set;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.Instance;
+import org.apache.accumulo.core.conf.Property;
+import org.apache.accumulo.core.iterators.user.VersioningIterator;
 import org.apache.accumulo.core.master.state.tables.TableState;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
@@ -60,7 +62,13 @@ public class TableManager {
     String zTablePath = Constants.ZROOT + "/" + instanceId + Constants.ZTABLES + "/" + tableId;
     IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
     zoo.putPersistentData(zTablePath, new byte[0], existsPolicy);
-    zoo.putPersistentData(zTablePath + Constants.ZTABLE_CONF, new byte[0], existsPolicy);
+    String zTableConf = zTablePath + Constants.ZTABLE_CONF;
+    zoo.putPersistentData(zTableConf, new byte[0], existsPolicy);
+    String iter = Property.TABLE_ITERATOR_PREFIX.getKey();
+    for (String when : "scan,minc,majc".split(",")) {
+      zoo.putPersistentData(zTableConf + "/" + iter + when + ".vers", ("10," + VersioningIterator.class.getName()).getBytes(), existsPolicy);
+      zoo.putPersistentData(zTableConf + "/" + iter + when + ".vers.opt.maxVersions", "1".getBytes(), existsPolicy);
+    }
     zoo.putPersistentData(zTablePath + Constants.ZTABLE_NAME, tableName.getBytes(), existsPolicy);
     zoo.putPersistentData(zTablePath + Constants.ZTABLE_STATE, state.name().getBytes(), existsPolicy);
     zoo.putPersistentData(zTablePath + Constants.ZTABLE_FLUSH_ID, "0".getBytes(), existsPolicy);

@@ -23,7 +23,6 @@ import java.net.ServerSocket;
 import java.net.UnknownHostException;
 import java.nio.channels.ServerSocketChannel;
 import java.util.Random;
-import java.util.TimerTask;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -36,7 +35,6 @@ import org.apache.accumulo.core.util.TBufferedSocket;
 import org.apache.accumulo.core.util.ThriftUtil;
 import org.apache.accumulo.core.util.UtilWaitThread;
 import org.apache.accumulo.server.thrift.metrics.ThriftMetrics;
-import org.apache.accumulo.server.util.time.SimpleTimer;
 import org.apache.log4j.Logger;
 import org.apache.thrift.TException;
 import org.apache.thrift.TProcessor;
@@ -178,7 +176,7 @@ public class TServerUtils {
   }
   
   public static ServerPort startHsHaServer(int port, TProcessor processor, final String serverName, String threadName, final int numThreads,
-      long timeBetweenThreadChecks) throws TTransportException {
+      final long timeBetweenThreadChecks) throws TTransportException {
     TNonblockingServerSocket transport = new TNonblockingServerSocket(port);
     THsHaServer.Args options = new THsHaServer.Args(transport);
     options.protocolFactory(ThriftUtil.protocolFactory());
@@ -188,33 +186,38 @@ public class TServerUtils {
      */
     final ThreadPoolExecutor pool = new SimpleThreadPool(numThreads, "ClientPool");
     // periodically adjust the number of threads we need by checking how busy our threads are
-    SimpleTimer.getInstance().schedule(new TimerTask() {
+    Runnable checker = new Runnable() {
       @Override
       public void run() {
-        if (pool.getCorePoolSize() <= pool.getActiveCount()) {
-          int larger = pool.getCorePoolSize() + 2;
-          log.info("Increasing server thread pool size on " + serverName + " to " + larger);
-          pool.setMaximumPoolSize(larger);
-          pool.setCorePoolSize(larger);
-        } else {
-          if (pool.getCorePoolSize() > pool.getActiveCount() + 3) {
-            int smaller = Math.max(numThreads, pool.getCorePoolSize() - 1);
-            if (smaller != pool.getCorePoolSize()) {
-              // there is a race condition here... the active count could be higher by the time
-              // we decrease the core pool size... so the active count could end up higher than
-              // the core pool size, in which case everything will be queued... the increase case
-              // should handle this and prevent deadlock
-              log.info("Decreasing server thread pool size on " + serverName + " to " + smaller);
-              pool.setCorePoolSize(smaller);
+        while (true) {
+          if (pool.getCorePoolSize() <= pool.getActiveCount()) {
+            int larger = pool.getCorePoolSize() + 2;
+            log.info("Increasing server thread pool size on " + serverName + " to " + larger);
+            pool.setMaximumPoolSize(larger);
+            pool.setCorePoolSize(larger);
+          } else {
+            if (pool.getCorePoolSize() > pool.getActiveCount() + 3) {
+              int smaller = Math.max(numThreads, pool.getCorePoolSize() - 1);
+              if (smaller != pool.getCorePoolSize()) {
+                // there is a race condition here... the active count could be higher by the time
+                // we decrease the core pool size... so the active count could end up higher than
+                // the core pool size, in which case everything will be queued... the increase case
+                // should handle this and prevent deadlock
+                log.info("Decreasing server thread pool size on " + serverName + " to " + smaller);
+                pool.setCorePoolSize(smaller);
+              }
             }
           }
+          UtilWaitThread.sleep(timeBetweenThreadChecks);
         }
       }
-    }, timeBetweenThreadChecks, timeBetweenThreadChecks);
+    };
     options.executorService(pool);
     processor = new TServerUtils.TimedProcessor(processor, serverName, threadName);
     options.processorFactory(new ClientInfoProcessorFactory(processor));
-    return new ServerPort(new THsHaServer(options), port);
+    ServerPort result = new ServerPort(new THsHaServer(options), port);
+    new Thread(checker, "Connection pool sizer").start();
+    return result;
   }
   
   public static ServerPort startThreadPoolServer(int port, TProcessor processor, String serverName, String threadName, int numThreads)

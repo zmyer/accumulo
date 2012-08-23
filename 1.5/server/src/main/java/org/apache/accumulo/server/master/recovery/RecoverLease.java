@@ -24,6 +24,7 @@ import org.apache.accumulo.fate.Repo;
 import org.apache.accumulo.server.master.Master;
 import org.apache.accumulo.server.master.tableOps.MasterRepo;
 import org.apache.accumulo.server.trace.TraceFileSystem;
+import org.apache.commons.lang.NotImplementedException;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
@@ -88,7 +89,8 @@ public class RecoverLease extends MasterRepo {
     try {
       fs.append(source).close();
       log.info("Recovered lease on " + source.toString() + " using append");
-
+    } catch (NotImplementedException ex) {
+      return new SubmitFileForRecovery(server, file);
     } catch (IOException ex) {
       log.error("error recovering lease using append", ex);
     }

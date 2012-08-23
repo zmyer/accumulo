@@ -18,6 +18,7 @@ package org.apache.accumulo.core.client;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -266,7 +267,7 @@ public class ZooKeeperInstance implements Instance {
         throw new RuntimeException("Accumulo found multiple possible instance ids in " + instanceDirectory);
       } else {
         String result = files[0].getPath().getName();
-        return result;
+         return result;
       }
     } catch (IOException e) {
       throw new RuntimeException("Accumulo not initialized, there is no instance id at " + instanceDirectory, e);
