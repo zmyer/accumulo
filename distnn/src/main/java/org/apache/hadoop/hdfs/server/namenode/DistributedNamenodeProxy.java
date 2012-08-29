@@ -4,14 +4,10 @@
  *  add hierarchical locking
  * 	add support for permissions
  * 	add support for leasing
- * 	add support for block generations?
  * 
  * finish namenode actions:
- * 	TEST::implement delete
- * 	TEST::implement mkdirs
  * 
  * finish datanode actions:
- * 	error reporting
  * 
  * 
  * 
@@ -41,6 +37,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -49,8 +46,13 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Random;
 import java.util.Set;
+import java.util.TimerTask;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.BatchScanner;
@@ -69,10 +71,9 @@ import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.util.ColumnFQ;
 import org.apache.accumulo.core.util.TextUtil;
 import org.apache.accumulo.core.util.UtilWaitThread;
-import org.apache.hadoop.conf.Configuration;
+import org.apache.accumulo.server.util.time.SimpleTimer;
 import org.apache.hadoop.fs.ContentSummary;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.UnresolvedLinkException;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.hdfs.DNNConstants;
@@ -97,18 +98,17 @@ import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.hdfs.server.protocol.UpgradeCommand;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
-import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 import org.apache.log4j.Logger;
-import org.apache.zookeeper.CreateMode;
-import org.apache.zookeeper.KeeperException;
-import org.apache.zookeeper.WatchedEvent;
-import org.apache.zookeeper.Watcher;
-import org.apache.zookeeper.ZooDefs.Ids;
-import org.apache.zookeeper.ZooKeeper;
+
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
+
+import com.netflix.curator.framework.CuratorFramework;
 
 public class DistributedNamenodeProxy implements FakeNameNode {
+  Executor executor = Executors.newSingleThreadExecutor();
+
   public static class ConnectInfo {
     public ConnectInfo(URI uri) {
       String userInfo = uri.getUserInfo();
@@ -138,55 +138,37 @@ public class DistributedNamenodeProxy implements FakeNameNode {
 
   private static Logger log = Logger.getLogger(DistributedNamenodeProxy.class);
   
-  long start = System.currentTimeMillis();
-
   private class Replicator {
     
-    // TODO: make this respect configured replication settings
-    
-    private HashSet<String> targets;
+    private HashSet<DatanodeInfo> targets;
     
     Replicator() {
-      targets = new HashSet<String>();
+      targets = new HashSet<DatanodeInfo>();
     }
     
-    DatanodeInfo[] getReplicationTargets() throws IOException {
+    DatanodeInfo[] getReplicationTargets(int replicationFactor) throws IOException {
       
       // TODO: periodically scan the datanodes table to find new datanodes
-      if(targets.size() == 0)
+      while (targets.size() == 0) {
         scanDatanodes();
-      
-      // pick nodes at random
-      // TODO: take into account whether a datanode is too full to host another block
-      // the old namenode would also have a hard limit on the total number
-      // of fs objects it could store 
-      int replicationFactor = 1;
-      
-      if(targets.size() < replicationFactor)
-        throw new IOException("unable to achieve required replication: too few datanodes running");
-      
-      HashSet<String> targetSetNames = new HashSet<String>();
-      
-      HashSet<DatanodeInfo> targetSet = new HashSet<DatanodeInfo>();
-      for(int i=0; i < replicationFactor; i++) {
-        int r = rand.nextInt(targets.size());
-        
-        Iterator<String> iter = targets.iterator();
-        for(int j=0; j < r-1; iter.next());
-        String target = iter.next();
-        
-        // don't create two replicas on the same target
-        while(targetSetNames.contains(target)) {
-          r = rand.nextInt(targets.size());
-          iter = targets.iterator();
-          for(int j=0; j < r-1; iter.next());
-          target = iter.next();
-        }
-        
-        targetSet.add(new DatanodeInfo(new DatanodeID(target)));
+        if (targets.size() > 0)
+          break;
+        UtilWaitThread.sleep(250);
       }
       
-      DatanodeInfo[] targetSetArray = targetSet.toArray(new DatanodeInfo[targetSet.size()]);
+      List<DatanodeInfo> targetsCopy = new ArrayList<DatanodeInfo>();
+      synchronized (targets) {
+        targetsCopy.addAll(targets);
+      }
+      // pick nodes at random
+      // TODO: take into account whether a datanode is too full to host another block
+      Collections.shuffle(targetsCopy);
+      
+      if(targetsCopy.size() < 1)
+        throw new IOException("unable to achieve required replication: too few datanodes running");
+      
+      targetsCopy = targetsCopy.subList(0, Math.min(replicationFactor, targetsCopy.size()));
+      DatanodeInfo[] targetSetArray = targetsCopy.toArray(new DatanodeInfo[targetsCopy.size()]);
       return targetSetArray;
     }
     
@@ -196,16 +178,29 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     // failed interactions with a datanode
     private void scanDatanodes() throws IOException {
       log.info("scanning datanodes table ..");
-      targets.clear();
+      HashSet<DatanodeInfo> updatedTargets = new HashSet<DatanodeInfo>();
       BatchScanner scanner = createBatchScanner(datanodesTable, new Range());
-      ColumnFQ.fetch(scanner, remaining);
+      infoIpcPort.fetch(scanner);
       try {
         for (Entry<Key,Value> entry : scanner) {
-          targets.add(entry.getKey().getRow().toString());
+          String nodeName = entry.getKey().getRow().toString();
+          int ipcPort = Integer.parseInt(entry.getValue().toString());
+          updatedTargets.add(new DatanodeInfo(new DatanodeID(nodeName, "", -1, ipcPort)));
         }
       } finally {
         scanner.close();
       }
+      try {
+        if (updatedTargets.isEmpty()) {
+          log.info("scanning datanodes from zookeeper ..");
+          for (String nodeName : zookeeper.getChildren().forPath(DNNConstants.DATANODES_PATH))
+            updatedTargets.add(new DatanodeInfo(new DatanodeID(nodeName)));
+        }
+      } catch (Exception ex) {
+        log.warn(ex, ex);
+      }
+      log.info("there are " + updatedTargets.size() + " datanodes");
+      targets = updatedTargets;
     }
   } 
   
@@ -258,7 +253,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
   
   private Random rand = new Random();
   private Replicator replicator = new Replicator();
-  private Connector conn;
+  private final Connector conn;
   private final static String namespaceTable = "namespace";
   private final static String blocksTable = "blocks";
   private final static String datanodesTable = "datanodes";
@@ -267,11 +262,12 @@ public class DistributedNamenodeProxy implements FakeNameNode {
   private final static Text blocksFam = new Text("blocks");
   private final static Text datanodesFam = new Text("datanodes");
   private final static Text commandFam = new Text("command");
+
   private final static ColumnFQ remaining = new ColumnFQ(infoFam, new Text("remaining"));
-  
   private final static ColumnFQ infoSize = new ColumnFQ(infoFam, new Text("size"));
   private final static ColumnFQ isDir = new ColumnFQ(infoFam, new Text("isDir"));
   private final static ColumnFQ infoCapacity = new ColumnFQ(infoFam, new Text("capacity"));
+  private final static ColumnFQ infoIpcPort = new ColumnFQ(infoFam, new Text("ipc_port"));
   private final static ColumnFQ infoUsed = new ColumnFQ(infoFam, new Text("used"));
   private final static ColumnFQ infoReplication = new ColumnFQ(infoFam, new Text("replication"));
   private final static ColumnFQ infoBlockSize = new ColumnFQ(infoFam, new Text("blocksize"));
@@ -291,51 +287,18 @@ public class DistributedNamenodeProxy implements FakeNameNode {
   
   private long lastRemaining = -1;
   
-  private ZooKeeper zookeeper = null;
-  private String instanceName = null;
-  private String keepers = null;
-  private final String username = "root";
-  private byte[] passwd = "secret".getBytes();
+  private final CuratorFramework zookeeper;
   
-  private Connector getConnector() {
-    synchronized (this) {
-      if (conn == null) {
-        try {
-          Instance instance = new ZooKeeperInstance(instanceName, keepers);
-          conn = instance.getConnector(username, passwd);
-        } catch (Exception ex) {
-          conn = null;
-          log.warn("Unable to get connector " + ex);
-        }
-      }
-    }
-    return conn;
-  }
-  
-  public DistributedNamenodeProxy(Configuration conf) throws IOException {
-    instanceName = conf.get("accumulo.zookeeper.instance");
-    keepers = conf.get("accumulo.zookeeper.keepers");
-    zookeeper = new ZooKeeper(keepers, 30000, new Watcher() {
-      @Override
-      public void process(WatchedEvent arg0) {
-        log.info("zookeeper says " + arg0);
-      }
-    });
-    for (String name : new String[] {DNNConstants.DNN, DNNConstants.BLOCKS_PATH, DNNConstants.DATANODES_PATH, DNNConstants.NAMESPACE_PATH}) {
-      try {
-        zookeeper.create(name, new byte[]{}, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-      } catch (KeeperException.NodeExistsException ex) {
-        // ya, ya, don't care
-      } catch (Exception ex) {
-        throw new IOException(ex);
-      } 
-    }
-  }
-  
-  public DistributedNamenodeProxy(Connector conn) throws IOException {
+  public DistributedNamenodeProxy(CuratorFramework keeper, URI uri) throws IOException {
     log.info("========= Distributed Name Node Proxy init =========");
-    this.conn = conn;
-    
+    ConnectInfo info = new ConnectInfo(uri);
+    Instance instance = new ZooKeeperInstance(info.instance, info.zookeepers);
+    zookeeper = keeper;
+    try {
+      this.conn = instance.getConnector(info.username, info.passwd);
+    } catch (Exception e) {
+      throw new IOException(e);
+    } 
     //		String healthNodeHost = config.get("healthnode");
     //		if(healthNodeHost == null)
     //			throw new IOException("error: no healthnode address specified. add one to core-site.xml");
@@ -355,6 +318,57 @@ public class DistributedNamenodeProxy implements FakeNameNode {
       throws IOException {
     log.info("using abandonBlock");
     
+    // find the block's position in the list (probably the last one)
+    BatchScanner bs = createBatchScanner(namespaceTable, new Range(new Text(src)));
+    bs.fetchColumnFamily(blocksFam);
+    
+    // delete it from the file
+    Mutation m = new Mutation(new Text(src));
+    try {
+      for (Entry<Key,Value> entry : bs) {
+        String cq = entry.getKey().getColumnQualifier().toString();
+        String parts[] = cq.split("_");
+        long block = Long.parseLong(parts[1]);
+        if (b.getBlockId() == block) {
+          m.putDelete(blocksFam, entry.getKey().getColumnQualifier());
+        }
+      }
+    } finally {
+      bs.close();
+    }
+    if (m.getUpdates().isEmpty()) {
+      throw new IOException("Block " + b.getBlockId() + " not found to abandon for " + src);
+    }
+    
+    // delete the block size and location information
+    BatchWriter bw = createBatchWriter(namespaceTable);
+    try {
+      bw.addMutation(m);
+    } catch (MutationsRejectedException e) {
+      throw new RuntimeException(e);
+    } finally {
+      try {
+        bw.close();
+      } catch (MutationsRejectedException e) {
+        throw new RuntimeException(e);
+      }
+    }
+    bw = createBatchWriter(blocksTable);
+    try {
+      Text row = new Text("" + b.getBlockId());
+      bs = createBatchScanner(blocksTable, new Range(row));
+      m = new Mutation(row);
+      for (Entry<Key,Value> entry : bs) {
+        m.putDelete(entry.getKey().getColumnFamily(), entry.getKey().getColumnQualifier());
+      }
+    } finally {
+      try {
+        bw.close();
+      } catch (MutationsRejectedException e) {
+        throw new RuntimeException(e);
+      }
+      bs.close();
+    }
   }
   
   @Override
@@ -378,6 +392,29 @@ public class DistributedNamenodeProxy implements FakeNameNode {
   public LocatedBlock addBlock(String src, String clientName, DatanodeInfo[] excludeNodes)
       throws IOException {
     log.info("using addBlock " + src + " " + clientName);
+
+    // get the last block ID and replication
+    BatchScanner bs = createBatchScanner(namespaceTable, new Range(new Text(src)));
+    bs.fetchColumnFamily(blocksFam);
+    infoReplication.fetch(bs);
+    
+    // TODO: fetch from configuration
+    int defaultReplication = 3;
+    int replication = -1;
+    int blockPos = 0;
+    try {
+      for (Entry<Key,Value> entry : bs) {
+        if (entry.getKey().getColumnFamily().equals(blocksFam))
+          blockPos++;
+        if (infoReplication.hasColumns(entry.getKey()))
+          replication = Integer.parseInt(entry.getValue().toString());
+      }
+    } finally {
+      bs.close();
+    }
+    if (replication < 1) {
+      replication = defaultReplication;
+    }
     
     // create new blocks on data nodes
     //   zookeeper holds the negative numbered blocks
@@ -387,7 +424,8 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     Block b = new Block(blockID, 0, 0);
     
     // choose a set of nodes on which to replicate block
-    DatanodeInfo[] targets = replicator.getReplicationTargets(); 
+    DatanodeInfo[] targets = replicator.getReplicationTargets(replication); 
+    log.info("replicating " + blockID + " to " + Arrays.asList(targets));
     
     // TODO: get a lease to the first
     // TODO: can we record all this in the namespace table?
@@ -396,19 +434,6 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     
     // record block to host mapping and vice versa
     recordBlockHosts(blockIDBytes, targets);
-    
-    // get the last block ID
-    BatchScanner bs = createBatchScanner(namespaceTable, new Range(new Text(src)));
-    bs.fetchColumnFamily(blocksFam);
-    
-    int blockPos = 0;
-    try {
-      for (@SuppressWarnings("unused") Entry<Key,Value> entry : bs) {
-        blockPos++;
-      }
-    } finally {
-      bs.close();
-    }
     
     // record file to block mapping
     Mutation nameData = new Mutation(new Text(src.getBytes()));
@@ -440,29 +465,35 @@ public class DistributedNamenodeProxy implements FakeNameNode {
    */
   
   @Override
-  public void blockReceived(DatanodeRegistration registration, Block[] blocks, String[] delHints) throws IOException {
+  public void blockReceived(DatanodeRegistration registration, final Block[] blocks, String[] delHints) throws IOException {
     log.info("using blockReceived");
-    
-    // for each block we should have recorded its existence already
-    // we should also know about the datanode
-    
-    // update blocks table
-    BatchWriter bw = createBatchWriter(blocksTable);
-    try {
-      try {
-        for(Block b : blocks) {
-          Mutation blockData = new Mutation(new Text(Long.toString(b.getBlockId())));
-          ColumnFQ.put(blockData, infoBlockSize, new Value(Long.toString(b.getNumBytes()).getBytes()));
-          bw.addMutation(blockData);
+    SimpleTimer.getInstance().schedule(new TimerTask() {
+      @Override
+      public void run() {
+        
+        // for each block we should have recorded its existence already
+        // we should also know about the datanode
+        
+        // update blocks table
+        try {
+          final BatchWriter bw = createBatchWriter(blocksTable);
+          try {
+            for(Block b : blocks) {
+              if (ZookeeperNameNode.isZooBlockId(b.getBlockId()))
+                continue;
+              Mutation blockData = new Mutation(new Text(Long.toString(b.getBlockId())));
+              infoBlockSize.put(blockData, new Value(Long.toString(b.getNumBytes()).getBytes()));
+              bw.addMutation(blockData);
+            }
+          } finally {
+            bw.close();
+          }
+          // update total file space ?
+        } catch (Exception ex) {
+          log.info(ex, ex);
         }
-      } finally {
-        bw.close();
       }
-      // update total file space ?
-    } catch (MutationsRejectedException ex) {
-      throw new IOException(ex);
-    }
-    
+    }, 0);
   }
   
   @Override
@@ -472,9 +503,13 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     BlockListAsLongs blist = new BlockListAsLongs(blocks);
     Set<Long> current = new HashSet<Long>();
     for (int i = 0; i < blist.getNumberOfBlocks(); i++) {
-      current.add(blist.getBlockId(i));
+      if (blist.getBlockId(i) > 0) {
+        current.add(blist.getBlockId(i));
+      }
     }
     log.info(registration.getName() + " reports blocks " + current);
+    if (current.isEmpty())
+      return null;
     BatchWriter bw = createBatchWriter(blocksTable);
     Mutation m = new Mutation(registration.getName());
     Scanner scan = createScanner(datanodesTable);
@@ -542,41 +577,33 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     } finally {
       bs.close();
     }
-    log.info("have ranges " + ranges);
     if (ranges.isEmpty())
       return true;
     long fileSize = 0;
-    retry:
-    while (true) {
-      BatchScanner blockScanner = createBatchScanner(blocksTable, ranges.toArray(new Range[]{}));
-      ColumnFQ.fetch(blockScanner, infoBlockSize);
-      fileSize = 0;
-      int count = 0;
-      try {
-        for (Entry<Key,Value> entry : blockScanner) {
-          log.info("Looking at block sizes " + entry.getKey() + " -> " + entry.getValue());
-          long blockSize = Long.parseLong(new String(entry.getValue().get()));
-          if (blockSize == 0) {
-            UtilWaitThread.sleep(250);
-            continue retry;
-          }
-          fileSize += blockSize;
-          count++;
-        }
-      } finally {
-        blockScanner.close();
+    BatchScanner blockScanner = createBatchScanner(blocksTable, ranges.toArray(new Range[]{}));
+    infoBlockSize.fetch(blockScanner);
+    fileSize = 0;
+    int count = 0;
+    try {
+      for (Entry<Key,Value> entry : blockScanner) {
+        log.info("Looking at block sizes " + entry.getKey() + " -> " + entry.getValue());
+        long blockSize = Long.parseLong(new String(entry.getValue().get()));
+        if (blockSize == 0) 
+          break;
+        fileSize += blockSize;
+        count++;
       }
-      if (count != ranges.size()) {
-        log.info("Did not read block sizes for all blocks on file " + src + " read " + count + " but expected " + ranges.size());
-        UtilWaitThread.sleep(250);
-        continue;
-      }
-      break;
+    } finally {
+      blockScanner.close();
+    }
+    if (count != ranges.size()) {
+      log.info("Did not read block sizes for all blocks on file " + src + " read " + count + " but expected " + ranges.size());
+      return false;
     }
     
     // write size to namespace table
     Mutation fileSizePut = new Mutation(new Text(src.getBytes()));
-    ColumnFQ.put(fileSizePut, infoSize, new Value(Long.toString(fileSize).getBytes()));
+    infoSize.put(fileSizePut, new Value(Long.toString(fileSize).getBytes()));
     BatchWriter bw = createBatchWriter(namespaceTable);
     try {
       try {
@@ -597,7 +624,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
   }
   
   static private void put(Mutation m, ColumnFQ cfq, String value) {
-    ColumnFQ.put(m, cfq, new Value(value.getBytes()));
+    cfq.put(m, new Value(value.getBytes()));
   }
   
   static private Value now() {
@@ -614,7 +641,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     ColumnFQ srcColumn = new ColumnFQ(childrenFam, new Text(src));
     
     BatchScanner bs = createBatchScanner(namespaceTable, new Range(new Text(parent)));
-    ColumnFQ.fetch(bs, isDir);
+    isDir.fetch(bs);
     bs.fetchColumnFamily(childrenFam);
     try {
       for (Entry<Key,Value> entry : bs) {
@@ -658,7 +685,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
       BatchWriter bw = createBatchWriter(namespaceTable);
       try {
         Mutation createRequest = new Mutation(new Text(src));
-        ColumnFQ.put(createRequest, infoModificationTime, now());
+        infoModificationTime.put(createRequest, now());
         put(createRequest, infoReplication, Short.toString(replication));
         put(createRequest, infoBlockSize, Long.toString(blockSize));
         put(createRequest, infoPermission, masked.toString());
@@ -702,7 +729,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     }
   }
   
-  private BatchWriter createBatchWriter(String table) throws IOException {
+  public BatchWriter createBatchWriter(String table) throws IOException {
     return createBatchWriter(conn, table);
   }
   
@@ -722,7 +749,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     
     // determine whether this is a directory
     BatchScanner bs = createBatchScanner(namespaceTable, new Range(new Text(src)));
-    ColumnFQ.fetch(bs, isDir);
+    isDir.fetch(bs);
     bs.fetchColumnFamily(childrenFam);
     
     String isDir_ = null;
@@ -744,7 +771,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     Mutation childDelete = new Mutation(new Text(parent));
     Text srcText = new Text(src);
     childDelete.putDelete(childrenFam, srcText);
-    ColumnFQ.put(childDelete, infoModificationTime, now());
+    infoModificationTime.put(childDelete, now());
     
     ArrayList<Mutation> deletes = new ArrayList<Mutation>();
     getDeletes(srcText, deletes);
@@ -796,6 +823,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
           }
         }
       }
+      bs.close();
       bw.close();
       log.info("Host -> block map " + hostBlockMap);
 
@@ -889,6 +917,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
       throw new IOException("file not found: " + src);
     }
     
+    boolean underConst = false;
     fileLength = 0L;
     long blockOffset = 0L;
     for(Text id : IDs.keySet()) {
@@ -905,12 +934,15 @@ public class DistributedNamenodeProxy implements FakeNameNode {
       ArrayList<DatanodeInfo> dni = new ArrayList<DatanodeInfo>();
       bs = createBatchScanner(blocksTable, new Range(idString));
       bs.fetchColumnFamily(datanodesFam);
-      ColumnFQ.fetch(bs, infoBlockSize);
+      infoBlockSize.fetch(bs);
       try {
         for (Entry<Key,Value> entry : bs) {
           if (infoBlockSize.hasColumns(entry.getKey())) {
             blockSize = Long.parseLong(new String(entry.getValue().get()));
             fileLength += blockSize;
+            if (blockSize == 0) {
+              underConst = true;
+            }
             log.info("got size " + blockSize + " for block " + blockIDString);
           } else if (entry.getKey().getColumnFamily().equals(datanodesFam)) {
             String host = entry.getKey().getColumnQualifier().toString();
@@ -935,17 +967,16 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     }
     
     // TODO: sort locatedBlocks by network-distance from client
-    boolean underConst = false;
-    log.info("Reporting file size of " + fileLength);
-    BatchWriter bw = createBatchWriter(namespaceTable);
-    try {
-      Mutation m = new Mutation(src);
-      ColumnFQ.put(m, infoSize, new Value(Long.toString(fileLength).getBytes()));
-      bw.addMutation(m);
-      bw.close();
-    } catch (Exception ex) {
-      throw new IOException(ex);
-    }
+    log.info("Reporting file size of " + fileLength + " underConstruction = " + true);
+//    BatchWriter bw = createBatchWriter(namespaceTable);
+//    try {
+//      Mutation m = new Mutation(src);
+//      ColumnFQ.put(m, infoSize, new Value(Long.toString(fileLength).getBytes()));
+//      bw.addMutation(m);
+//      bw.close();
+//    } catch (Exception ex) {
+//      throw new IOException(ex);
+//    }
     return new LocatedBlocks(fileLength, locatedBlocks, underConst);
   }
   
@@ -1013,8 +1044,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
    * This method is currently doing a lot of lookups ...
    */
   @Override
-  public DirectoryListing getListing(String src, byte[] startAfter)
-      throws AccessControlException, FileNotFoundException, UnresolvedLinkException, IOException {
+  public DirectoryListing getListing(String src, byte[] startAfter) throws IOException {
     log.info("using getListing " + src);
     // TODO: use startAfter and needLocation
     
@@ -1023,7 +1053,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     String isDirFlag = null;
     BatchScanner bs = createBatchScanner(namespaceTable, new Range(new Text(src)));
     bs.fetchColumnFamily(childrenFam);
-    ColumnFQ.fetch(bs, isDir);
+    isDir.fetch(bs);
     List<String> children = new ArrayList<String>();
     try {
       for (Entry<Key,Value> entry : bs) {
@@ -1143,7 +1173,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     
     src = normalizePath(src);
     BatchScanner bs = createBatchScanner(namespaceTable, new Range(new Text(src)));
-    ColumnFQ.fetch(bs, isDir);
+    isDir.fetch(bs);
     try {
       for (Entry<Key,Value> entry : bs) {
         if (isDir.hasColumns(entry.getKey())) {
@@ -1162,7 +1192,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     byte[] parentPath = getParentPath(src);
     
     bs = createBatchScanner(namespaceTable, new Range(new Text(parentPath)));
-    ColumnFQ.fetch(bs, isDir);
+    isDir.fetch(bs);
     bs.fetchColumnFamily(childrenFam);
     String isDirString = null;
     try {
@@ -1190,8 +1220,8 @@ public class DistributedNamenodeProxy implements FakeNameNode {
       try {
         bw.addMutation(m);
         m = new Mutation(new Text(src));
-        ColumnFQ.put(m, isDir, new Value("Y".getBytes()));
-        ColumnFQ.put(m, infoModificationTime, new Value(Long.toString(System.currentTimeMillis()).getBytes()));
+        isDir.put(m, new Value("Y".getBytes()));
+        infoModificationTime.put(m, new Value(Long.toString(System.currentTimeMillis()).getBytes()));
         bw.addMutation(m);
       } finally {
         bw.close();
@@ -1213,7 +1243,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
   @Override
   public UpgradeCommand processUpgradeCommand(UpgradeCommand comm)
       throws IOException {
-    log.info("using processUpgradeCommand");
+    unimplemented(comm);
     return null;
   }
   
@@ -1248,44 +1278,6 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     
   }
   
-  /**
-   * helpers 
-   * both of these write to blocksTable and datanodesTable
-   * 
-   * @param host
-   * @param hblocks
-   * @throws IOException
-   */
-  private void recordHostBlocks(String host, long[] hblocks) throws IOException {
-    try {
-      if(hblocks.length == 0)
-        return;
-      
-      Mutation hostData = new Mutation(new Text(host));
-      for(int i=0; i < hblocks.length; i++)
-        hostData.put(blocksFam, new Text(Long.toString(hblocks[i]).getBytes()), blank);
-      BatchWriter writer = createBatchWriter(datanodesTable);
-      try {
-        writer.addMutation(hostData);
-      } finally {
-        writer.close();
-      }
-      
-      writer = createBatchWriter(blocksTable);
-      try {
-        for(int i=0; i < hblocks.length; i++) {
-          Mutation block = new Mutation(new Text(Long.toString(hblocks[i]).getBytes()));
-          block.put(datanodesFam, new Text(host.getBytes()), blank);
-          writer.addMutation(block);
-        }
-      } finally {
-        writer.close();
-      }
-    } catch (MutationsRejectedException ex) {
-      throw new IOException(ex);
-    }
-  }
-  
   @Override
   public boolean recoverLease(String src, String clientName) throws IOException {
     unimplemented(src, clientName);
@@ -1294,8 +1286,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
   
   @Override
   public void refreshNodes() throws IOException {
-    log.info("using refreshNodes");
-    
+    unimplemented();
   }
   
   @Override
@@ -1305,11 +1296,10 @@ public class DistributedNamenodeProxy implements FakeNameNode {
     
     // record this datanode's info
     try {
-      Connector conn = getConnector();
       if (conn != null) {
         BatchWriter bw = createBatchWriter(datanodesTable);
         Mutation reg = new Mutation(new Text(registration.name.getBytes()));
-        ColumnFQ.put(reg, infoStorageID, new Value(registration.storageID.getBytes()));
+        infoStorageID.put(reg, new Value(registration.storageID.getBytes()));
         try {
           try {
             bw.addMutation(reg);
@@ -1321,7 +1311,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
         }
       }
     } catch (Throwable ex) {
-      log.info("Ignoring exceptiong, maybe accumulo is not yet initialized? " + ex);
+      log.info("Ignoring exception, maybe accumulo is not yet initialized? " + ex);
     }
     // clients get this info in a list of targets from addBlock()
     return registration;
@@ -1337,14 +1327,18 @@ public class DistributedNamenodeProxy implements FakeNameNode {
   }
   
   FileStatus getFileStatus(String src) throws IOException {
-    BatchScanner bs = createBatchScanner(namespaceTable, new Range(src));
-    ColumnFQ.fetch(bs, isDir);
     FileStatus result = new FileStatus(false, false);
-    for (Entry<Key,Value> entry : bs) {
-      result.exists = true;
-      if (new String(entry.getValue().get()).equals("Y")) {
-        result.isDir = true;
+    BatchScanner bs = createBatchScanner(namespaceTable, new Range(src));
+    try {
+      isDir.fetch(bs);
+      for (Entry<Key,Value> entry : bs) {
+        result.exists = true;
+        if (new String(entry.getValue().get()).equals("Y")) {
+          result.isDir = true;
+        }
       }
+    } finally {
+      bs.close();
     }
     return result;
   }
@@ -1416,83 +1410,106 @@ public class DistributedNamenodeProxy implements FakeNameNode {
   
   @Override
   public void renewLease(String clientName) throws IOException {
-    log.info("using renewLease");
-    
+    unimplemented(clientName);
   }
   
   @Override
   public void reportBadBlocks(LocatedBlock[] blocks) throws IOException {
-    log.info("using reportBadBlocks");
+    unimplemented((Object)blocks);
   }
   
   @Override
   public void saveNamespace() throws IOException {
-    log.info("using saveNamespace");
-    
+    unimplemented();
   }
   
+  private static class SendResult {
+    List<DatanodeCommand> commands = new ArrayList<DatanodeCommand>();
+    List<Mutation> deletes = new ArrayList<Mutation>();
+  }
+  
+  // try to send a heartbeat.. if it times out, do nothing: we are probably recovering the metadata tables
   @Override
   public DatanodeCommand[] sendHeartbeat(final DatanodeRegistration registration,
       final long capacity, final long dfsUsed, final long remaining, final int xmitsInProgress,
       final int xceiverCount) throws IOException {
-    log.info("using sendHeartbeat");
-    if (System.currentTimeMillis() - start < 10*1000)
-      return new DatanodeCommand[0];
     
-    // update datanodes table with info
-    // skip this if none of the numbers have changed
-    // TODO: get last numbers from a lookup
-    if(capacity != lastCapacity || 
-        dfsUsed != lastDfsUsed ||
-        remaining != lastRemaining) {
-      Connector conn;
-      try {
-        conn = getConnector();
-      } catch (Throwable ex) {
-        // probably not initialized
-        return new DatanodeCommand[0];
-      }
-      try {
-        if (conn != null) {
-          BatchWriter bw = createBatchWriter(conn, datanodesTable);
-          Mutation m = new Mutation(new Text(registration.name.getBytes()));
-          ColumnFQ.put(m, infoCapacity, new Value(Long.toString(capacity).getBytes()));
-          ColumnFQ.put(m, infoUsed, new Value(Long.toString(dfsUsed).getBytes()));
-          ColumnFQ.put(m, DistributedNamenodeProxy.remaining, new Value(Long.toString(remaining).getBytes()));
+    FutureTask<SendResult> future = new FutureTask<SendResult>(new Callable<SendResult>() {
+      @Override
+      public SendResult call() throws Exception {
+        SendResult result = new SendResult();
+        
+        log.info("using sendHeartbeat");
+        if (!conn.tableOperations().exists(datanodesTable))
+          return result;
+        // update datanodes table with info
+        // skip this if none of the numbers have changed
+        // TODO: get last numbers from a lookup
+        if(capacity != lastCapacity || 
+            dfsUsed != lastDfsUsed ||
+            remaining != lastRemaining) {
           try {
-            bw.addMutation(m);
-          } finally {
-            bw.close();
+            BatchWriter bw = createBatchWriter(conn, datanodesTable);
+            Mutation m = new Mutation(new Text(registration.name.getBytes()));
+            infoCapacity.put(m, new Value(Long.toString(capacity).getBytes()));
+            infoUsed.put(m, new Value(Long.toString(dfsUsed).getBytes()));
+            infoIpcPort.put(m, new Value(Integer.toString(registration.getIpcPort()).getBytes()));
+            DistributedNamenodeProxy.remaining.put(m, new Value(Long.toString(remaining).getBytes()));
+            try {
+              bw.addMutation(m);
+            } finally {
+              bw.close();
+            }
+          } catch (Exception ex) {
+            log.error(ex, ex);
           }
         }
-      } catch (Exception ex) {
-        log.error(ex, ex);
+        lastCapacity = capacity;
+        lastDfsUsed = dfsUsed;
+        lastRemaining = remaining;
+        // return a list of commands for the data node
+        List<DatanodeCommand> commands = new ArrayList<DatanodeCommand>();
+        try {
+          BatchScanner bs = createBatchScanner(datanodesTable, new Range(registration.getName()));
+          bs.fetchColumnFamily(commandFam);
+          for (Entry<Key,Value> entry : bs) {
+            Key key = entry.getKey();
+            DatanodeCommand command = (DatanodeCommand)deserialize(entry.getValue().get());
+            log.info("found datanode Command " + command);
+            commands.add(command);
+            Mutation m = new Mutation(key.getRow());
+            m.putDelete(key.getColumnFamily(), key.getColumnQualifier());
+            result.deletes.add(m);
+          }
+          bs.close();
+        } catch (Exception ex) {
+          throw new IOException(ex);
+        }
+
+        return result;
       }
-    }
-    lastCapacity = capacity;
-    lastDfsUsed = dfsUsed;
-    lastRemaining = remaining;
-    // return a list of commands for the data node
-    List<DatanodeCommand> commands = new ArrayList<DatanodeCommand>();
+    });
+    
+    executor.execute(future);
     try {
-      BatchScanner bs = createBatchScanner(datanodesTable, new Range(registration.getName()));
-      bs.fetchColumnFamily(commandFam);
-      BatchWriter bw = createBatchWriter(datanodesTable);
-      for (Entry<Key,Value> entry : bs) {
-        Key key = entry.getKey();
-        DatanodeCommand command = (DatanodeCommand)deserialize(entry.getValue().get());
-        log.info("found datanode Command " + command);
-        commands.add(command);
-        Mutation m = new Mutation(key.getRow());
-        m.putDelete(key.getColumnFamily(), key.getColumnQualifier());
-        bw.addMutation(m);
+      synchronized(future) {
+        future.wait(1000);
       }
-      bs.close();
-      bw.close();
-    } catch (Exception ex) {
-      throw new IOException(ex);
+    } catch (InterruptedException ex) {
+      // ignored
     }
-    return commands.toArray(new DatanodeCommand[0]);
+    try {
+      if (future.isDone()) {
+        SendResult result = future.get();
+        BatchWriter bw = createBatchWriter(datanodesTable);
+        bw.addMutations(result.deletes);
+        bw.close();
+        return result.commands.toArray(new DatanodeCommand[0]);
+      }
+    } catch (Exception ex) {
+      log.error(ex, ex);
+    }
+    return new DatanodeCommand[0];
   }
   
   
@@ -1528,8 +1545,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
   @Override
   public void setOwner(String src, String username, String groupname)
       throws IOException {
-    log.info("using setOwner");
-    
+    unimplemented(src, username, groupname);    
   }
   
   @Override
@@ -1542,7 +1558,7 @@ public class DistributedNamenodeProxy implements FakeNameNode {
         BatchWriter bw = createBatchWriter(namespaceTable);
         try {
           Mutation m = new Mutation(src);
-          ColumnFQ.put(m, infoPermission, new Value(permission.toString().getBytes()));
+          infoPermission.put(m, new Value(permission.toString().getBytes()));
           bw.addMutation(m);
         } finally {
           bw.close();
@@ -1556,41 +1572,31 @@ public class DistributedNamenodeProxy implements FakeNameNode {
   @Override
   public void setQuota(String path, long namespaceQuota, long diskspaceQuota)
       throws IOException {
-    log.info("using setQuota");
-    
+    unimplemented(path, namespaceQuota, diskspaceQuota);
   }
   
   @Override
   public boolean setReplication(String src, short replication)
       throws IOException {
-    log.info("using setReplication");
+    unimplemented(src, replication);
     return false;
   }
   
   @Override
   public boolean setSafeMode(SafeModeAction action) throws IOException {
-    log.info("using setSafeMode");
+    unimplemented(action);
     return false;
   }
   
   
   @Override
   public void setTimes(String src, long mtime, long atime) throws IOException {
-    log.info("using setTimes");
-    
-  }
-  
-  public void stop() {
+    unimplemented(src, mtime, atime);
   }
   
   @Override
   public NamespaceInfo versionRequest() throws IOException {
-    log.info("using versionRequest");
-    // TODO: find out how to get namespace id
-    // could store this in the info of the / entry
-    NamespaceInfo nsi = new NamespaceInfo(384837986, 0, 0);
-    //throw new RuntimeException();
-    return nsi;
+    throw new NotImplementedException();
   }
   
 }

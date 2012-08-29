@@ -4,7 +4,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Arrays;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.BlockLocation;
@@ -27,11 +26,8 @@ import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier;
 import org.apache.hadoop.hdfs.server.common.UpgradeStatusReport;
-import org.apache.hadoop.hdfs.server.namenode.DistributedNamenodeProxy;
-import org.apache.hadoop.hdfs.server.namenode.DistributedNamenodeProxy.ConnectInfo;
 import org.apache.hadoop.hdfs.server.namenode.FakeNameNode;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
-import org.apache.hadoop.hdfs.server.namenode.SwitchingNameNode;
 import org.apache.hadoop.hdfs.server.namenode.ZookeeperNameNode;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.security.AccessControlException;
@@ -39,11 +35,6 @@ import org.apache.hadoop.security.token.SecretManager.InvalidToken;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.Progressable;
 import org.apache.log4j.Logger;
-
-import com.netflix.curator.framework.CuratorFramework;
-import com.netflix.curator.framework.CuratorFrameworkFactory;
-import com.netflix.curator.framework.CuratorFrameworkFactory.Builder;
-import com.netflix.curator.retry.RetryUntilElapsed;
 
 // Basically a copy of DistributedFileSystem providing a different NN client implementation
 public class DNNFileSystem extends FileSystem {
@@ -71,22 +62,14 @@ public class DNNFileSystem extends FileSystem {
   public void initialize(URI uri, Configuration conf) throws IOException {
     super.initialize(uri, conf);
     setConf(conf);
-    ConnectInfo info = new ConnectInfo(uri);
-    FakeNameNode fakefakefake = null;
+    FakeNameNode fake = null;
     try {
-      Builder builder = CuratorFrameworkFactory.builder().namespace(DNNConstants.DNN);
-      builder.connectString(info.zookeepers);
-      builder.retryPolicy(new RetryUntilElapsed(120*1000, 500));
-      //builder.aclProvider(aclProvider);
-      CuratorFramework client = builder.build();
-      client.start();
-      ZookeeperNameNode zoo = new ZookeeperNameNode(client);
-      fakefakefake = SwitchingNameNode.create(zoo, info);
+      fake = new ZookeeperNameNode(conf, uri);
     } catch (Exception ex) {
       throw new IOException(ex);
     }
-    log.info("Creating DFSClient with fake name node " + fakefakefake);
-    this.dfs = new DFSClient(null, fakefakefake, conf, statistics);
+    log.info("Creating DFSClient with fake name node " + fake);
+    this.dfs = new DFSClient(null, fake, conf, statistics);
     this.uri = uri;
     this.workingDir = getHomeDirectory();
   }
