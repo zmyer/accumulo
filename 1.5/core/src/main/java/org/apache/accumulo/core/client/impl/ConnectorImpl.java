@@ -18,7 +18,6 @@ package org.apache.accumulo.core.client.impl;
 
 import java.nio.ByteBuffer;
 
-import org.apache.accumulo.cloudtrace.instrument.Tracer;
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.BatchDeleter;
@@ -36,16 +35,13 @@ import org.apache.accumulo.core.client.admin.SecurityOperations;
 import org.apache.accumulo.core.client.admin.SecurityOperationsImpl;
 import org.apache.accumulo.core.client.admin.TableOperations;
 import org.apache.accumulo.core.client.admin.TableOperationsImpl;
-import org.apache.accumulo.core.client.impl.thrift.ClientService;
 import org.apache.accumulo.core.master.state.tables.TableState;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.security.thrift.AuthInfo;
-import org.apache.accumulo.core.security.thrift.SecurityErrorCode;
 import org.apache.accumulo.core.util.ArgumentChecker;
-import org.apache.log4j.Logger;
 
 public class ConnectorImpl extends Connector {
-  static private final Logger log = Logger.getLogger(ConnectorImpl.class);
+  //static private final Logger log = Logger.getLogger(ConnectorImpl.class);
   
   private Instance instance;
   private AuthInfo credentials;

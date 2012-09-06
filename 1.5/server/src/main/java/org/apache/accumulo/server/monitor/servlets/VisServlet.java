@@ -119,7 +119,6 @@ public class VisServlet extends BasicServlet {
   protected void pageBody(HttpServletRequest req, HttpServletResponse response, StringBuilder sb) throws IOException {
     StringBuffer urlsb = req.getRequestURL();
     urlsb.setLength(urlsb.lastIndexOf("/") + 1);
-    String url = urlsb.toString();
     VisualizationConfig cfg = new VisualizationConfig();
     
     String s = req.getParameter("shape");
