@@ -62,11 +62,17 @@ import com.netflix.curator.framework.CuratorFrameworkFactory;
 import com.netflix.curator.framework.CuratorFrameworkFactory.Builder;
 import com.netflix.curator.retry.RetryUntilElapsed;
 
+// Provide a limited NameNode interface that stores data into zookeeper; 
+// Lazily create and redirect requests to non-metadata files to the Accumulo-based NameNode.
 public class ZookeeperNameNode implements FakeNameNode {
   static private Logger log = Logger.getLogger(ZookeeperNameNode.class); 
   
-  CuratorFramework keeper;
-  Random random = new Random();
+  private final Configuration conf;
+  private final CuratorFramework keeper;
+  private final Random random = new Random();
+  private final String instance;
+
+  private DistributedNamenodeProxy dist = null;
   
   public static class FileInfo implements Serializable {
     private static final long serialVersionUID = 1L;
@@ -85,6 +91,7 @@ public class ZookeeperNameNode implements FakeNameNode {
     public long size;
   }
   
+  // An object to store at a zookeeper node that represents a directory's metadata
   public static class DirInfo implements Serializable {
     private static final long serialVersionUID = 1L;
     
@@ -93,8 +100,10 @@ public class ZookeeperNameNode implements FakeNameNode {
     }
 
     public long createTime;
+    public String permission = "rwxrwxrwx";
   }
   
+  // An object to store at a zookeeeper node that represents block metadata
   public static class BlockInfo implements Serializable {
     private static final long serialVersionUID = 1L;
     
@@ -110,22 +119,19 @@ public class ZookeeperNameNode implements FakeNameNode {
     boolean complete;
   }
   
-  static Pattern isRoot = Pattern.compile("/accumulo(|/instance_id.*|/version.*|/walogArchive|/wal(/.*|$)|/recovery.*|/tables$|/tables/(\\!0|0|1|2)(/.*|$))");
+  // Metadata for these files are stored in zookeeper
+  static Pattern metaDataFileNames = Pattern.compile("/accumulo(|/instance_id.*|/version.*|/walogArchive|/wal(/.*|$)|/recovery.*|/tables$|/tables/(\\!0|\\!1|\\!2|\\!3)(/.*|$))");
   
   static private boolean isZooName(String path) {
-    boolean result = isRoot.matcher(path).matches();
+    boolean result = metaDataFileNames.matcher(path).matches();
     log.info("Looking at " + path + " isZooName " + result);
     return result;
   }
+  
+  // By convention, blockIds tracked in zookeeper are negative
   static public boolean isZooBlockId(long blockId) {
     return blockId < 0;
   }
-  
-  private final URI uri;
-  private DistributedNamenodeProxy dist = null;
-  private final String instance;
-
-  private long start = System.currentTimeMillis();
   
   private static URI getURI(Configuration conf) throws IOException {
     try {
@@ -140,16 +146,18 @@ public class ZookeeperNameNode implements FakeNameNode {
   }
 
   public ZookeeperNameNode(Configuration conf, URI uri) throws IOException {
-    ConnectInfo info = new ConnectInfo(uri);
+    this.conf = conf;
+    ConnectInfo info = new ConnectInfo(conf);
     instance = info.instance;
     Builder builder = CuratorFrameworkFactory.builder();
     builder.connectString(info.zookeepers);
+    // TODO: configure timeout to zookeeper
+    // TODO: get constant configuration 
     builder.retryPolicy(new RetryUntilElapsed(120*1000, 500));
     //builder.aclProvider(aclProvider);
     CuratorFramework client = builder.build();
     client.start();
     this.keeper = client;
-    this.uri = uri;
     try {
       findDatanodes();
     } catch (Exception e) {
@@ -157,12 +165,13 @@ public class ZookeeperNameNode implements FakeNameNode {
     }
   }
   
-  private static void unimplemented(Object ... args) {
+  private static void notImplementedWarning(Object ... args) {
     Throwable t = new Throwable();
     String method = t.getStackTrace()[1].getMethodName();
     log.warn(method + " unimplemented, args: " + Arrays.asList(args), t);
   }
   
+  // Create the truly distributed namenode connection, hopefully enough datanodes and tservers are running 
   private FakeNameNode dist() {
     try {
       if (dist == null) {
@@ -179,7 +188,7 @@ public class ZookeeperNameNode implements FakeNameNode {
           }
         }
         if (atLeastOneTserver)
-          dist = new DistributedNamenodeProxy(keeper, uri);
+          dist = new DistributedNamenodeProxy(keeper, conf);
       }
     } catch (Exception ex) {
       log.warn(ex, ex);
@@ -276,7 +285,8 @@ public class ZookeeperNameNode implements FakeNameNode {
         byte[] current = keeper.getData().forPath(path);
         log.info("Current value for " + src + " is " + new Text(current));
         if (overwrite) {
-          keeper.setData().forPath(path, data);
+          delete(src, true);
+          create(src, masked, clientName, overwrite, createParent, replication, blockSize);
         } else {
           throw new FileAlreadyExistsException(src);
         }
@@ -304,24 +314,65 @@ public class ZookeeperNameNode implements FakeNameNode {
   
   @Override
   public boolean recoverLease(String src, String clientName) throws IOException {
-    unimplemented(src, clientName);
+    notImplementedWarning(src, clientName);
     return true;
   }
   
   @Override
   public boolean setReplication(String src, short replication) throws IOException {
-    unimplemented(src, replication);
-    return true;
+    if (!isZooName(src))
+      return dist().setReplication(src, replication);
+    try {
+      String path = DNNConstants.NAMESPACE_PATH + src;
+      byte[] data = keeper.getData().forPath(path);
+      Object obj = deserialize(data);
+      if (obj == null) {
+        obj = new DirInfo(System.currentTimeMillis());
+      }
+      if (obj instanceof FileInfo) {
+        FileInfo info = (FileInfo)obj;
+        info.replication = replication;
+        keeper.setData().forPath(path, serialize(obj));
+        return true;
+      }
+      return false;
+    } catch (Exception ex) {
+      throw new IOException(ex);
+    }
   }
   
   @Override
   public void setPermission(String src, FsPermission permission) throws IOException {
-    unimplemented(src, permission);
+    if (!isZooName(src)) {
+      dist().setPermission(src, permission);
+      return;
+    }
+    try {
+      String path = DNNConstants.NAMESPACE_PATH + src;
+      byte[] data = keeper.getData().forPath(path);
+      Object obj = deserialize(data);
+      if (obj == null) {
+        obj = new DirInfo(System.currentTimeMillis());
+      }
+      if (obj instanceof FileInfo) {
+        FileInfo info = (FileInfo)obj;
+        info.permission = permission.toString();
+        obj = info;
+      }
+      if (obj instanceof DirInfo) {
+        DirInfo info = (DirInfo)obj;
+        info.permission = permission.toString();
+        obj = info;
+      }
+      keeper.setData().forPath(path, serialize(obj));
+    } catch (Exception ex) {
+      throw new IOException(ex);
+    }
   }
   
   @Override
   public void setOwner(String src, String username, String groupname) throws IOException {
-    unimplemented(src, username, groupname);
+    notImplementedWarning(src, username, groupname);
   }
   
   @Override
@@ -373,7 +424,7 @@ public class ZookeeperNameNode implements FakeNameNode {
       throw new IOException(e);
     }
     
-    short defaultReplication = 3; // TODO: read config
+    short defaultReplication = (short)conf.getInt("dfs.replication", 3);
     short replication = -1;
     try {
       String path = DNNConstants.NAMESPACE_PATH + src;
@@ -391,6 +442,8 @@ public class ZookeeperNameNode implements FakeNameNode {
     
     // DistibutedNameNode holds the positive blocks
     long blockID = -Math.abs(random.nextLong());
+    // probably never happen
+    if (blockID == 0) blockID = -1;
     Block b = new Block(blockID, 0, 0);
     List<String> replicas = randomList.subList(0, Math.min(replication, randomList.size()));
     List<DatanodeInfo> targets = new ArrayList<DatanodeInfo>();
@@ -472,7 +525,7 @@ public class ZookeeperNameNode implements FakeNameNode {
   
   @Override
   public void reportBadBlocks(LocatedBlock[] blocks) throws IOException {
-    unimplemented((Object[])blocks);
+    notImplementedWarning((Object[])blocks);
   }
 
   private Object getInfo(String path) throws Exception {
@@ -566,7 +619,6 @@ public class ZookeeperNameNode implements FakeNameNode {
     } catch (KeeperException.NoNodeException ex) {
       return;
     }
-    log.info("children of " + path + " is " + children);
     Object obj = deserialize(keeper.getData().forPath(path));
     if (removeBlocks && obj instanceof FileInfo) {
       // create the datanode command to (eventually) delete the blocks
@@ -691,57 +743,57 @@ public class ZookeeperNameNode implements FakeNameNode {
   
   @Override
   public long[] getStats() throws IOException {
-    unimplemented();
+    notImplementedWarning();
     return null;
   }
   
   @Override
   public DatanodeInfo[] getDatanodeReport(DatanodeReportType type) throws IOException {
-    unimplemented(type);
+    notImplementedWarning(type);
     return null;
   }
   
   @Override
   public long getPreferredBlockSize(String filename) throws IOException {
-    unimplemented(filename);
+    notImplementedWarning(filename);
     return 0;
   }
   
   @Override
   public boolean setSafeMode(SafeModeAction action) throws IOException {
-    unimplemented(action);
+    notImplementedWarning(action);
     return false;
   }
   
   @Override
   public void saveNamespace() throws IOException {
-   unimplemented();
+   notImplementedWarning();
   }
   
   @Override
   public void refreshNodes() throws IOException {
-    unimplemented();
+    notImplementedWarning();
   }
   
   @Override
   public void finalizeUpgrade() throws IOException {
-    unimplemented();
+    notImplementedWarning();
   }
   
   @Override
   public UpgradeStatusReport distributedUpgradeProgress(UpgradeAction action) throws IOException {
-    unimplemented();
+    notImplementedWarning();
     return null;
   }
   
   @Override
   public void metaSave(String filename) throws IOException {
-    unimplemented(filename);
+    notImplementedWarning(filename);
   }
   
   @Override
   public void setBalancerBandwidth(long bandwidth) throws IOException {
-    unimplemented(bandwidth);
+    notImplementedWarning(bandwidth);
   }
   
   @Override
@@ -767,47 +819,79 @@ public class ZookeeperNameNode implements FakeNameNode {
     return null;
   }
   
+  static private class Summary {
+    long length = 0;
+    long fileCount = 0;
+    long directoryCount = 0;
+  }
+  
   @Override
   public ContentSummary getContentSummary(String path) throws IOException {
-    unimplemented(path);
-    return null;
+    Summary result = new Summary();
+    DirectoryListing listing = this.getListing(path, null);
+    for (HdfsFileStatus child : listing.getPartialListing()) {
+      if (isZooName(child.getFullName(path))) {
+        zooRecurse(child.getFullName(path), result);
+      } else {
+        ContentSummary dnnSummary = dist.getContentSummary(path);
+        result.length += dnnSummary.getLength();
+        result.fileCount += dnnSummary.getFileCount();
+        result.directoryCount += dnnSummary.getDirectoryCount();
+      }
+    }
+    return new ContentSummary(result.length, result.fileCount, result.directoryCount);
+  }
+  
+  private void zooRecurse(String src, Summary summary) throws IOException {
+    HdfsFileStatus result = getFileInfo(src);
+    if (result.isDir()) {
+      summary.directoryCount++;
+      for (HdfsFileStatus child : getListing(src, null).getPartialListing()) {
+        zooRecurse(child.getFullName(src), summary);
+      }
+      return;
+    }
+    summary.fileCount++;
+    summary.length += result.getLen(); 
   }
   
   @Override
   public void setQuota(String path, long namespaceQuota, long diskspaceQuota) throws IOException {
-    unimplemented(path, namespaceQuota, diskspaceQuota);
+    notImplementedWarning(path, namespaceQuota, diskspaceQuota);
   }
   
   @Override
   public void fsync(String src, String client) throws IOException {
-    unimplemented(src, client);
+    FakeNameNode dist = dist();
+    if (dist != null)
+      dist.fsync(src, client);
   }
   
   @Override
   public void setTimes(String src, long mtime, long atime) throws IOException {
-    unimplemented(src, mtime, atime);
+    notImplementedWarning(src, mtime, atime);
   }
   
   @Override
   public Token<DelegationTokenIdentifier> getDelegationToken(Text renewer) throws IOException {
-    unimplemented(renewer);
+    notImplementedWarning(renewer);
     return null;
   }
   
   @Override
   public long renewDelegationToken(Token<DelegationTokenIdentifier> token) throws IOException {
-    unimplemented(token);
+    notImplementedWarning(token);
     return 0;
   }
   
   @Override
   public void cancelDelegationToken(Token<DelegationTokenIdentifier> token) throws IOException {
-    unimplemented(token);
+    notImplementedWarning(token);
   }
   
   @Override
   public long getProtocolVersion(String protocol, long clientVersion) throws IOException {
-    unimplemented(protocol, clientVersion);
+    notImplementedWarning(protocol, clientVersion);
     return 0;
   }
   
@@ -815,6 +899,7 @@ public class ZookeeperNameNode implements FakeNameNode {
   public DatanodeRegistration register(DatanodeRegistration registration) throws IOException {
     log.info("register " + registration);
     if (keeper != null) {
+      // TODO: don't need to *always* update zookeeper, right?
       log.info("registering in zookeeper as " + registration.name);
       ByteArrayOutputStream stream = new ByteArrayOutputStream();
       DataOutputStream data = new DataOutputStream(stream);
@@ -894,7 +979,7 @@ public class ZookeeperNameNode implements FakeNameNode {
   
   @Override
   public void blocksBeingWrittenReport(DatanodeRegistration registration, long[] blocks) throws IOException {
-    unimplemented(registration, new BlockListAsLongs(blocks));
+    notImplementedWarning(registration, new BlockListAsLongs(blocks));
   }
   
   @Override
@@ -925,7 +1010,7 @@ public class ZookeeperNameNode implements FakeNameNode {
   
   @Override
   public void errorReport(DatanodeRegistration registration, int errorCode, String msg) throws IOException {
-    unimplemented(registration, errorCode, msg);
+    notImplementedWarning(registration, errorCode, msg);
   }
   
   @Override
@@ -934,26 +1019,25 @@ public class ZookeeperNameNode implements FakeNameNode {
     // TODO: find out how to get namespace id
     // could store this in the info of the / entry
     NamespaceInfo nsi = new NamespaceInfo(384837986, 0, 0);
-    //throw new RuntimeException();
     return nsi;
   }
   
   @Override
   public UpgradeCommand processUpgradeCommand(UpgradeCommand comm) throws IOException {
-    unimplemented(comm);
+    notImplementedWarning(comm);
     return null;
   }
   
   @Override
   public long nextGenerationStamp(Block block, boolean fromNN) throws IOException {
-    unimplemented(block, fromNN);
+    notImplementedWarning(block, fromNN);
     return 0;
   }
   
   @Override
   public void commitBlockSynchronization(Block block, long newgenerationstamp, long newlength, boolean closeFile, boolean deleteblock, DatanodeID[] newtargets)
       throws IOException {
-    unimplemented(block, newgenerationstamp, newlength, closeFile, deleteblock, newtargets);
+    notImplementedWarning(block, newgenerationstamp, newlength, closeFile, deleteblock, newtargets);
   }
   
 }

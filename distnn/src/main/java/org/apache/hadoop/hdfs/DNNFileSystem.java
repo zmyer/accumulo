@@ -61,6 +61,7 @@ public class DNNFileSystem extends FileSystem {
 
   public void initialize(URI uri, Configuration conf) throws IOException {
     super.initialize(uri, conf);
+    log.info("URI: " + uri);
     setConf(conf);
     FakeNameNode fake = null;
     try {
@@ -587,6 +588,5 @@ public class DNNFileSystem extends FileSystem {
   public void setBalancerBandwidth(long bandwidth) throws IOException {
     dfs.setBalancerBandwidth(bandwidth);
   }
-  
   
 }
