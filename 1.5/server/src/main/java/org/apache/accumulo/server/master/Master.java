@@ -391,7 +391,11 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   }
   
   private int nonMetaDataTabletsAssignedOrHosted() {
-    return totalAssignedOrHosted() - assignedOrHosted(new Text(Constants.METADATA_TABLE_ID));
+    int metaTablets = assignedOrHosted(new Text(Constants.METADATA_TABLE_ID));
+    metaTablets += assignedOrHosted(new Text("!1"));
+    metaTablets += assignedOrHosted(new Text("!2"));
+    metaTablets += assignedOrHosted(new Text("!3"));
+    return totalAssignedOrHosted() - metaTablets;
   }
   
   private int notHosted() {
@@ -424,7 +428,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
         }
         break;
       case SAFE_MODE:
-        // Count offline tablets for the METADATA table
+        // Count offline tablets for the METADATA tables
         for (TabletGroupWatcher watcher : watchers) {
           result += watcher.getStats(meta).unassigned();
         }

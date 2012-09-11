@@ -119,9 +119,8 @@ public class MetadataConstraints implements Constraint {
           violations.add((short) 4);
       }
     }
-    
     if (row.length > 0 && row[0] == '!') {
-      if (row.length < 3 || row[1] != '0' || (row[2] != '<' && row[2] != ';')) {
+      if (row.length < 3 || row[1] < '0' || row[1] > '3' || (row[2] != '<' && row[2] != ';')) {
         if (violations == null)
           violations = new ArrayList<Short>();
         if (!violations.contains((short) 4))

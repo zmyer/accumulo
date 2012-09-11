@@ -53,7 +53,7 @@ public class KeyExtent implements WritableComparable<KeyExtent> {
   private static WeakHashMap<Text,WeakReference<Text>> tableIds = new WeakHashMap<Text,WeakReference<Text>>();
   static private final Set<Text> METASET = new HashSet<Text>();
   static {
-    for (String id : "!0,0,1,2".split(","))
+    for (String id : "!0,!1,!2,!3".split(","))
       METASET.add(new Text(id));
   }
   

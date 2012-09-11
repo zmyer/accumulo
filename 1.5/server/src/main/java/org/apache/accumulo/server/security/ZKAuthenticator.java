@@ -132,7 +132,7 @@ public final class ZKAuthenticator implements Authenticator {
         Map<String,Set<TablePermission>> tablePerms = new HashMap<String,Set<TablePermission>>();
         // Allow the root user to flush the !METADATA table
         tablePerms.put(Constants.METADATA_TABLE_ID, Collections.singleton(TablePermission.ALTER_TABLE));
-        for (String other : "0,1,2".split(",")) {
+        for (String other : "!1,!2,!3".split(",")) {
           tablePerms.put(other, new HashSet<TablePermission>(Arrays.asList(TablePermission.ALTER_TABLE,TablePermission.READ, TablePermission.WRITE)));
         }
         constructUser(rootuser, Tool.createPass(rootpass), rootPerms, tablePerms, Constants.NO_AUTHS);

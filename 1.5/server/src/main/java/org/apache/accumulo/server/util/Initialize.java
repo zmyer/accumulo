@@ -317,7 +317,7 @@ public class Initialize {
       mfw = FileOperations.getInstance().openWriter(defaultTabletFile, fs, conf, AccumuloConfiguration.getDefaultConfiguration());
       mfw.startDefaultLocalityGroup();
       Map<Key, Value> defaultData = new TreeMap<Key, Value>();
-      String ids[] = "0,1,2".split(",");
+      String ids[] = "!1,!2,!3".split(",");
       long now = System.currentTimeMillis();
       for (int i = 0; i < ids.length; i++) {
         Text extent = new Text(KeyExtent.getMetadataEntry(new Text(ids[i]), null));
@@ -330,7 +330,7 @@ public class Initialize {
         fs.mkdirs(new Path(ServerConstants.getTablesDir() + "/" + ids[i] + Constants.DEFAULT_TABLET_LOCATION));
       }
       // Add the file entry for the namespace root entry
-      Text extent = new Text(KeyExtent.getMetadataEntry(new Text("0"), null));
+      Text extent = new Text(KeyExtent.getMetadataEntry(new Text("!1"), null));
       String rootNSFile = Constants.DEFAULT_TABLET_LOCATION + "/00000_00002." + suffix;
       defaultData.put(new Key(extent, Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(rootNSFile), 0), new Value("1,0".getBytes()));
       for (Entry<Key,Value> entry : defaultData.entrySet()) {
@@ -339,12 +339,12 @@ public class Initialize {
       mfw.close();
       
       // write out the namespace data for / in the DistributedNameNode 
-      String rootNSDataFile = ServerConstants.getTablesDir() + "/0" + rootNSFile;
+      String rootNSDataFile = ServerConstants.getTablesDir() + "/!1" + rootNSFile;
       mfw = FileOperations.getInstance().openWriter(rootNSDataFile, fs, conf, AccumuloConfiguration.getDefaultConfiguration());
       mfw.startDefaultLocalityGroup();
       Text infoFam = new Text("info");
-      mfw.append(new Key(new Text("/"), infoFam, new Text("create_time"), now), new Value(Long.toString(now).getBytes()));
       mfw.append(new Key(new Text("/"), infoFam, new Text("isDir"), now), new Value("Y".getBytes()));
+      mfw.append(new Key(new Text("/"), infoFam, new Text("mtime"), now), new Value(Long.toString(now).getBytes()));
       mfw.close();
     }
     
@@ -411,10 +411,10 @@ public class Initialize {
     ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot, new byte[0], NodeExistsPolicy.FAIL);
     ZooReaderWriter.getInstance().putPersistentData(zkInstanceRoot + Constants.ZTABLES, Constants.ZTABLES_INITIAL_ID, NodeExistsPolicy.FAIL);
     TableManager.prepareNewTableState(uuid, Constants.METADATA_TABLE_ID, Constants.METADATA_TABLE_NAME, TableState.ONLINE, NodeExistsPolicy.FAIL);
-    TableManager.prepareNewTableState(uuid, "0", "namespace", TableState.ONLINE, NodeExistsPolicy.FAIL);
-    TableManager.prepareNewTableState(uuid, "1", "blocks", TableState.ONLINE, NodeExistsPolicy.FAIL);
-    TableManager.prepareNewTableState(uuid, "2", "datanodes", TableState.ONLINE, NodeExistsPolicy.FAIL);
-    for (String tableId  :"0,1,2".split(",")) {
+    TableManager.prepareNewTableState(uuid, "!1", "namespace", TableState.ONLINE, NodeExistsPolicy.FAIL);
+    TableManager.prepareNewTableState(uuid, "!2", "blocks", TableState.ONLINE, NodeExistsPolicy.FAIL);
+    TableManager.prepareNewTableState(uuid, "!3", "datanodes", TableState.ONLINE, NodeExistsPolicy.FAIL);
+    for (String tableId  :"!1,!2,!3".split(",")) {
       String configPath = zkInstanceRoot + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_CONF + "/";
       ZooReaderWriter.getInstance().putPersistentData(configPath + Property.TABLE_MAJC_RATIO.getKey(), "1".getBytes(), NodeExistsPolicy.FAIL);
       ZooReaderWriter.getInstance().putPersistentData(configPath + Property.TABLE_BLOCKCACHE_ENABLED, "true".getBytes(), NodeExistsPolicy.FAIL);

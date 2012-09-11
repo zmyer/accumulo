@@ -102,6 +102,13 @@ public class MetadataConstraintsTest {
     
     violations = mc.check(null, m);
     
+    assertEquals(null, violations);
+    
+    m = new Mutation(new Text("!7<"));
+    Constants.METADATA_PREV_ROW_COLUMN.put(m, new Value("bar".getBytes()));
+    
+    violations = mc.check(null, m);
+    
     assertNotNull(violations);
     assertEquals(1, violations.size());
     assertEquals(Short.valueOf((short) 4), violations.get(0));
