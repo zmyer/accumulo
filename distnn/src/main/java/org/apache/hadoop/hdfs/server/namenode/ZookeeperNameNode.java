@@ -120,7 +120,7 @@ public class ZookeeperNameNode implements FakeNameNode {
   }
   
   // Metadata for these files are stored in zookeeper
-  static Pattern metaDataFileNames = Pattern.compile("/accumulo(|/instance_id.*|/version.*|/walogArchive|/wal(/.*|$)|/recovery.*|/tables$|/tables/(\\!0|\\!1|\\!2|\\!3)(/.*|$))");
+  static Pattern metaDataFileNames = Pattern.compile("/$|/accumulo(|/instance_id.*|/version.*|/walogArchive|/wal(/.*|$)|/recovery.*|/tables$|/tables/(\\!0|\\!1|\\!2|\\!3)(/.*|$))");
   
   static private boolean isZooName(String path) {
     boolean result = metaDataFileNames.matcher(path).matches();
@@ -314,8 +314,28 @@ public class ZookeeperNameNode implements FakeNameNode {
   
   @Override
   public boolean recoverLease(String src, String clientName) throws IOException {
-    notImplementedWarning(src, clientName);
-    return true;
+    log.info("recoverLease " + src);
+    String path = DNNConstants.NAMESPACE_PATH + src;
+    try {
+      long length = 0;
+      for (String child : keeper.getChildren().forPath(path)) {
+        Object object = deserialize(keeper.getData().forPath(path + "/" + child));
+        if (object instanceof BlockInfo) {
+          BlockInfo info = (BlockInfo)object;
+          Block block = new Block(info.id);
+          String blockPath = DNNConstants.BLOCKS_PATH + "/" + block.getBlockName();
+          info = (BlockInfo)deserialize(keeper.getData().forPath(blockPath));
+          if (!info.complete) {
+            info.complete = true;
+            keeper.setData().forPath(blockPath);
+          }
+        }
+      }
+      return true;
+    } catch (Exception ex) {
+      log.error(ex, ex);
+      return false;
+    }
   }
   
   @Override
