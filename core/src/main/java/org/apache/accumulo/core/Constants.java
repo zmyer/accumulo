@@ -99,8 +99,7 @@ public class Constants {
   public static final String METADATA_DELETE_FLAG_PREFIX = "~del";
   public static final String METADATA_DELETE_FLAG_FOR_METADATA_PREFIX = "!!" + METADATA_DELETE_FLAG_PREFIX;
   public static final Range METADATA_DELETES_KEYSPACE = new Range(new Key(new Text(METADATA_DELETE_FLAG_PREFIX)), true, new Key(new Text("~dem")), false);
-  public static final Range METADATA_DELETES_FOR_METADATA_KEYSPACE = new Range(new Key(new Text(METADATA_DELETE_FLAG_FOR_METADATA_PREFIX)), true, new Key(
-      new Text("!!~dem")), false);
+  public static final Range METADATA_DELETES_FOR_METADATA_KEYSPACE = new Range(new Key(new Text(METADATA_DELETE_FLAG_FOR_METADATA_PREFIX)), true, new Key(new Text("!!~dem")), false);
   public static final String METADATA_BLIP_FLAG_PREFIX = "~blip"; // BLIP = bulk load in progress
   public static final Range METADATA_BLIP_KEYSPACE = new Range(new Key(new Text(METADATA_BLIP_FLAG_PREFIX)), true, new Key(new Text("~bliq")), false);
   
@@ -198,6 +197,7 @@ public class Constants {
   public static String getRootTabletDir(final AccumuloConfiguration conf) {
     return getMetadataTableDir(conf) + ZROOT_TABLET;
   }
+
   
   /**
    * @param conf
@@ -206,8 +206,6 @@ public class Constants {
   public static String getWalDirectory(final AccumuloConfiguration conf) {
     return getBaseDir(conf) + "/wal";
   }
-  
-  public static final String AUDITLOG = "Audit";
-  public static final String ZROOT_CURATOR_SERVICE = "root_tablet";
-  public static final String MASTER_CURATOR_SERVICE = "master";
+
+    public static final String AUDITLOG = "Audit";
 }

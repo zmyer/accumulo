@@ -37,14 +37,8 @@ import org.apache.accumulo.core.util.ByteBufferUtil;
 import org.apache.accumulo.core.util.CachedConfiguration;
 import org.apache.accumulo.core.util.OpTimer;
 import org.apache.accumulo.core.util.TextUtil;
-import org.apache.accumulo.fate.curator.CuratorUtil;
-import org.apache.curator.framework.CuratorFramework;
-import org.apache.curator.framework.CuratorFrameworkFactory;
-import org.apache.curator.x.discovery.ServiceDiscovery;
-import org.apache.curator.x.discovery.ServiceDiscoveryBuilder;
-import org.apache.curator.x.discovery.ServiceProvider;
-import org.apache.curator.x.discovery.strategies.RandomStrategy;
-import org.apache.curator.x.discovery.strategies.StickyStrategy;
+import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -73,11 +67,9 @@ public class ZooKeeperInstance implements Instance {
   private String instanceId = null;
   private String instanceName = null;
   
-  private final CuratorFramework curator;
-  // http://curator.incubator.apache.org/curator-x-discovery/index.html
-  private ServiceDiscovery<String> discovery;
-  private ServiceProvider<String> rootService;
-  private ServiceProvider<String> masterService;
+  private final ZooCache zooCache;
+  
+  private final String zooKeepers;
   
   private final int zooKeepersSessionTimeOut;
   
@@ -106,15 +98,10 @@ public class ZooKeeperInstance implements Instance {
   public ZooKeeperInstance(String instanceName, String zooKeepers, int sessionTimeout) {
     ArgumentChecker.notNull(instanceName, zooKeepers);
     this.instanceName = instanceName;
+    this.zooKeepers = zooKeepers;
     this.zooKeepersSessionTimeOut = sessionTimeout;
-    
-    // Need to create curator for getInstanceId
-    curator = constructCurator(zooKeepers, sessionTimeout).usingNamespace(Constants.ZROOT + Constants.ZINSTANCES);
-    this.instanceId = getInstanceID();
-    
-    // And now that we have the ID, we can set the namespace
-    curator.usingNamespace(Constants.ZROOT + '/' + getInstanceID());
-    setupDiscoveries(curator);
+    zooCache = ZooCache.getInstance(zooKeepers, sessionTimeout);
+    getInstanceID();
   }
   
   /**
@@ -142,59 +129,29 @@ public class ZooKeeperInstance implements Instance {
   public ZooKeeperInstance(UUID instanceId, String zooKeepers, int sessionTimeout) {
     ArgumentChecker.notNull(instanceId, zooKeepers);
     this.instanceId = instanceId.toString();
+    this.zooKeepers = zooKeepers;
     this.zooKeepersSessionTimeOut = sessionTimeout;
-    curator = constructCurator(zooKeepers, sessionTimeout).usingNamespace(Constants.ZROOT + '/' + getInstanceID());
-    
-    setupDiscoveries(curator);
-  }
-  
-  private CuratorFramework constructCurator(String zookeeperConnectString, int sessionTimeoutMs) {
-    return CuratorFrameworkFactory.builder().canBeReadOnly(true).sessionTimeoutMs(sessionTimeoutMs).retryPolicy(CuratorUtil.retry)
-        .connectString(zookeeperConnectString).build();
-  }
-  
-  private void setupDiscoveries(CuratorFramework curator2) {
-    try {
-      discovery = ServiceDiscoveryBuilder.builder(String.class).client(curator).basePath(Constants.ZROOT_TABLET_LOCATION).build();
-      discovery.start();
-      rootService = discovery.serviceProviderBuilder().serviceName(Constants.ZROOT_CURATOR_SERVICE)
-          .providerStrategy(new StickyStrategy<String>(new RandomStrategy<String>())).build();
-      masterService = discovery.serviceProviderBuilder().serviceName(Constants.MASTER_CURATOR_SERVICE)
-          .providerStrategy(new StickyStrategy<String>(new RandomStrategy<String>())).build();
-      rootService.start();
-      masterService.start();
-    } catch (Exception e) {
-      // We should have encountered any known Zookeeper issues by now.
-      throw new RuntimeException(e);
-    }
+    zooCache = ZooCache.getInstance(zooKeepers, sessionTimeout);
   }
   
   @Override
   public String getInstanceID() {
     if (instanceId == null) {
-      // want the instance id to be stable for the life of this instance object, so only get it once
-      // And this will ONLY be invoked once iff the constructors using instanceName are used
-      // And the namespace will already be set to the instance path
-      byte[] iidb;
-      try {
-        iidb = curator.getData().forPath(instanceName);
-      } catch (Exception e) {
+      // want the instance id to be stable for the life of this instance object,
+      // so only get it once
+      String instanceNamePath = Constants.ZROOT + Constants.ZINSTANCES + "/" + instanceName;
+      byte[] iidb = zooCache.get(instanceNamePath);
+      if (iidb == null) {
         throw new RuntimeException("Instance name " + instanceName
-            + " does not exist in zookeeper.  Run \"accumulo org.apache.accumulo.server.util.ListInstances\" to see a list.", e);
+            + " does not exist in zookeeper.  Run \"accumulo org.apache.accumulo.server.util.ListInstances\" to see a list.");
       }
-      
       instanceId = new String(iidb);
     }
     
-    try {
-      if (curator.usingNamespace(Constants.ZROOT).checkExists().forPath(instanceId) == null) {
-        if (instanceName == null)
-          throw new RuntimeException("Instance id " + instanceId + " does not exist in zookeeper");
-        throw new RuntimeException("Instance id " + instanceId + " pointed to by the name " + instanceName + " does not exist in zookeeper");
-      }
-    } catch (Exception e) {
-      // Should only happen if things are in a very bad state, I think
-      throw new RuntimeException(e);
+    if (zooCache.get(Constants.ZROOT + "/" + instanceId) == null) {
+      if (instanceName == null)
+        throw new RuntimeException("Instance id " + instanceId + " does not exist in zookeeper");
+      throw new RuntimeException("Instance id " + instanceId + " pointed to by the name " + instanceName + " does not exist in zookeeper");
     }
     
     return instanceId;
@@ -202,16 +159,10 @@ public class ZooKeeperInstance implements Instance {
   
   @Override
   public List<String> getMasterLocations() {
-    OpTimer opTimer = new OpTimer(log, Level.TRACE).start("Looking up master location using curator service discovery.");
-    String loc;
-    try {
-      loc = masterService.getInstance().getPayload();
-    } catch (Exception e) {
-      opTimer.stop("Failed to find master location in curator discovery service");
-      // Zookeeper errors are handles, big ones hit already. This is probably very bad?
-      log.error(e,e);
-      return Collections.emptyList();
-    }
+    String masterLocPath = ZooUtil.getRoot(this) + Constants.ZMASTER_LOCK;
+    
+    OpTimer opTimer = new OpTimer(log, Level.TRACE).start("Looking up master location in zoocache.");
+    byte[] loc = ZooUtil.getLockData(zooCache, masterLocPath);
     opTimer.stop("Found master at " + (loc == null ? null : new String(loc)) + " in %DURATION%");
     
     if (loc == null) {
@@ -223,31 +174,30 @@ public class ZooKeeperInstance implements Instance {
   
   @Override
   public String getRootTabletLocation() {
-    OpTimer opTimer = new OpTimer(log, Level.TRACE).start("Looking up root tablet location using curator service discovery.");
-    String loc;
-    try {
-      loc = rootService.getInstance().getPayload();
-    } catch (Exception e) {
-      opTimer.stop("Failed to find root tablet in curator discovery service");
-      // Zookeeper errors are handles, big ones hit already. This is probably very bad?
-      log.error(e,e);
+    String zRootLocPath = ZooUtil.getRoot(this) + Constants.ZROOT_TABLET_LOCATION;
+    
+    OpTimer opTimer = new OpTimer(log, Level.TRACE).start("Looking up root tablet location in zookeeper.");
+    byte[] loc = zooCache.get(zRootLocPath);
+    opTimer.stop("Found root tablet at " + (loc == null ? null : new String(loc)) + " in %DURATION%");
+    
+    if (loc == null) {
       return null;
     }
-    opTimer.stop("Found root tablet at " + (loc == null ? null : new String(loc)) + " in %DURATION%");
-    return loc;
+    
+    return new String(loc).split("\\|")[0];
   }
   
   @Override
   public String getInstanceName() {
     if (instanceName == null)
-      instanceName = lookupInstanceName(curator, UUID.fromString(getInstanceID()));
+      instanceName = lookupInstanceName(zooCache, UUID.fromString(getInstanceID()));
     
     return instanceName;
   }
   
   @Override
   public String getZooKeepers() {
-    return curator.getZookeeperClient().getCurrentConnectionString();
+    return zooKeepers;
   }
   
   @Override
@@ -298,29 +248,30 @@ public class ZooKeeperInstance implements Instance {
   }
   
   /**
+   * @deprecated Use {@link #lookupInstanceName(org.apache.accumulo.fate.zookeeper.ZooCache, UUID)} instead
+   */
+  @Deprecated
+  public static String lookupInstanceName(org.apache.accumulo.core.zookeeper.ZooCache zooCache, UUID instanceId) {
+    return lookupInstanceName((ZooCache) zooCache, instanceId);
+  }
+  
+  /**
    * Given a zooCache and instanceId, look up the instance name.
    * 
-   * @param curator
+   * @param zooCache
    * @param instanceId
    * @return the instance name
    */
-  public static String lookupInstanceName(CuratorFramework curator, UUID instanceId) {
-    ArgumentChecker.notNull(curator, instanceId);
-    curator = curator.usingNamespace(Constants.ZROOT);
-    try {
-      for (String name : curator.getChildren().forPath(Constants.ZINSTANCES)) {
-        String instanceNamePath = Constants.ZINSTANCES + "/" + name;
-        UUID iid = UUID.fromString(new String(curator.getData().forPath(instanceNamePath)));
-        if (iid.equals(instanceId)) {
-          return name;
-        }
+  public static String lookupInstanceName(ZooCache zooCache, UUID instanceId) {
+    ArgumentChecker.notNull(zooCache, instanceId);
+    for (String name : zooCache.getChildren(Constants.ZROOT + Constants.ZINSTANCES)) {
+      String instanceNamePath = Constants.ZROOT + Constants.ZINSTANCES + "/" + name;
+      UUID iid = UUID.fromString(new String(zooCache.get(instanceNamePath)));
+      if (iid.equals(instanceId)) {
+        return name;
       }
-      return null;
-    } catch (Exception e) {
-      // Should only happen if things are in a very bad state, I think
-      log.error(e,e);
-      return null;
     }
+    return null;
   }
   
   /**
