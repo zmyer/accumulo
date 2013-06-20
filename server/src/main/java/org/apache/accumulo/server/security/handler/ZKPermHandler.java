@@ -35,6 +35,7 @@ import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
 import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.Code;
@@ -108,9 +109,9 @@ public class ZKPermHandler implements PermissionHandler {
   
   @Override
   public boolean hasCachedTablePermission(String user, String table, TablePermission permission) throws AccumuloSecurityException, TableNotFoundException {
-    byte[] serializedPerms = zooCache.get(ZKUserPath + "/" + user + ZKUserTablePerms + "/" + table);
+    ChildData serializedPerms = zooCache.get(ZKUserPath + "/" + user + ZKUserTablePerms + "/" + table);
     if (serializedPerms != null) {
-      return ZKSecurityTool.convertTablePermissions(serializedPerms).contains(permission);
+      return ZKSecurityTool.convertTablePermissions(serializedPerms.getData()).contains(permission);
     }
     return false;
   }
@@ -118,12 +119,12 @@ public class ZKPermHandler implements PermissionHandler {
   @Override
   public void grantSystemPermission(String user, SystemPermission permission) throws AccumuloSecurityException {
     try {
-      byte[] permBytes = zooCache.get(ZKUserPath + "/" + user + ZKUserSysPerms);
+      ChildData permBytes = zooCache.get(ZKUserPath + "/" + user + ZKUserSysPerms);
       Set<SystemPermission> perms;
       if (permBytes == null) {
         perms = new TreeSet<SystemPermission>();
       } else {
-        perms = ZKSecurityTool.convertSystemPermissions(permBytes);
+        perms = ZKSecurityTool.convertSystemPermissions(permBytes.getData());
       }
       
       if (perms.add(permission)) {
@@ -145,9 +146,9 @@ public class ZKPermHandler implements PermissionHandler {
   @Override
   public void grantTablePermission(String user, String table, TablePermission permission) throws AccumuloSecurityException {
     Set<TablePermission> tablePerms;
-    byte[] serializedPerms = zooCache.get(ZKUserPath + "/" + user + ZKUserTablePerms + "/" + table);
+    ChildData serializedPerms = zooCache.get(ZKUserPath + "/" + user + ZKUserTablePerms + "/" + table);
     if (serializedPerms != null)
-      tablePerms = ZKSecurityTool.convertTablePermissions(serializedPerms);
+      tablePerms = ZKSecurityTool.convertTablePermissions(serializedPerms.getData());
     else
       tablePerms = new TreeSet<TablePermission>();
     
@@ -171,13 +172,13 @@ public class ZKPermHandler implements PermissionHandler {
   
   @Override
   public void revokeSystemPermission(String user, SystemPermission permission) throws AccumuloSecurityException {
-    byte[] sysPermBytes = zooCache.get(ZKUserPath + "/" + user + ZKUserSysPerms);
+    ChildData sysPermBytes = zooCache.get(ZKUserPath + "/" + user + ZKUserSysPerms);
     
     // User had no system permission, nothing to revoke.
     if (sysPermBytes == null)
       return;
     
-    Set<SystemPermission> sysPerms = ZKSecurityTool.convertSystemPermissions(sysPermBytes);
+    Set<SystemPermission> sysPerms = ZKSecurityTool.convertSystemPermissions(sysPermBytes.getData());
     
     try {
       if (sysPerms.remove(permission)) {
@@ -198,13 +199,13 @@ public class ZKPermHandler implements PermissionHandler {
   
   @Override
   public void revokeTablePermission(String user, String table, TablePermission permission) throws AccumuloSecurityException {
-    byte[] serializedPerms = zooCache.get(ZKUserPath + "/" + user + ZKUserTablePerms + "/" + table);
+    ChildData serializedPerms = zooCache.get(ZKUserPath + "/" + user + ZKUserTablePerms + "/" + table);
     
     // User had no table permission, nothing to revoke.
     if (serializedPerms == null)
       return;
     
-    Set<TablePermission> tablePerms = ZKSecurityTool.convertTablePermissions(serializedPerms);
+    Set<TablePermission> tablePerms = ZKSecurityTool.convertTablePermissions(serializedPerms.getData());
     try {
       if (tablePerms.remove(permission)) {
         zooCache.clear();
@@ -230,7 +231,7 @@ public class ZKPermHandler implements PermissionHandler {
       synchronized (zooCache) {
         zooCache.clear();
         IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
-        for (String user : zooCache.getChildren(ZKUserPath))
+        for (String user : zooCache.getChildKeys(ZKUserPath))
           zoo.recursiveDelete(ZKUserPath + "/" + user + ZKUserTablePerms + "/" + table, NodeMissingPolicy.SKIP);
       }
     } catch (KeeperException e) {
@@ -347,10 +348,10 @@ public class ZKPermHandler implements PermissionHandler {
   
   @Override
   public boolean hasCachedSystemPermission(String user, SystemPermission permission) throws AccumuloSecurityException {
-    byte[] perms = zooCache.get(ZKUserPath + "/" + user + ZKUserSysPerms);
+    ChildData perms = zooCache.get(ZKUserPath + "/" + user + ZKUserSysPerms);
     if (perms == null)
       return false;
-    return ZKSecurityTool.convertSystemPermissions(perms).contains(permission);
+    return ZKSecurityTool.convertSystemPermissions(perms.getData()).contains(permission);
   }
   
   @Override

@@ -141,7 +141,7 @@ public class SecurityOperation {
   
   public synchronized String getRootUsername() {
     if (rootUserName == null)
-      rootUserName = new String(zooCache.get(ZKUserPath));
+      rootUserName = new String(zooCache.get(ZKUserPath).getData());
     return rootUserName;
   }
   

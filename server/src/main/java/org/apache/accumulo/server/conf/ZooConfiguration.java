@@ -30,9 +30,11 @@ import org.apache.accumulo.core.client.ZooKeeperInstance;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.client.HdfsZooInstance.AccumuloNotInitializedException;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 
 public class ZooConfiguration extends AccumuloConfiguration {
@@ -53,6 +55,8 @@ public class ZooConfiguration extends AccumuloConfiguration {
       propCache = new ZooCache(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut());
       instance = new ZooConfiguration(parent);
       instanceId = inst.getInstanceID();
+      // Sets up a child cache listener for all properties
+      propCache.getChildKeys(ZooUtil.getRoot(instanceId) + Constants.ZCONFIG);
     }
     return instance;
   }
@@ -64,6 +68,8 @@ public class ZooConfiguration extends AccumuloConfiguration {
       @SuppressWarnings("deprecation")
       String deprecatedInstanceIdFromHdfs = ZooKeeperInstance.getInstanceIDFromHdfs(ServerConstants.getInstanceIdLocation());
       instanceId = deprecatedInstanceIdFromHdfs;
+      // Sets up a child cache listener for all properties
+      propCache.getChildKeys(ZooUtil.getRoot(instanceId) + Constants.ZCONFIG);
     }
     return instance;
   }
@@ -113,10 +119,10 @@ public class ZooConfiguration extends AccumuloConfiguration {
   
   private String get(String key) {
     String zPath = ZooUtil.getRoot(instanceId) + Constants.ZCONFIG + "/" + key;
-    byte[] v = propCache.get(zPath);
+    ChildData v = propCache.get(zPath);
     String value = null;
     if (v != null)
-      value = new String(v);
+      value = new String(v.getData());
     return value;
   }
   
@@ -127,12 +133,13 @@ public class ZooConfiguration extends AccumuloConfiguration {
     for (Entry<String,String> parentEntry : parent)
       entries.put(parentEntry.getKey(), parentEntry.getValue());
     
-    List<String> children = propCache.getChildren(ZooUtil.getRoot(instanceId) + Constants.ZCONFIG);
+    List<ChildData> children = propCache.getChildren(ZooUtil.getRoot(instanceId) + Constants.ZCONFIG);
     if (children != null) {
-      for (String child : children) {
-        String value = get(child);
-        if (child != null && value != null)
-          entries.put(child, value);
+      for (ChildData child : children) {
+        String node = CuratorUtil.getNodeName(child);
+        String value = get(node);
+        if (node != null && value != null)
+          entries.put(node, value);
       }
     }
     

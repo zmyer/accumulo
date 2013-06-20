@@ -51,7 +51,7 @@ public class TabletServerLocks {
       List<String> tabletServers = zoo.getChildren(tserverPath);
       
       for (String tabletServer : tabletServers) {
-        byte[] lockData = ZooLock.getLockData(tserverPath + "/" + tabletServer);
+        byte[] lockData = ZooLock.getLockData(tserverPath + "/" + tabletServer).getData();
         String holder = null;
         if (lockData != null) {
           holder = new String(lockData);

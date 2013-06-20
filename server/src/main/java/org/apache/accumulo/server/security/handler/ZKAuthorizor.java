@@ -61,7 +61,7 @@ public class ZKAuthorizor implements Authorizor {
   }
   
   public Authorizations getCachedUserAuthorizations(String user) {
-    byte[] authsBytes = zooCache.get(ZKUserPath + "/" + user + ZKUserAuths);
+    byte[] authsBytes = zooCache.get(ZKUserPath + "/" + user + ZKUserAuths).getData();
     if (authsBytes != null)
       return ZKSecurityTool.convertAuthorizations(authsBytes);
     return Constants.NO_AUTHS;

@@ -43,6 +43,7 @@ import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.conf.ServerConfiguration;
 import org.apache.accumulo.server.zookeeper.ZooLock;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
@@ -84,15 +85,15 @@ public class HdfsZooInstance implements Instance {
     
     OpTimer opTimer = new OpTimer(log, Level.TRACE).start("Looking up root tablet location in zoocache.");
     
-    byte[] loc = zooCache.get(zRootLocPath);
+    ChildData loc = zooCache.get(zRootLocPath);
     
-    opTimer.stop("Found root tablet at " + (loc == null ? null : new String(loc)) + " in %DURATION%");
+    opTimer.stop("Found root tablet at " + (loc == null ? null : new String(loc.getData())) + " in %DURATION%");
     
     if (loc == null) {
       return null;
     }
     
-    return new String(loc).split("\\|")[0];
+    return new String(loc.getData()).split("\\|")[0];
   }
   
   @Override
@@ -102,7 +103,7 @@ public class HdfsZooInstance implements Instance {
     
     OpTimer opTimer = new OpTimer(log, Level.TRACE).start("Looking up master location in zoocache.");
     
-    byte[] loc = ZooLock.getLockData(zooCache, masterLocPath, null);
+    byte[] loc = ZooLock.getLockData(zooCache, masterLocPath).getData();
     
     opTimer.stop("Found master at " + (loc == null ? null : new String(loc)) + " in %DURATION%");
     

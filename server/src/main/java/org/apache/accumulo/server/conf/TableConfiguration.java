@@ -31,8 +31,10 @@ import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigurationObserver;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 
 public class TableConfiguration extends AccumuloConfiguration {
@@ -118,10 +120,10 @@ public class TableConfiguration extends AccumuloConfiguration {
   
   private String get(String key) {
     String zPath = ZooUtil.getRoot(instanceId) + Constants.ZTABLES + "/" + table + Constants.ZTABLE_CONF + "/" + key;
-    byte[] v = getTablePropCache().get(zPath);
+    ChildData v = getTablePropCache().get(zPath);
     String value = null;
     if (v != null)
-      value = new String(v);
+      value = new String(v.getData());
     return value;
   }
   
@@ -132,12 +134,11 @@ public class TableConfiguration extends AccumuloConfiguration {
     for (Entry<String,String> parentEntry : parent)
       entries.put(parentEntry.getKey(), parentEntry.getValue());
     
-    List<String> children = getTablePropCache().getChildren(ZooUtil.getRoot(instanceId) + Constants.ZTABLES + "/" + table + Constants.ZTABLE_CONF);
+    String path = ZooUtil.getRoot(instanceId) + Constants.ZTABLES + "/" + table + Constants.ZTABLE_CONF;
+    List<ChildData> children = getTablePropCache().getChildren(path);
     if (children != null) {
-      for (String child : children) {
-        String value = get(child);
-        if (child != null && value != null)
-          entries.put(child, value);
+      for (ChildData child : children) {
+        entries.put(CuratorUtil.getNodeName(child), new String(child.getData()));
       }
     }
     

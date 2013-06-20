@@ -27,7 +27,9 @@ import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.TableNotFoundException;
 import org.apache.accumulo.core.master.state.tables.TableState;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.accumulo.fate.zookeeper.ZooCache;
+import org.apache.curator.framework.recipes.cache.ChildData;
 
 public class Tables {
   private static SecurityPermission TABLES_PERMISSION = new SecurityPermission("tablesPermission");
@@ -43,17 +45,17 @@ public class Tables {
   private static SortedMap<String,String> getMap(Instance instance, boolean nameAsKey) {
     ZooCache zc = getZooCache(instance);
     
-    List<String> tableIds = zc.getChildren(ZooUtil.getRoot(instance) + Constants.ZTABLES);
+    List<ChildData> tableIds = zc.getChildren(ZooUtil.getRoot(instance) + Constants.ZTABLES);
     
     TreeMap<String,String> tableMap = new TreeMap<String,String>();
     
-    for (String tableId : tableIds) {
-      byte[] tblPath = zc.get(ZooUtil.getRoot(instance) + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_NAME);
-      if (tblPath != null) {
+    for (ChildData tableId : tableIds) {
+      ChildData namePath = zc.get(tableId.getPath() + Constants.ZTABLE_NAME);
+      if (namePath != null) {
         if (nameAsKey)
-          tableMap.put(new String(tblPath), tableId);
+          tableMap.put(new String(namePath.getData()), CuratorUtil.getNodeName(tableId));
         else
-          tableMap.put(tableId, new String(tblPath));
+          tableMap.put(CuratorUtil.getNodeName(tableId), new String(namePath.getData()));
       }
     }
     
@@ -84,8 +86,8 @@ public class Tables {
   
   public static boolean exists(Instance instance, String tableId) {
     ZooCache zc = getZooCache(instance);
-    List<String> tableIds = zc.getChildren(ZooUtil.getRoot(instance) + Constants.ZTABLES);
-    return tableIds.contains(tableId);
+    ChildData table = zc.get(ZooUtil.getRoot(instance) + Constants.ZTABLES + '/' + tableId);
+    return table != null;
   }
   
   public static void clearCache(Instance instance) {
@@ -107,7 +109,7 @@ public class Tables {
     try {
       tableName = getTableName(instance, tableId);
     } catch (TableNotFoundException e) {
-      //handled in the string formatting
+      // handled in the string formatting
     }
     return tableName == null ? String.format("?(ID:%s)", tableId) : String.format("%s(ID:%s)", tableName, tableId);
   }
@@ -117,7 +119,7 @@ public class Tables {
     try {
       tableId = getTableId(instance, tableName);
     } catch (TableNotFoundException e) {
-      //handled in the string formatting
+      // handled in the string formatting
     }
     return tableId == null ? String.format("%s(?)", tableName) : String.format("%s(ID:%s)", tableName, tableId);
   }
@@ -125,7 +127,7 @@ public class Tables {
   public static TableState getTableState(Instance instance, String tableId) {
     String statePath = ZooUtil.getRoot(instance) + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_STATE;
     ZooCache zc = getZooCache(instance);
-    byte[] state = zc.get(statePath);
+    byte[] state = zc.get(statePath).getData();
     if (state == null)
       return TableState.UNKNOWN;
     

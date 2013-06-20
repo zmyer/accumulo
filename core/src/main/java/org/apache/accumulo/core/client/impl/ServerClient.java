@@ -25,8 +25,8 @@ import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.impl.thrift.ClientService;
-import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.client.impl.thrift.ClientService.Client;
+import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.util.ArgumentChecker;
@@ -37,6 +37,7 @@ import org.apache.accumulo.core.util.ThriftUtil;
 import org.apache.accumulo.core.util.UtilWaitThread;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.zookeeper.ZooCache;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 import org.apache.thrift.transport.TTransport;
 import org.apache.thrift.transport.TTransportException;
@@ -48,7 +49,7 @@ public class ServerClient {
   private synchronized static ZooCache getZooCache(Instance instance) {
     ZooCache result = zooCaches.get(instance.getZooKeepers());
     if (result == null) {
-      result = new ZooCache(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut(), null);
+      result = new ZooCache(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
       zooCaches.put(instance.getZooKeepers(), result);
     }
     return result;
@@ -135,8 +136,8 @@ public class ServerClient {
     
     // add tservers
     ZooCache zc = getZooCache(instance);
-    for (String tserver : zc.getChildren(ZooUtil.getRoot(instance) + Constants.ZTSERVERS)) {
-      String path = ZooUtil.getRoot(instance) + Constants.ZTSERVERS + "/" + tserver;
+    for (ChildData tserver : zc.getChildren(ZooUtil.getRoot(instance) + Constants.ZTSERVERS)) {
+      String path = tserver.getPath();
       byte[] data = ZooUtil.getLockData(zc, path);
       if (data != null && !new String(data).equals("master"))
         servers.add(new ThriftTransportKey(

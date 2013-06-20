@@ -1302,8 +1302,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
           
           int[] counts = new int[TabletState.values().length];
           stats.begin();
-          // Walk through the tablets in our store, and work tablets
-          // towards their goal
+          // Walk through the tablets in our store, and work tablets towards their goal
           for (TabletLocationState tls : store) {
             if (tls == null) {
               continue;
@@ -2099,11 +2098,9 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
     });
     
     TCredentials systemAuths = SecurityConstants.getSystemCredentials();
-    final TabletStateStore stores[] = {new ZooTabletStateStore(new ZooStore(zroot)), new RootTabletStateStore(instance, systemAuths, this),
-        new MetaDataStateStore(instance, systemAuths, this)};
-    watchers.add(new TabletGroupWatcher(stores[2], null));
-    watchers.add(new TabletGroupWatcher(stores[1], watchers.get(0)));
-    watchers.add(new TabletGroupWatcher(stores[0], watchers.get(1)));
+    watchers.add(new TabletGroupWatcher(new MetaDataStateStore(instance, systemAuths, this), null));
+    watchers.add(new TabletGroupWatcher(new RootTabletStateStore(instance, systemAuths, this), watchers.get(0)));
+    watchers.add(new TabletGroupWatcher(new ZooTabletStateStore(new ZooStore(zroot)), watchers.get(1)));
     for (TabletGroupWatcher watcher : watchers) {
       watcher.start();
     }
@@ -2122,8 +2119,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
     final long deadline = System.currentTimeMillis() + MAX_CLEANUP_WAIT_TIME;
     statusThread.join(remaining(deadline));
     
-    // quit, even if the tablet servers somehow jam up and the watchers
-    // don't stop
+    // quit, even if the tablet servers somehow jam up and the watchers don't stop
     for (TabletGroupWatcher watcher : watchers) {
       watcher.join(remaining(deadline));
     }

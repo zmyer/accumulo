@@ -39,6 +39,22 @@
       </excludes>
     </dependencySet>
     <dependencySet>
+      <outputDirectory>lib</outputDirectory>
+      <directoryMode>0755</directoryMode>
+      <fileMode>0644</fileMode>
+      <useProjectArtifact>true</useProjectArtifact>
+      <outputFileNameMapping>${artifact.artifactId}${dashClassifier?}.${artifact.extension}</outputFileNameMapping>
+      <useTransitiveDependencies>true</useTransitiveDependencies>
+      <includes>
+        <include>org.apache.curator:curator-framework</include>
+        <include>org.apache.curator:curator-client</include>
+        <include>org.apache.curator:curator-recipes</include>
+      </includes>
+      <excludes>
+        <exclude>${groupId}:${artifactId}-docs</exclude>
+      </excludes>
+    </dependencySet>
+    <dependencySet>
       <outputDirectory>docs</outputDirectory>
       <directoryMode>0755</directoryMode>
       <fileMode>0644</fileMode>

@@ -92,9 +92,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   private static final Text EMPTY_TEXT = new Text();
   private static Map<TCredentials,Writer> metadata_tables = new HashMap<TCredentials,Writer>();
   private static final Logger log = Logger.getLogger(MetadataTable.class);
-  
-  private static final int SAVE_ROOT_TABLET_RETRIES = 3;
-  
+    
   private MetadataTable() {
     
   }
@@ -317,22 +315,6 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
       }
     }
     return results;
-  }
-  
-  public static boolean recordRootTabletLocation(String address) {
-    IZooReaderWriter zoo = ZooReaderWriter.getInstance();
-    for (int i = 0; i < SAVE_ROOT_TABLET_RETRIES; i++) {
-      try {
-        log.info("trying to write root tablet location to ZooKeeper as " + address);
-        String zRootLocPath = ZooUtil.getRoot(HdfsZooInstance.getInstance()) + Constants.ZROOT_TABLET_LOCATION;
-        zoo.putPersistentData(zRootLocPath, address.getBytes(), NodeExistsPolicy.OVERWRITE);
-        return true;
-      } catch (Exception e) {
-        log.error("Master: unable to save root tablet location in zookeeper. exception: " + e, e);
-      }
-    }
-    log.error("Giving up after " + SAVE_ROOT_TABLET_RETRIES + " retries");
-    return false;
   }
   
   public static SortedMap<String,DataFileValue> getDataFileSizes(KeyExtent extent, TCredentials credentials) {

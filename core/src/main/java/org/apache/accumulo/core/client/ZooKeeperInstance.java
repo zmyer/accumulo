@@ -38,7 +38,9 @@ import org.apache.accumulo.core.util.CachedConfiguration;
 import org.apache.accumulo.core.util.OpTimer;
 import org.apache.accumulo.core.util.TextUtil;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.accumulo.fate.zookeeper.ZooCache;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -140,7 +142,7 @@ public class ZooKeeperInstance implements Instance {
       // want the instance id to be stable for the life of this instance object,
       // so only get it once
       String instanceNamePath = Constants.ZROOT + Constants.ZINSTANCES + "/" + instanceName;
-      byte[] iidb = zooCache.get(instanceNamePath);
+      byte[] iidb = zooCache.get(instanceNamePath).getData();
       if (iidb == null) {
         throw new RuntimeException("Instance name " + instanceName
             + " does not exist in zookeeper.  Run \"accumulo org.apache.accumulo.server.util.ListInstances\" to see a list.");
@@ -177,14 +179,14 @@ public class ZooKeeperInstance implements Instance {
     String zRootLocPath = ZooUtil.getRoot(this) + Constants.ZROOT_TABLET_LOCATION;
     
     OpTimer opTimer = new OpTimer(log, Level.TRACE).start("Looking up root tablet location in zookeeper.");
-    byte[] loc = zooCache.get(zRootLocPath);
-    opTimer.stop("Found root tablet at " + (loc == null ? null : new String(loc)) + " in %DURATION%");
+    ChildData loc = zooCache.get(zRootLocPath);
+    opTimer.stop("Found root tablet at " + (loc == null ? null : new String(loc.getData())) + " in %DURATION%");
     
     if (loc == null) {
       return null;
     }
     
-    return new String(loc).split("\\|")[0];
+    return new String(loc.getData()).split("\\|")[0];
   }
   
   @Override
@@ -248,14 +250,6 @@ public class ZooKeeperInstance implements Instance {
   }
   
   /**
-   * @deprecated Use {@link #lookupInstanceName(org.apache.accumulo.fate.zookeeper.ZooCache, UUID)} instead
-   */
-  @Deprecated
-  public static String lookupInstanceName(org.apache.accumulo.core.zookeeper.ZooCache zooCache, UUID instanceId) {
-    return lookupInstanceName((ZooCache) zooCache, instanceId);
-  }
-  
-  /**
    * Given a zooCache and instanceId, look up the instance name.
    * 
    * @param zooCache
@@ -264,11 +258,11 @@ public class ZooKeeperInstance implements Instance {
    */
   public static String lookupInstanceName(ZooCache zooCache, UUID instanceId) {
     ArgumentChecker.notNull(zooCache, instanceId);
-    for (String name : zooCache.getChildren(Constants.ZROOT + Constants.ZINSTANCES)) {
-      String instanceNamePath = Constants.ZROOT + Constants.ZINSTANCES + "/" + name;
-      UUID iid = UUID.fromString(new String(zooCache.get(instanceNamePath)));
+    String path = Constants.ZROOT + Constants.ZINSTANCES;
+    for (ChildData name : zooCache.getChildren(path)) {
+      UUID iid = UUID.fromString(new String(name.getData()));
       if (iid.equals(instanceId)) {
-        return name;
+        return CuratorUtil.getNodeName(name);
       }
     }
     return null;

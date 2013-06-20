@@ -140,7 +140,7 @@ public class ListInstances {
     try {
       String masterLocPath = Constants.ZROOT + "/" + iid + Constants.ZMASTER_LOCK;
       
-      byte[] master = ZooLock.getLockData(masterLocPath);
+      byte[] master = ZooLock.getLockData(masterLocPath).getData();
       if (master == null) {
         return null;
       }

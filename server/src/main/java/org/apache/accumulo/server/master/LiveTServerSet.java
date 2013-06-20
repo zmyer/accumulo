@@ -45,6 +45,7 @@ import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.accumulo.server.zookeeper.ZooLock;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.accumulo.trace.instrument.Tracer;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Logger;
 import org.apache.thrift.TException;
@@ -54,7 +55,6 @@ import org.apache.zookeeper.KeeperException.NoNodeException;
 import org.apache.zookeeper.KeeperException.NotEmptyException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
-import org.apache.zookeeper.data.Stat;
 
 public class LiveTServerSet implements Watcher {
   
@@ -236,7 +236,7 @@ public class LiveTServerSet implements Watcher {
       final String path = ZooUtil.getRoot(instance) + Constants.ZTSERVERS;
       
       HashSet<String> all = new HashSet<String>(current.keySet());
-      all.addAll(getZooCache().getChildren(path));
+      all.addAll(getZooCache().getChildKeys(path));
       
       locklessServers.keySet().retainAll(all);
       
@@ -268,8 +268,7 @@ public class LiveTServerSet implements Watcher {
     TServerInfo info = current.get(server);
     
     final String lockPath = path + "/" + server;
-    Stat stat = new Stat();
-    byte[] lockData = ZooLock.getLockData(getZooCache(), lockPath, stat);
+    ChildData lockData = ZooLock.getLockData(getZooCache(), lockPath);
     
     if (lockData == null) {
       if (info != null) {
@@ -286,10 +285,10 @@ public class LiveTServerSet implements Watcher {
       }
     } else {
       locklessServers.remove(server);
-      ServerServices services = new ServerServices(new String(lockData));
+      ServerServices services = new ServerServices(new String(lockData.getData()));
       InetSocketAddress client = services.getAddress(ServerServices.Service.TSERV_CLIENT);
       InetSocketAddress addr = AddressUtil.parseAddress(server);
-      TServerInstance instance = new TServerInstance(client, stat.getEphemeralOwner());
+      TServerInstance instance = new TServerInstance(client, lockData.getStat().getEphemeralOwner());
       
       if (info == null) {
         updates.add(instance);

@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.List;
 
 import org.apache.accumulo.fate.util.UtilWaitThread;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.Code;
@@ -223,18 +224,16 @@ public class ZooUtil {
   
   public static byte[] getLockData(ZooCache zc, String path) {
     
-    List<String> children = zc.getChildren(path);
+    List<ChildData> children = zc.getChildren(path);
     
     if (children == null || children.size() == 0) {
       return null;
     }
     
-    children = new ArrayList<String>(children);
+    children = new ArrayList<ChildData>(children);
     Collections.sort(children);
     
-    String lockNode = children.get(0);
-    
-    return zc.get(path + "/" + lockNode);
+    return children.get(0).getData();
   }
   
   public static boolean isLockHeld(ZooKeeper zk, LockID lid) throws KeeperException, InterruptedException {

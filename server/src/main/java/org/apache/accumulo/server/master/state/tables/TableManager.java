@@ -28,6 +28,7 @@ import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.master.state.tables.TableState;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
 import org.apache.accumulo.fate.zookeeper.ZooReaderWriter.Mutator;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
@@ -36,6 +37,7 @@ import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.util.TablePropUtil;
 import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
@@ -151,20 +153,21 @@ public class TableManager {
   
   private void updateTableStateCache() {
     synchronized (tableStateCache) {
-      for (String tableId : zooStateCache.getChildren(ZooUtil.getRoot(instance) + Constants.ZTABLES))
-        if (zooStateCache.get(ZooUtil.getRoot(instance) + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_STATE) != null)
-          updateTableStateCache(tableId);
+      for (ChildData tableId : zooStateCache.getChildren(ZooUtil.getRoot(instance) + Constants.ZTABLES))
+        if (zooStateCache.get(ZooUtil.getRoot(instance) + Constants.ZTABLES + "/" + CuratorUtil.getNodeName(tableId) + Constants.ZTABLE_STATE) != null)
+          updateTableStateCache(CuratorUtil.getNodeName(tableId));
     }
   }
   
   public TableState updateTableStateCache(String tableId) {
     synchronized (tableStateCache) {
       TableState tState = TableState.UNKNOWN;
-      byte[] data = zooStateCache.get(ZooUtil.getRoot(instance) + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_STATE);
+      byte[] data = zooStateCache.get(ZooUtil.getRoot(instance) + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_STATE).getData();
       if (data != null) {
         String sState = new String(data);
         try {
           tState = TableState.valueOf(sState);
+          log.debug("updateTableStateCache reporting " + tableId + " with state " + tState + " based on " + new String(data));
         } catch (IllegalArgumentException e) {
           log.error("Unrecognized state for table with tableId=" + tableId + ": " + sState);
         }

@@ -18,18 +18,14 @@ package org.apache.accumulo.server.zookeeper;
 
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.Property;
-import org.apache.zookeeper.Watcher;
+import org.apache.accumulo.server.curator.CuratorUtil;
 
 public class ZooCache extends org.apache.accumulo.fate.zookeeper.ZooCache {
   public ZooCache() {
-    this(null);
+    super(CuratorUtil.getInstance());
   }
   
-  public ZooCache(Watcher watcher) {
-    super(ZooReaderWriter.getInstance(), watcher);
-  }
-  
-  public ZooCache(AccumuloConfiguration conf, Watcher watcher) {
-    super(conf.get(Property.INSTANCE_ZK_HOST), (int) conf.getTimeInMillis(Property.INSTANCE_ZK_TIMEOUT), watcher);
+  public ZooCache(AccumuloConfiguration conf) {
+    super(conf.get(Property.INSTANCE_ZK_HOST), (int) conf.getTimeInMillis(Property.INSTANCE_ZK_TIMEOUT));
   }
 }

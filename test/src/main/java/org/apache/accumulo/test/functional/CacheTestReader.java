@@ -50,16 +50,16 @@ public class CacheTestReader {
       Map<String,String> readData = new TreeMap<String,String>();
       
       for (int i = 0; i < numData; i++) {
-        byte[] v = zc.get(rootDir + "/data" + i);
+        byte[] v = zc.get(rootDir + "/data" + i).getData();
         if (v != null)
           readData.put(rootDir + "/data" + i, new String(v));
       }
       
-      byte[] v = zc.get(rootDir + "/dataS");
+      byte[] v = zc.get(rootDir + "/dataS").getData();
       if (v != null)
         readData.put(rootDir + "/dataS", new String(v));
       
-      List<String> children = zc.getChildren(rootDir + "/dir");
+      List<String> children = zc.getChildKeys(rootDir + "/dir");
       if (children != null)
         for (String child : children) {
           readData.put(rootDir + "/dir/" + child, "");

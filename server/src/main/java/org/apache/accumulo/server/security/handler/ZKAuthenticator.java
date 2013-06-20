@@ -99,7 +99,7 @@ public final class ZKAuthenticator implements Authenticator {
   
   @Override
   public Set<String> listUsers() {
-    return new TreeSet<String>(zooCache.getChildren(ZKUserPath));
+    return new TreeSet<String>(zooCache.getChildKeys(ZKUserPath));
   }
   
   /**
@@ -189,13 +189,8 @@ public final class ZKAuthenticator implements Authenticator {
     PasswordToken pt = (PasswordToken) token;
     byte[] pass;
     String zpath = ZKUserPath + "/" + principal;
-    pass = zooCache.get(zpath);
+    pass = zooCache.get(zpath).getData();
     boolean result = ZKSecurityTool.checkPass(pt.getPassword(), pass);
-    if (!result) {
-      zooCache.clear(zpath);
-      pass = zooCache.get(zpath);
-      result = ZKSecurityTool.checkPass(pt.getPassword(), pass);
-    }
     return result;
   }
   

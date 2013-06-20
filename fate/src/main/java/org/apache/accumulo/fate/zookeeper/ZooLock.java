@@ -20,8 +20,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.LockID;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
@@ -65,6 +67,10 @@ public class ZooLock implements Watcher {
   private LockWatcher lockWatcher;
   private boolean watchingParent = false;
   private String asyncLock;
+  
+  public String toString() {
+    return path + ' ' + lock;
+  }
   
   public ZooLock(String zookeepers, int timeInMillis, String scheme, byte[] auth, String path) {
     this(new ZooCache(zookeepers, timeInMillis), ZooReaderWriter.getInstance(zookeepers, timeInMillis, scheme, auth), path);
@@ -380,21 +386,20 @@ public class ZooLock implements Watcher {
   
   public static boolean isLockHeld(ZooCache zc, LockID lid) {
     
-    List<String> children = zc.getChildren(lid.path);
+    List<ChildData> children = zc.getChildren(lid.path);
     
     if (children == null || children.size() == 0) {
       return false;
     }
     
-    children = new ArrayList<String>(children);
+    children = new ArrayList<ChildData>(children);
     Collections.sort(children);
     
-    String lockNode = children.get(0);
+    String lockNode = CuratorUtil.getNodeName(children.get(0));
     if (!lid.node.equals(lockNode))
       return false;
     
-    Stat stat = new Stat();
-    return zc.get(lid.path + "/" + lid.node, stat) != null && stat.getEphemeralOwner() == lid.eid;
+    return children.get(0).getStat().getEphemeralOwner() == lid.eid;
   }
   
   public static byte[] getLockData(ZooKeeper zk, String path) throws KeeperException, InterruptedException {
@@ -411,52 +416,43 @@ public class ZooLock implements Watcher {
     return zk.getData(path + "/" + lockNode, false, null);
   }
   
-  public static byte[] getLockData(org.apache.accumulo.fate.zookeeper.ZooCache zc, String path, Stat stat) {
+  public static ChildData getLockData(org.apache.accumulo.fate.zookeeper.ZooCache zc, String path) {
     
-    List<String> children = zc.getChildren(path);
+    List<ChildData> children = zc.getChildren(path);
     
     if (children == null || children.size() == 0) {
       return null;
     }
     
-    children = new ArrayList<String>(children);
+    children = new ArrayList<ChildData>(children);
     Collections.sort(children);
     
-    String lockNode = children.get(0);
+    String lockNode = CuratorUtil.getNodeName(children.get(0));
     
     if (!lockNode.startsWith(LOCK_PREFIX)) {
       throw new RuntimeException("Node " + lockNode + " at " + path + " is not a lock node");
     }
     
-    return zc.get(path + "/" + lockNode, stat);
+    return children.get(0);
   }
   
   private static ZooCache getLockDataZooCache;
   
-  public static byte[] getLockData(String path) {
-    return getLockData(path, null);
-  }
-  
-  public static byte[] getLockData(String path, Stat stat) {
-    return getLockData(getLockDataZooCache, path, stat);
+  public static ChildData getLockData(String path) {
+    return getLockData(getLockDataZooCache, path);
   }
   
   public static long getSessionId(ZooCache zc, String path) throws KeeperException, InterruptedException {
-    List<String> children = zc.getChildren(path);
+    List<ChildData> children = zc.getChildren(path);
     
     if (children == null || children.size() == 0) {
       return 0;
     }
     
-    children = new ArrayList<String>(children);
+    children = new ArrayList<ChildData>(children);
     Collections.sort(children);
     
-    String lockNode = children.get(0);
-    
-    Stat stat = new Stat();
-    if (zc.get(path + "/" + lockNode, stat) != null)
-      return stat.getEphemeralOwner();
-    return 0;
+    return children.get(0).getStat().getEphemeralOwner();
   }
   
   public long getSessionId() throws KeeperException, InterruptedException {

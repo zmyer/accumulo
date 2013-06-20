@@ -26,6 +26,7 @@ import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 
 public class ZooStore implements DistributedStore {
@@ -49,7 +50,10 @@ public class ZooStore implements DistributedStore {
   @Override
   public byte[] get(String path) throws DistributedStoreException {
     try {
-      return cache.get(relative(path));
+      ChildData cd = cache.get(relative(path));
+      if (cd != null)
+        return cd.getData();
+      return null;
     } catch (Exception ex) {
       throw new DistributedStoreException(ex);
     }
@@ -62,7 +66,7 @@ public class ZooStore implements DistributedStore {
   @Override
   public List<String> getChildren(String path) throws DistributedStoreException {
     try {
-      return cache.getChildren(relative(path));
+      return cache.getChildKeys(relative(path));
     } catch (Exception ex) {
       throw new DistributedStoreException(ex);
     }

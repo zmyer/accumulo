@@ -41,8 +41,10 @@ import org.apache.accumulo.core.util.AddressUtil;
 import org.apache.accumulo.core.util.ArgumentChecker;
 import org.apache.accumulo.core.util.ThriftUtil;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.accumulo.trace.instrument.Tracer;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.thrift.TException;
 import org.apache.thrift.transport.TTransport;
 import org.apache.thrift.transport.TTransportException;
@@ -133,20 +135,19 @@ public class InstanceOperationsImpl implements InstanceOperations {
    * 
    * @see org.apache.accumulo.core.client.admin.InstanceOperations#getTabletServers()
    */
-  
   @Override
   public List<String> getTabletServers() {
     ZooCache cache = ZooCache.getInstance(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
     String path = ZooUtil.getRoot(instance) + Constants.ZTSERVERS;
     List<String> results = new ArrayList<String>();
-    for (String candidate : cache.getChildren(path)) {
-      List<String> children = cache.getChildren(path + "/" + candidate);
+    for (ChildData candidate : cache.getChildren(path)) {
+      List<ChildData> children = cache.getChildren(path + "/" + candidate);
       if (children != null && children.size() > 0) {
-        List<String> copy = new ArrayList<String>(children);
+        List<ChildData> copy = new ArrayList<ChildData>(children);
         Collections.sort(copy);
-        byte[] data = cache.get(path + "/" + candidate + "/" + copy.get(0));
+        byte[] data = copy.get(0).getData();
         if (data != null && !"master".equals(new String(data))) {
-          results.add(candidate);
+          results.add(CuratorUtil.getNodeName(candidate));
         }
       }
     }
