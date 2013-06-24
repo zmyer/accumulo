@@ -32,6 +32,7 @@ import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
 import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 
@@ -189,7 +190,10 @@ public final class ZKAuthenticator implements Authenticator {
     PasswordToken pt = (PasswordToken) token;
     byte[] pass;
     String zpath = ZKUserPath + "/" + principal;
-    pass = zooCache.get(zpath).getData();
+    ChildData cd = zooCache.get(zpath);
+    if (cd == null)
+      return false;
+    pass = cd.getData();
     boolean result = ZKSecurityTool.checkPass(pt.getPassword(), pass);
     return result;
   }

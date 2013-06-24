@@ -141,7 +141,7 @@ public class InstanceOperationsImpl implements InstanceOperations {
     String path = ZooUtil.getRoot(instance) + Constants.ZTSERVERS;
     List<String> results = new ArrayList<String>();
     for (ChildData candidate : cache.getChildren(path)) {
-      List<ChildData> children = cache.getChildren(path + "/" + candidate);
+      List<ChildData> children = cache.getChildren(candidate.getPath());
       if (children != null && children.size() > 0) {
         List<ChildData> copy = new ArrayList<ChildData>(children);
         Collections.sort(copy);

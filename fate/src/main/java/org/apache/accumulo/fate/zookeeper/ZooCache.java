@@ -68,6 +68,7 @@ public class ZooCache {
         cache.getListenable().addListener(listener);
       }
       try {
+        log.debug("Starting cache against " + zPath + (listener!=null? " using listener " + listener:""));
         cache.start(StartMode.BUILD_INITIAL_CACHE);
         // I'll do it myself!
         if (listener != null)
