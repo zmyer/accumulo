@@ -14,27 +14,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.accumulo.core.zookeeper;
+package org.apache.accumulo.server.zookeeper;
 
-import org.apache.accumulo.fate.zookeeper.ZooReader;
-import org.apache.zookeeper.Watcher;
+import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.Property;
+import org.apache.accumulo.server.curator.CuratorUtil;
 
-/**
- * This class remains here for backwards compatibility.
- * 
- * @deprecated since 1.5, replaced by {@link org.apache.accumulo.fate.zookeeper.ZooCache}
- */
-@Deprecated
 public class ZooCache extends org.apache.accumulo.fate.zookeeper.ZooCache {
-  public ZooCache(String zooKeepers, int sessionTimeout) {
-    super(zooKeepers, sessionTimeout);
+  public ZooCache() {
+    super(CuratorUtil.getInstance());
   }
   
-  public ZooCache(String zooKeepers, int sessionTimeout, Watcher watcher) {
-    super(zooKeepers, sessionTimeout, watcher);
-  }
-  
-  public ZooCache(ZooReader reader, Watcher watcher) {
-    super(reader, watcher);
+  public ZooCache(AccumuloConfiguration conf) {
+    super(conf.get(Property.INSTANCE_ZK_HOST), (int) conf.getTimeInMillis(Property.INSTANCE_ZK_TIMEOUT));
   }
 }
