@@ -60,6 +60,7 @@ import org.apache.accumulo.core.security.thrift.TCredentials;
 import org.apache.accumulo.core.util.ArgumentChecker;
 import org.apache.accumulo.core.util.CachedConfiguration;
 import org.apache.accumulo.core.util.LocalityGroupUtil;
+import org.apache.accumulo.core.util.MetadataTable;
 import org.apache.accumulo.core.util.Pair;
 import org.apache.accumulo.core.util.UtilWaitThread;
 import org.apache.commons.lang.NotImplementedException;
@@ -229,14 +230,24 @@ class OfflineIterator implements Iterator<Entry<Key,Value>> {
     
     if (currentExtent != null && !extent.isPreviousExtent(currentExtent))
       throw new AccumuloException(" " + currentExtent + " is not previous extent " + extent);
-    
-    String tablesDir = Constants.getTablesDir(instance.getConfiguration());
+
+    String tablesDir = instance.getConfiguration().get(Property.INSTANCE_DFS_DIR) + "/tables";
+    String[] volumes = instance.getConfiguration().get(Property.INSTANCE_VOLUMES).split(",");
+    if (volumes.length > 1) {
+      tablesDir = volumes[0] + tablesDir;
+    }
     List<String> absFiles = new ArrayList<String>();
     for (String relPath : relFiles) {
-      if (relPath.startsWith(".."))
-        absFiles.add(tablesDir + relPath.substring(2));
-      else
-        absFiles.add(tablesDir + "/" + tableId + relPath);
+      if (relFiles.contains(":")) {
+        absFiles.add(relPath);
+      } else {
+        // handle old-style relative paths
+        if (relPath.startsWith("..")) {
+          absFiles.add(tablesDir + relPath.substring(2));
+        } else {
+          absFiles.add(tablesDir + "/" + tableId + relPath);
+        }
+      }
     }
     
     iter = createIterator(extent, absFiles);
@@ -246,7 +257,7 @@ class OfflineIterator implements Iterator<Entry<Key,Value>> {
   }
   
   private Pair<KeyExtent,String> getTabletFiles(Range nextRange, List<String> relFiles) throws TableNotFoundException {
-    Scanner scanner = conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
+    Scanner scanner = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
     scanner.setBatchSize(100);
     scanner.setRange(nextRange);
     
@@ -260,16 +271,16 @@ class OfflineIterator implements Iterator<Entry<Key,Value>> {
       Entry<Key,Value> entry = row.next();
       Key key = entry.getKey();
       
-      if (key.getColumnFamily().equals(Constants.METADATA_DATAFILE_COLUMN_FAMILY)) {
+      if (key.getColumnFamily().equals(MetadataTable.DATAFILE_COLUMN_FAMILY)) {
         relFiles.add(key.getColumnQualifier().toString());
       }
       
-      if (key.getColumnFamily().equals(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY)
-          || key.getColumnFamily().equals(Constants.METADATA_FUTURE_LOCATION_COLUMN_FAMILY)) {
+      if (key.getColumnFamily().equals(MetadataTable.CURRENT_LOCATION_COLUMN_FAMILY)
+          || key.getColumnFamily().equals(MetadataTable.FUTURE_LOCATION_COLUMN_FAMILY)) {
         location = entry.getValue().toString();
       }
       
-      if (Constants.METADATA_PREV_ROW_COLUMN.hasColumns(key)) {
+      if (MetadataTable.PREV_ROW_COLUMN.hasColumns(key)) {
         extent = new KeyExtent(key.getRow(), entry.getValue());
       }
       

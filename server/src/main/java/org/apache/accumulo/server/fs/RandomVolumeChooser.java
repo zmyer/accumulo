@@ -14,21 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.accumulo.server.master;
+package org.apache.accumulo.server.fs;
 
-import org.apache.accumulo.server.logger.LogFileKey;
-import org.apache.accumulo.server.logger.LogFileValue;
-import org.apache.hadoop.mapreduce.Partitioner;
+import java.util.Random;
 
-public class RoundRobinPartitioner extends Partitioner<LogFileKey,LogFileValue> {
-  
-  int counter = 0;
+public class RandomVolumeChooser implements VolumeChooser {
+  Random random = new Random();
   
   @Override
-  public int getPartition(LogFileKey key, LogFileValue value, int numPartitions) {
-    // We don't really care if items with the same key stay together: we
-    // just want a sort, with the load spread evenly over the reducers
-    counter = ++counter % numPartitions;
-    return counter;
+  public String choose(String[] options) {
+    return options[random.nextInt(options.length)];
   }
+
 }

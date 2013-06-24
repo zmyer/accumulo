@@ -20,12 +20,14 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map.Entry;
 import java.util.Random;
+import java.util.concurrent.TimeUnit;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.BatchDeleter;
@@ -46,6 +48,7 @@ import org.apache.accumulo.core.iterators.Combiner;
 import org.apache.accumulo.core.iterators.user.SummingCombiner;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.hadoop.io.Text;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class MockConnectorTest {
@@ -67,7 +70,7 @@ public class MockConnectorTest {
       bw.addMutation(m);
     }
     bw.close();
-    BatchScanner s = c.createBatchScanner("test", Constants.NO_AUTHS, 2);
+    BatchScanner s = c.createBatchScanner("test", Authorizations.EMPTY, 2);
     s.setRanges(Collections.singletonList(new Range()));
     Key key = null;
     int count = 0;
@@ -94,6 +97,43 @@ public class MockConnectorTest {
   }
   
   @Test
+  public void testBadMutations() throws Exception {
+    Connector c = new MockConnector("root", new MockInstance());
+    c.tableOperations().create("test");
+    BatchWriter bw = c
+        .createBatchWriter("test", new BatchWriterConfig().setMaxMemory(10000L).setMaxLatency(1000L, TimeUnit.MILLISECONDS).setMaxWriteThreads(4));
+    
+    try {
+      bw.addMutation(null);
+      Assert.fail("addMutation should throw IAE for null mutation");
+    } catch (IllegalArgumentException iae) {}
+    try {
+      bw.addMutations(null);
+      Assert.fail("addMutations should throw IAE for null iterable");
+    } catch (IllegalArgumentException iae) {}
+    
+    bw.addMutations(Collections.<Mutation> emptyList());
+    
+    Mutation bad = new Mutation("bad");
+    try {
+      bw.addMutation(bad);
+      Assert.fail("addMutation should throw IAE for empty mutation");
+    } catch (IllegalArgumentException iae) {}
+    
+    Mutation good = new Mutation("good");
+    good.put(asText(random.nextInt()), asText(random.nextInt()), new Value("good".getBytes()));
+    List<Mutation> mutations = new ArrayList<Mutation>();
+    mutations.add(good);
+    mutations.add(bad);
+    try {
+      bw.addMutations(mutations);
+      Assert.fail("addMutations should throw IAE if it contains empty mutation");
+    } catch (IllegalArgumentException iae) {}
+    
+    bw.close();
+  }
+  
+  @Test
   public void testAggregation() throws Exception {
     MockInstance mockInstance = new MockInstance();
     Connector c = mockInstance.getConnector("root", new PasswordToken(""));
@@ -113,7 +153,7 @@ public class MockConnectorTest {
     }
     bw.close();
     
-    Scanner s = c.createScanner("perDayCounts", Constants.NO_AUTHS);
+    Scanner s = c.createScanner("perDayCounts", Authorizations.EMPTY);
     Iterator<Entry<Key,Value>> iterator = s.iterator();
     assertTrue(iterator.hasNext());
     checkEntry(iterator.next(), "bar", "day", "20080101", "2");
@@ -144,7 +184,7 @@ public class MockConnectorTest {
     bw.addMutation(m2);
     bw.flush();
     
-    Scanner scanner = c.createScanner("test", Constants.NO_AUTHS);
+    Scanner scanner = c.createScanner("test", Authorizations.EMPTY);
     
     int count = 0;
     for (@SuppressWarnings("unused")
@@ -172,7 +212,7 @@ public class MockConnectorTest {
       c.tableOperations().delete("test");
     c.tableOperations().create("test");
     
-    BatchDeleter deleter = c.createBatchDeleter("test", Constants.NO_AUTHS, 2, new BatchWriterConfig());
+    BatchDeleter deleter = c.createBatchDeleter("test", Authorizations.EMPTY, 2, new BatchWriterConfig());
     // first make sure it deletes fine when its empty
     deleter.setRanges(Collections.singletonList(new Range(("r1"))));
     deleter.delete();
@@ -223,7 +263,7 @@ public class MockConnectorTest {
    *          number of rows the table should contain
    */
   private void checkRemaining(Connector c, String tableName, int count) throws Exception {
-    Scanner scanner = c.createScanner(tableName, Constants.NO_AUTHS);
+    Scanner scanner = c.createScanner(tableName, Authorizations.EMPTY);
     
     int total = 0;
     for (@SuppressWarnings("unused")
@@ -250,7 +290,7 @@ public class MockConnectorTest {
     
     int count = 10;
     
-    Scanner scanner = c.createScanner("test", Constants.NO_AUTHS);
+    Scanner scanner = c.createScanner("test", Authorizations.EMPTY);
     for (Entry<Key,Value> entry : scanner) {
       Key key = entry.getKey();
       Mutation m = new Mutation(key.getRow());
@@ -300,7 +340,7 @@ public class MockConnectorTest {
     b.addMutation(m1);
     b.flush();
     
-    Scanner scanner = c.createScanner("a", Constants.NO_AUTHS);
+    Scanner scanner = c.createScanner("a", Authorizations.EMPTY);
     int count = 0;
     for (@SuppressWarnings("unused")
     Entry<Key,Value> entry : scanner) {
@@ -308,7 +348,7 @@ public class MockConnectorTest {
     }
     assertEquals(1, count);
     count = 0;
-    scanner = c.createScanner("b", Constants.NO_AUTHS);
+    scanner = c.createScanner("b", Authorizations.EMPTY);
     for (@SuppressWarnings("unused")
     Entry<Key,Value> entry : scanner) {
       count++;
@@ -331,7 +371,7 @@ public class MockConnectorTest {
     
     bw.close();
     
-    Scanner scanner = c.createScanner("test", Constants.NO_AUTHS);
+    Scanner scanner = c.createScanner("test", Authorizations.EMPTY);
     
     Entry<Key,Value> entry = scanner.iterator().next();
     

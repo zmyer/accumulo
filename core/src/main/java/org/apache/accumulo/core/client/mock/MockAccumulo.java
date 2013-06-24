@@ -22,7 +22,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.SortedSet;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.BatchScanner;
 import org.apache.accumulo.core.client.admin.TimeType;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
@@ -30,6 +29,8 @@ import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.security.SystemPermission;
 import org.apache.accumulo.core.security.TablePermission;
+import org.apache.accumulo.core.util.MetadataTable;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.io.Text;
 
@@ -44,10 +45,11 @@ public class MockAccumulo {
   }
   
   {
-    MockUser root = new MockUser("root", new PasswordToken(new byte[0]), Constants.NO_AUTHS);
+    MockUser root = new MockUser("root", new PasswordToken(new byte[0]), Authorizations.EMPTY);
     root.permissions.add(SystemPermission.SYSTEM);
     users.put(root.name, root);
-    createTable("root", Constants.METADATA_TABLE_NAME, true, TimeType.LOGICAL);
+    createTable("root", RootTable.NAME, true, TimeType.LOGICAL);
+    createTable("root", MetadataTable.NAME, true, TimeType.LOGICAL);
   }
   
   public FileSystem getFileSystem() {
@@ -88,8 +90,8 @@ public class MockAccumulo {
   public Collection<Text> getSplits(String tableName) {
     return tables.get(tableName).getSplits();
   }
-
+  
   public void merge(String tableName, Text start, Text end) {
     tables.get(tableName).merge(start, end);
-  }  
+  }
 }

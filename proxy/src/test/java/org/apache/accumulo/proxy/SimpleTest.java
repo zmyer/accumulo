@@ -40,7 +40,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
 import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.Property;
@@ -51,6 +50,7 @@ import org.apache.accumulo.core.iterators.DevNull;
 import org.apache.accumulo.core.iterators.SortedKeyValueIterator;
 import org.apache.accumulo.core.iterators.user.SummingCombiner;
 import org.apache.accumulo.core.iterators.user.VersioningIterator;
+import org.apache.accumulo.core.util.MetadataTable;
 import org.apache.accumulo.core.util.UtilWaitThread;
 import org.apache.accumulo.examples.simple.constraints.NumericValueConstraint;
 import org.apache.accumulo.minicluster.MiniAccumuloCluster;
@@ -982,7 +982,7 @@ public class SimpleTest {
     assertEquals("10", new String(more.getResults().get(0).getValue()));
     try {
       client.checkIteratorConflicts(creds, TABLE_TEST, setting, EnumSet.allOf(IteratorScope.class));
-      fail("checkIteratorConflicts did not throw and exception");
+      fail("checkIteratorConflicts did not throw an exception");
     } catch (Exception ex) {}
     client.deleteRows(creds, TABLE_TEST, null, null);
     client.removeIterator(creds, TABLE_TEST, "test", EnumSet.allOf(IteratorScope.class));
@@ -1111,7 +1111,7 @@ public class SimpleTest {
     ScanOptions opt = new ScanOptions();
     opt.range = new Range(start, true, end, false);
     opt.columns = Collections.singletonList(new ScanColumn(s2bb("file")));
-    String scanner = client.createScanner(creds, Constants.METADATA_TABLE_NAME, opt);
+    String scanner = client.createScanner(creds, MetadataTable.NAME, opt);
     int result = 0;
     while (true) {
       ScanResult more = client.nextK(scanner, 100);

@@ -22,7 +22,6 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Iterator;
 import java.util.Map.Entry;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.Scanner;
@@ -31,6 +30,9 @@ import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.KeyExtent;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
+import org.apache.accumulo.core.security.Authorizations;
+import org.apache.accumulo.core.util.MetadataTable;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.util.TextUtil;
 import org.apache.accumulo.core.util.format.BinaryFormatter;
 import org.apache.accumulo.core.util.shell.Shell;
@@ -68,15 +70,16 @@ public class GetSplitsCommand extends Command {
           p.print(encode(encode, row));
         }
       } else {
-        final Scanner scanner = shellState.getConnector().createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
-        Constants.METADATA_PREV_ROW_COLUMN.fetch(scanner);
+        String systemTableToCheck = MetadataTable.NAME.equals(tableName) ? RootTable.NAME : MetadataTable.NAME;
+        final Scanner scanner = shellState.getConnector().createScanner(systemTableToCheck, Authorizations.EMPTY);
+        MetadataTable.PREV_ROW_COLUMN.fetch(scanner);
         final Text start = new Text(shellState.getConnector().tableOperations().tableIdMap().get(tableName));
         final Text end = new Text(start);
         end.append(new byte[] {'<'}, 0, 1);
         scanner.setRange(new Range(start, end));
         for (Iterator<Entry<Key,Value>> iterator = scanner.iterator(); iterator.hasNext();) {
           final Entry<Key,Value> next = iterator.next();
-          if (Constants.METADATA_PREV_ROW_COLUMN.hasColumns(next.getKey())) {
+          if (MetadataTable.PREV_ROW_COLUMN.hasColumns(next.getKey())) {
             KeyExtent extent = new KeyExtent(next.getKey().getRow(), next.getValue());
             final String pr = encode(encode, extent.getPrevEndRow());
             final String er = encode(encode, extent.getEndRow());

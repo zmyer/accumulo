@@ -33,7 +33,6 @@ import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.BatchWriter;
@@ -53,14 +52,14 @@ import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.PartialKey;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
-import org.apache.accumulo.core.file.FileUtil;
+import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.security.CredentialHelper;
 import org.apache.accumulo.core.security.thrift.TCredentials;
 import org.apache.accumulo.core.tabletserver.thrift.ConstraintViolationException;
-import org.apache.accumulo.core.util.CachedConfiguration;
 import org.apache.accumulo.core.util.ColumnFQ;
 import org.apache.accumulo.core.util.FastFormat;
 import org.apache.accumulo.core.util.Pair;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.util.StringUtil;
 import org.apache.accumulo.core.util.UtilWaitThread;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
@@ -69,14 +68,14 @@ import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.client.HdfsZooInstance;
-import org.apache.accumulo.server.conf.ServerConfiguration;
+import org.apache.accumulo.server.fs.FileRef;
+import org.apache.accumulo.server.fs.VolumeManager;
+import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.security.SecurityConstants;
-import org.apache.accumulo.server.trace.TraceFileSystem;
 import org.apache.accumulo.server.zookeeper.ZooLock;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DataInputBuffer;
 import org.apache.hadoop.io.DataOutputBuffer;
@@ -90,33 +89,40 @@ import org.apache.zookeeper.KeeperException;
 public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   
   private static final Text EMPTY_TEXT = new Text();
+  private static Map<TCredentials,Writer> root_tables = new HashMap<TCredentials,Writer>();
   private static Map<TCredentials,Writer> metadata_tables = new HashMap<TCredentials,Writer>();
   private static final Logger log = Logger.getLogger(MetadataTable.class);
     
-  private MetadataTable() {
-    
-  }
+  private MetadataTable() {}
   
   public synchronized static Writer getMetadataTable(TCredentials credentials) {
     Writer metadataTable = metadata_tables.get(credentials);
     if (metadataTable == null) {
-      metadataTable = new Writer(HdfsZooInstance.getInstance(), credentials, Constants.METADATA_TABLE_ID);
+      metadataTable = new Writer(HdfsZooInstance.getInstance(), credentials, ID);
       metadata_tables.put(credentials, metadataTable);
     }
     return metadataTable;
   }
   
+  public synchronized static Writer getRootTable(TCredentials credentials) {
+    Writer rootTable = root_tables.get(credentials);
+    if (rootTable == null) {
+      rootTable = new Writer(HdfsZooInstance.getInstance(), credentials, RootTable.ID);
+      root_tables.put(credentials, rootTable);
+    }
+    return rootTable;
+  }
+  
   public static void putLockID(ZooLock zooLock, Mutation m) {
-    Constants.METADATA_LOCK_COLUMN.put(m, new Value(zooLock.getLockID().serialize(ZooUtil.getRoot(HdfsZooInstance.getInstance()) + "/").getBytes()));
+    LOCK_COLUMN.put(m, new Value(zooLock.getLockID().serialize(ZooUtil.getRoot(HdfsZooInstance.getInstance()) + "/").getBytes()));
   }
   
-  public static void update(TCredentials credentials, Mutation m) {
-    update(credentials, null, m);
+  public static void update(TCredentials credentials, Mutation m, KeyExtent extent) {
+    update(credentials, null, m, extent);
   }
   
-  public static void update(TCredentials credentials, ZooLock zooLock, Mutation m) {
-    Writer t;
-    t = getMetadataTable(credentials);
+  public static void update(TCredentials credentials, ZooLock zooLock, Mutation m, KeyExtent extent) {
+    Writer t = extent.isMeta() ? getRootTable(credentials) : getMetadataTable(credentials);
     if (zooLock != null)
       putLockID(zooLock, m);
     while (true) {
@@ -140,17 +146,13 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   /**
    * new data file update function adds one data file to a tablet's list
    * 
-   * path should be relative to the table directory
-   * 
-   * @param time
-   * @param filesInUseByScans
-   * @param zooLock
-   * @param flushId
+   * @param path
+   *          should be relative to the table directory
    * 
    */
-  public static void updateTabletDataFile(KeyExtent extent, String path, String mergeFile, DataFileValue dfv, String time, TCredentials credentials,
-      Set<String> filesInUseByScans, String address, ZooLock zooLock, Set<String> unusedWalLogs, TServerInstance lastLocation, long flushId) {
-    if (extent.equals(Constants.ROOT_TABLET_EXTENT)) {
+  public static void updateTabletDataFile(KeyExtent extent, FileRef path, FileRef mergeFile, DataFileValue dfv, String time, TCredentials credentials,
+      Set<FileRef> filesInUseByScans, String address, ZooLock zooLock, Set<String> unusedWalLogs, TServerInstance lastLocation, long flushId) {
+    if (extent.equals(RootTable.EXTENT)) {
       if (unusedWalLogs != null) {
         IZooReaderWriter zk = ZooReaderWriter.getInstance();
         // unusedWalLogs will contain the location/name of each log in a log set
@@ -160,7 +162,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
         boolean foundEntry = false;
         for (String entry : unusedWalLogs) {
           String[] parts = entry.split("/");
-          String zpath = root + "/" + parts[1];
+          String zpath = root + "/" + parts[parts.length - 1];
           while (true) {
             try {
               if (zk.exists(zpath)) {
@@ -185,8 +187,8 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     Mutation m = new Mutation(extent.getMetadataEntry());
     
     if (dfv.getNumEntries() > 0) {
-      m.put(Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(path), new Value(dfv.encode()));
-      Constants.METADATA_TIME_COLUMN.put(m, new Value(time.getBytes()));
+      m.put(DATAFILE_COLUMN_FAMILY, path.meta(), new Value(dfv.encode()));
+      TIME_COLUMN.put(m, new Value(time.getBytes()));
       // stuff in this location
       TServerInstance self = getTServerInstance(address, zooLock);
       self.putLastLocation(m);
@@ -196,19 +198,19 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     }
     if (unusedWalLogs != null) {
       for (String entry : unusedWalLogs) {
-        m.putDelete(Constants.METADATA_LOG_COLUMN_FAMILY, new Text(entry));
+        m.putDelete(LOG_COLUMN_FAMILY, new Text(entry));
       }
     }
     
-    for (String scanFile : filesInUseByScans)
-      m.put(Constants.METADATA_SCANFILE_COLUMN_FAMILY, new Text(scanFile), new Value("".getBytes()));
+    for (FileRef scanFile : filesInUseByScans)
+      m.put(SCANFILE_COLUMN_FAMILY, scanFile.meta(), new Value("".getBytes()));
     
     if (mergeFile != null)
-      m.putDelete(Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(mergeFile));
+      m.putDelete(DATAFILE_COLUMN_FAMILY, mergeFile.meta());
     
-    Constants.METADATA_FLUSH_COLUMN.put(m, new Value((flushId + "").getBytes()));
+    FLUSH_COLUMN.put(m, new Value((flushId + "").getBytes()));
     
-    update(credentials, zooLock, m);
+    update(credentials, zooLock, m, extent);
     
   }
   
@@ -228,44 +230,45 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   public static void updateTabletFlushID(KeyExtent extent, long flushID, TCredentials credentials, ZooLock zooLock) {
     if (!extent.isRootTablet()) {
       Mutation m = new Mutation(extent.getMetadataEntry());
-      Constants.METADATA_FLUSH_COLUMN.put(m, new Value((flushID + "").getBytes()));
-      update(credentials, zooLock, m);
+      FLUSH_COLUMN.put(m, new Value((flushID + "").getBytes()));
+      update(credentials, zooLock, m, extent);
     }
   }
   
   public static void updateTabletCompactID(KeyExtent extent, long compactID, TCredentials credentials, ZooLock zooLock) {
     if (!extent.isRootTablet()) {
       Mutation m = new Mutation(extent.getMetadataEntry());
-      Constants.METADATA_COMPACT_COLUMN.put(m, new Value((compactID + "").getBytes()));
-      update(credentials, zooLock, m);
+      COMPACT_COLUMN.put(m, new Value((compactID + "").getBytes()));
+      update(credentials, zooLock, m, extent);
     }
   }
   
-  public static void updateTabletDataFile(long tid, KeyExtent extent, Map<String,DataFileValue> estSizes, String time, TCredentials credentials, ZooLock zooLock) {
+  public static void updateTabletDataFile(long tid, KeyExtent extent, Map<FileRef,DataFileValue> estSizes, String time, TCredentials credentials,
+      ZooLock zooLock) {
     Mutation m = new Mutation(extent.getMetadataEntry());
     byte[] tidBytes = Long.toString(tid).getBytes();
     
-    for (Entry<String,DataFileValue> entry : estSizes.entrySet()) {
-      Text file = new Text(entry.getKey());
-      m.put(Constants.METADATA_DATAFILE_COLUMN_FAMILY, file, new Value(entry.getValue().encode()));
-      m.put(Constants.METADATA_BULKFILE_COLUMN_FAMILY, file, new Value(tidBytes));
+    for (Entry<FileRef,DataFileValue> entry : estSizes.entrySet()) {
+      Text file = entry.getKey().meta();
+      m.put(DATAFILE_COLUMN_FAMILY, file, new Value(entry.getValue().encode()));
+      m.put(BULKFILE_COLUMN_FAMILY, file, new Value(tidBytes));
     }
-    Constants.METADATA_TIME_COLUMN.put(m, new Value(time.getBytes()));
-    update(credentials, zooLock, m);
+    TIME_COLUMN.put(m, new Value(time.getBytes()));
+    update(credentials, zooLock, m, extent);
   }
   
   public static void addTablet(KeyExtent extent, String path, TCredentials credentials, char timeType, ZooLock lock) {
     Mutation m = extent.getPrevRowUpdateMutation();
     
-    Constants.METADATA_DIRECTORY_COLUMN.put(m, new Value(path.getBytes()));
-    Constants.METADATA_TIME_COLUMN.put(m, new Value((timeType + "0").getBytes()));
+    DIRECTORY_COLUMN.put(m, new Value(path.getBytes()));
+    TIME_COLUMN.put(m, new Value((timeType + "0").getBytes()));
     
-    update(credentials, lock, m);
+    update(credentials, lock, m, extent);
   }
   
   public static void updateTabletPrevEndRow(KeyExtent extent, TCredentials credentials) {
     Mutation m = extent.getPrevRowUpdateMutation(); //
-    update(credentials, m);
+    update(credentials, m, extent);
   }
   
   /**
@@ -300,10 +303,10 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
       colq = key.getColumnQualifier(colq);
       
       // interpret the row id as a key extent
-      if (Constants.METADATA_DIRECTORY_COLUMN.equals(colf, colq))
+      if (DIRECTORY_COLUMN.equals(colf, colq))
         datafile = new Text(val.toString());
       
-      else if (Constants.METADATA_PREV_ROW_COLUMN.equals(colf, colq))
+      else if (PREV_ROW_COLUMN.equals(colf, colq))
         prevRow = new Value(val);
       
       if (datafile != null && prevRow != null) {
@@ -317,14 +320,15 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     return results;
   }
   
-  public static SortedMap<String,DataFileValue> getDataFileSizes(KeyExtent extent, TCredentials credentials) {
-    TreeMap<String,DataFileValue> sizes = new TreeMap<String,DataFileValue>();
+  public static SortedMap<FileRef,DataFileValue> getDataFileSizes(KeyExtent extent, TCredentials credentials) throws IOException {
+    TreeMap<FileRef,DataFileValue> sizes = new TreeMap<FileRef,DataFileValue>();
     
-    Scanner mdScanner = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, Constants.METADATA_TABLE_ID, Constants.NO_AUTHS);
-    mdScanner.fetchColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY);
+    Scanner mdScanner = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, ID, Authorizations.EMPTY);
+    mdScanner.fetchColumnFamily(DATAFILE_COLUMN_FAMILY);
     Text row = extent.getMetadataEntry();
+    VolumeManager fs = VolumeManagerImpl.get();
     
-    Key endKey = new Key(row, Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(""));
+    Key endKey = new Key(row, DATAFILE_COLUMN_FAMILY, new Text(""));
     endKey = endKey.followingKey(PartialKey.ROW_COLFAM);
     
     mdScanner.setRange(new Range(new Key(row), endKey));
@@ -333,88 +337,89 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
       if (!entry.getKey().getRow().equals(row))
         break;
       DataFileValue dfv = new DataFileValue(entry.getValue().get());
-      sizes.put(entry.getKey().getColumnQualifier().toString(), dfv);
+      sizes.put(new FileRef(fs, entry.getKey()), dfv);
     }
     
     return sizes;
   }
   
-  public static void addNewTablet(KeyExtent extent, String path, TServerInstance location, Map<String,DataFileValue> datafileSizes,
-      Map<String,Long> bulkLoadedFiles, TCredentials credentials, String time, long lastFlushID, long lastCompactID, ZooLock zooLock) {
+  public static void addNewTablet(KeyExtent extent, String path, TServerInstance location, Map<FileRef,DataFileValue> datafileSizes,
+      Map<FileRef,Long> bulkLoadedFiles, TCredentials credentials, String time, long lastFlushID, long lastCompactID, ZooLock zooLock) {
     Mutation m = extent.getPrevRowUpdateMutation();
     
-    Constants.METADATA_DIRECTORY_COLUMN.put(m, new Value(path.getBytes()));
-    Constants.METADATA_TIME_COLUMN.put(m, new Value(time.getBytes()));
+    DIRECTORY_COLUMN.put(m, new Value(path.getBytes()));
+    TIME_COLUMN.put(m, new Value(time.getBytes()));
     if (lastFlushID > 0)
-      Constants.METADATA_FLUSH_COLUMN.put(m, new Value(("" + lastFlushID).getBytes()));
+      FLUSH_COLUMN.put(m, new Value(("" + lastFlushID).getBytes()));
     if (lastCompactID > 0)
-      Constants.METADATA_COMPACT_COLUMN.put(m, new Value(("" + lastCompactID).getBytes()));
+      COMPACT_COLUMN.put(m, new Value(("" + lastCompactID).getBytes()));
     
     if (location != null) {
-      m.put(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY, location.asColumnQualifier(), location.asMutationValue());
-      m.putDelete(Constants.METADATA_FUTURE_LOCATION_COLUMN_FAMILY, location.asColumnQualifier());
+      m.put(CURRENT_LOCATION_COLUMN_FAMILY, location.asColumnQualifier(), location.asMutationValue());
+      m.putDelete(FUTURE_LOCATION_COLUMN_FAMILY, location.asColumnQualifier());
     }
     
-    for (Entry<String,DataFileValue> entry : datafileSizes.entrySet()) {
-      m.put(Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(entry.getKey()), new Value(entry.getValue().encode()));
+    for (Entry<FileRef,DataFileValue> entry : datafileSizes.entrySet()) {
+      m.put(DATAFILE_COLUMN_FAMILY, entry.getKey().meta(), new Value(entry.getValue().encode()));
     }
     
-    for (Entry<String,Long> entry : bulkLoadedFiles.entrySet()) {
+    for (Entry<FileRef,Long> entry : bulkLoadedFiles.entrySet()) {
       byte[] tidBytes = Long.toString(entry.getValue()).getBytes();
-      m.put(Constants.METADATA_BULKFILE_COLUMN_FAMILY, new Text(entry.getKey()), new Value(tidBytes));
+      m.put(BULKFILE_COLUMN_FAMILY, entry.getKey().meta(), new Value(tidBytes));
     }
     
-    update(credentials, zooLock, m);
+    update(credentials, zooLock, m, extent);
   }
   
   public static void rollBackSplit(Text metadataEntry, Text oldPrevEndRow, TCredentials credentials, ZooLock zooLock) {
     KeyExtent ke = new KeyExtent(metadataEntry, oldPrevEndRow);
     Mutation m = ke.getPrevRowUpdateMutation();
-    Constants.METADATA_SPLIT_RATIO_COLUMN.putDelete(m);
-    Constants.METADATA_OLD_PREV_ROW_COLUMN.putDelete(m);
-    update(credentials, zooLock, m);
+    SPLIT_RATIO_COLUMN.putDelete(m);
+    OLD_PREV_ROW_COLUMN.putDelete(m);
+    update(credentials, zooLock, m, new KeyExtent(metadataEntry, (Text) null));
   }
-
+  
   public static void splitTablet(KeyExtent extent, Text oldPrevEndRow, double splitRatio, TCredentials credentials, ZooLock zooLock) {
     Mutation m = extent.getPrevRowUpdateMutation(); //
     
-    Constants.METADATA_SPLIT_RATIO_COLUMN.put(m, new Value(Double.toString(splitRatio).getBytes()));
+    SPLIT_RATIO_COLUMN.put(m, new Value(Double.toString(splitRatio).getBytes()));
     
-    Constants.METADATA_OLD_PREV_ROW_COLUMN.put(m, KeyExtent.encodePrevEndRow(oldPrevEndRow));
-    Constants.METADATA_CHOPPED_COLUMN.putDelete(m);
-    update(credentials, zooLock, m);
+    OLD_PREV_ROW_COLUMN.put(m, KeyExtent.encodePrevEndRow(oldPrevEndRow));
+    CHOPPED_COLUMN.putDelete(m);
+    update(credentials, zooLock, m, extent);
   }
   
-  public static void finishSplit(Text metadataEntry, Map<String,DataFileValue> datafileSizes, List<String> highDatafilesToRemove, TCredentials credentials,
+  public static void finishSplit(Text metadataEntry, Map<FileRef,DataFileValue> datafileSizes, List<FileRef> highDatafilesToRemove, TCredentials credentials,
       ZooLock zooLock) {
     Mutation m = new Mutation(metadataEntry);
-    Constants.METADATA_SPLIT_RATIO_COLUMN.putDelete(m);
-    Constants.METADATA_OLD_PREV_ROW_COLUMN.putDelete(m);
-    Constants.METADATA_CHOPPED_COLUMN.putDelete(m);
+    SPLIT_RATIO_COLUMN.putDelete(m);
+    OLD_PREV_ROW_COLUMN.putDelete(m);
+    CHOPPED_COLUMN.putDelete(m);
     
-    for (Entry<String,DataFileValue> entry : datafileSizes.entrySet()) {
-      m.put(Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(entry.getKey()), new Value(entry.getValue().encode()));
+    for (Entry<FileRef,DataFileValue> entry : datafileSizes.entrySet()) {
+      m.put(DATAFILE_COLUMN_FAMILY, entry.getKey().meta(), new Value(entry.getValue().encode()));
     }
     
-    for (String pathToRemove : highDatafilesToRemove) {
-      m.putDelete(Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(pathToRemove));
+    for (FileRef pathToRemove : highDatafilesToRemove) {
+      m.putDelete(DATAFILE_COLUMN_FAMILY, pathToRemove.meta());
     }
     
-    update(credentials, zooLock, m);
+    update(credentials, zooLock, m, new KeyExtent(metadataEntry, (Text) null));
   }
   
-  public static void finishSplit(KeyExtent extent, Map<String,DataFileValue> datafileSizes, List<String> highDatafilesToRemove, TCredentials credentials,
+  public static void finishSplit(KeyExtent extent, Map<FileRef,DataFileValue> datafileSizes, List<FileRef> highDatafilesToRemove, TCredentials credentials,
       ZooLock zooLock) {
     finishSplit(extent.getMetadataEntry(), datafileSizes, highDatafilesToRemove, credentials, zooLock);
   }
   
-  public static void replaceDatafiles(KeyExtent extent, Set<String> datafilesToDelete, Set<String> scanFiles, String path, Long compactionId,
-      DataFileValue size, TCredentials credentials, String address, TServerInstance lastLocation, ZooLock zooLock) {
+  public static void replaceDatafiles(KeyExtent extent, Set<FileRef> datafilesToDelete, Set<FileRef> scanFiles, FileRef path, Long compactionId,
+      DataFileValue size, TCredentials credentials, String address, TServerInstance lastLocation, ZooLock zooLock) throws IOException {
     replaceDatafiles(extent, datafilesToDelete, scanFiles, path, compactionId, size, credentials, address, lastLocation, zooLock, true);
   }
   
-  public static void replaceDatafiles(KeyExtent extent, Set<String> datafilesToDelete, Set<String> scanFiles, String path, Long compactionId,
-      DataFileValue size, TCredentials credentials, String address, TServerInstance lastLocation, ZooLock zooLock, boolean insertDeleteFlags) {
+  public static void replaceDatafiles(KeyExtent extent, Set<FileRef> datafilesToDelete, Set<FileRef> scanFiles, FileRef path, Long compactionId,
+      DataFileValue size, TCredentials credentials, String address, TServerInstance lastLocation, ZooLock zooLock, boolean insertDeleteFlags)
+      throws IOException {
     
     if (insertDeleteFlags) {
       // add delete flags for those paths before the data file reference is removed
@@ -424,17 +429,17 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     // replace data file references to old mapfiles with the new mapfiles
     Mutation m = new Mutation(extent.getMetadataEntry());
     
-    for (String pathToRemove : datafilesToDelete)
-      m.putDelete(Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(pathToRemove));
+    for (FileRef pathToRemove : datafilesToDelete)
+      m.putDelete(DATAFILE_COLUMN_FAMILY, pathToRemove.meta());
     
-    for (String scanFile : scanFiles)
-      m.put(Constants.METADATA_SCANFILE_COLUMN_FAMILY, new Text(scanFile), new Value("".getBytes()));
+    for (FileRef scanFile : scanFiles)
+      m.put(SCANFILE_COLUMN_FAMILY, scanFile.meta(), new Value("".getBytes()));
     
     if (size.getNumEntries() > 0)
-      m.put(Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(path), new Value(size.encode()));
+      m.put(DATAFILE_COLUMN_FAMILY, path.meta(), new Value(size.encode()));
     
     if (compactionId != null)
-      Constants.METADATA_COMPACT_COLUMN.put(m, new Value(("" + compactionId).getBytes()));
+      COMPACT_COLUMN.put(m, new Value(("" + compactionId).getBytes()));
     
     TServerInstance self = getTServerInstance(address, zooLock);
     self.putLastLocation(m);
@@ -443,48 +448,50 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     if (lastLocation != null && !lastLocation.equals(self))
       lastLocation.clearLastLocation(m);
     
-    update(credentials, zooLock, m);
+    update(credentials, zooLock, m, extent);
   }
   
-  public static void addDeleteEntries(KeyExtent extent, Set<String> datafilesToDelete, TCredentials credentials) {
+  public static void addDeleteEntries(KeyExtent extent, Set<FileRef> datafilesToDelete, TCredentials credentials) throws IOException {
     
     String tableId = extent.getTableId().toString();
     
     // TODO could use batch writer,would need to handle failure and retry like update does - ACCUMULO-1294
-    for (String pathToRemove : datafilesToDelete)
-      update(credentials, createDeleteMutation(tableId, pathToRemove));
+    for (FileRef pathToRemove : datafilesToDelete) {
+      update(credentials, createDeleteMutation(tableId, pathToRemove.path().toString()), extent);
+    }
   }
   
-  public static void addDeleteEntry(String tableId, String path) {
-    update(SecurityConstants.getSystemCredentials(), createDeleteMutation(tableId, path));
+  public static void addDeleteEntry(String tableId, String path) throws IOException {
+    update(SecurityConstants.getSystemCredentials(), createDeleteMutation(tableId, path), new KeyExtent(new Text(tableId), null, null));
   }
   
-  public static Mutation createDeleteMutation(String tableId, String pathToRemove) {
-    Mutation delFlag;
-    String prefix = Constants.METADATA_DELETE_FLAG_PREFIX;
-    if (tableId.equals(Constants.METADATA_TABLE_ID))
-      prefix = Constants.METADATA_DELETE_FLAG_FOR_METADATA_PREFIX;
-
-    if (pathToRemove.startsWith("../"))
-      delFlag = new Mutation(new Text(prefix + pathToRemove.substring(2)));
-    else
-      delFlag = new Mutation(new Text(prefix + "/" + tableId + pathToRemove));
-
+  public static Mutation createDeleteMutation(String tableId, String pathToRemove) throws IOException {
+    String prefix = DELETED_RANGE.getStartKey().getRow().toString();
+    
+    if (!pathToRemove.contains(":")) {
+      if (pathToRemove.startsWith("../"))
+        pathToRemove = pathToRemove.substring(2);
+      else
+        pathToRemove = "/" + tableId + "/" + pathToRemove;
+    }
+    
+    Path path = VolumeManagerImpl.get().getFullPath(ServerConstants.getTablesDirs(), pathToRemove);
+    Mutation delFlag = new Mutation(new Text(prefix + path.toString()));
     delFlag.put(EMPTY_TEXT, EMPTY_TEXT, new Value(new byte[] {}));
     return delFlag;
   }
   
-  public static void removeScanFiles(KeyExtent extent, Set<String> scanFiles, TCredentials credentials, ZooLock zooLock) {
+  public static void removeScanFiles(KeyExtent extent, Set<FileRef> scanFiles, TCredentials credentials, ZooLock zooLock) {
     Mutation m = new Mutation(extent.getMetadataEntry());
     
-    for (String pathToRemove : scanFiles)
-      m.putDelete(Constants.METADATA_SCANFILE_COLUMN_FAMILY, new Text(pathToRemove));
+    for (FileRef pathToRemove : scanFiles)
+      m.putDelete(SCANFILE_COLUMN_FAMILY, pathToRemove.meta());
     
-    update(credentials, zooLock, m);
+    update(credentials, zooLock, m, extent);
   }
   
   private static KeyExtent fixSplit(Text table, Text metadataEntry, Text metadataPrevEndRow, Value oper, double splitRatio, TServerInstance tserver,
-      TCredentials credentials, String time, long initFlushID, long initCompactID, ZooLock lock) throws AccumuloException {
+      TCredentials credentials, String time, long initFlushID, long initCompactID, ZooLock lock) throws AccumuloException, IOException {
     if (metadataPrevEndRow == null)
       // something is wrong, this should not happen... if a tablet is split, it will always have a
       // prev end row....
@@ -492,50 +499,50 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     
     // check to see if prev tablet exist in metadata tablet
     Key prevRowKey = new Key(new Text(KeyExtent.getMetadataEntry(table, metadataPrevEndRow)));
-
-    ScannerImpl scanner2 = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, Constants.METADATA_TABLE_ID, Constants.NO_AUTHS);
+    
+    ScannerImpl scanner2 = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, ID, Authorizations.EMPTY);
     scanner2.setRange(new Range(prevRowKey, prevRowKey.followingKey(PartialKey.ROW)));
     
+    VolumeManager fs = VolumeManagerImpl.get();
     if (!scanner2.iterator().hasNext()) {
       log.info("Rolling back incomplete split " + metadataEntry + " " + metadataPrevEndRow);
       rollBackSplit(metadataEntry, KeyExtent.decodePrevEndRow(oper), credentials, lock);
       return new KeyExtent(metadataEntry, KeyExtent.decodePrevEndRow(oper));
     } else {
       log.info("Finishing incomplete split " + metadataEntry + " " + metadataPrevEndRow);
-
-      List<String> highDatafilesToRemove = new ArrayList<String>();
-
-      Scanner scanner3 = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, Constants.METADATA_TABLE_ID, Constants.NO_AUTHS);
+      
+      List<FileRef> highDatafilesToRemove = new ArrayList<FileRef>();
+      
+      Scanner scanner3 = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, ID, Authorizations.EMPTY);
       Key rowKey = new Key(metadataEntry);
       
-      SortedMap<String,DataFileValue> origDatafileSizes = new TreeMap<String,DataFileValue>();
-      SortedMap<String,DataFileValue> highDatafileSizes = new TreeMap<String,DataFileValue>();
-      SortedMap<String,DataFileValue> lowDatafileSizes = new TreeMap<String,DataFileValue>();
-      scanner3.fetchColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY);
+      SortedMap<FileRef,DataFileValue> origDatafileSizes = new TreeMap<FileRef,DataFileValue>();
+      SortedMap<FileRef,DataFileValue> highDatafileSizes = new TreeMap<FileRef,DataFileValue>();
+      SortedMap<FileRef,DataFileValue> lowDatafileSizes = new TreeMap<FileRef,DataFileValue>();
+      scanner3.fetchColumnFamily(DATAFILE_COLUMN_FAMILY);
       scanner3.setRange(new Range(rowKey, rowKey.followingKey(PartialKey.ROW)));
       
       for (Entry<Key,Value> entry : scanner3) {
-        if (entry.getKey().compareColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY) == 0) {
-          origDatafileSizes.put(entry.getKey().getColumnQualifier().toString(), new DataFileValue(entry.getValue().get()));
+        if (entry.getKey().compareColumnFamily(DATAFILE_COLUMN_FAMILY) == 0) {
+          origDatafileSizes.put(new FileRef(fs, entry.getKey()), new DataFileValue(entry.getValue().get()));
         }
       }
       
-      splitDatafiles(table, metadataPrevEndRow, splitRatio, new HashMap<String,FileUtil.FileInfo>(), origDatafileSizes, lowDatafileSizes, highDatafileSizes,
+      splitDatafiles(table, metadataPrevEndRow, splitRatio, new HashMap<FileRef,FileUtil.FileInfo>(), origDatafileSizes, lowDatafileSizes, highDatafileSizes,
           highDatafilesToRemove);
-    
+      
       MetadataTable.finishSplit(metadataEntry, highDatafileSizes, highDatafilesToRemove, credentials, lock);
       
       return new KeyExtent(metadataEntry, KeyExtent.encodePrevEndRow(metadataPrevEndRow));
     }
-
-
+    
   }
   
-  public static void splitDatafiles(Text table, Text midRow, double splitRatio, Map<String,FileUtil.FileInfo> firstAndLastRows,
-      SortedMap<String,DataFileValue> datafiles, SortedMap<String,DataFileValue> lowDatafileSizes, SortedMap<String,DataFileValue> highDatafileSizes,
-      List<String> highDatafilesToRemove) {
+  public static void splitDatafiles(Text table, Text midRow, double splitRatio, Map<FileRef,FileUtil.FileInfo> firstAndLastRows,
+      SortedMap<FileRef,DataFileValue> datafiles, SortedMap<FileRef,DataFileValue> lowDatafileSizes, SortedMap<FileRef,DataFileValue> highDatafileSizes,
+      List<FileRef> highDatafilesToRemove) {
     
-    for (Entry<String,DataFileValue> entry : datafiles.entrySet()) {
+    for (Entry<FileRef,DataFileValue> entry : datafiles.entrySet()) {
       
       Text firstRow = null;
       Text lastRow = null;
@@ -575,35 +582,35 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   }
   
   public static KeyExtent fixSplit(Text metadataEntry, SortedMap<ColumnFQ,Value> columns, TServerInstance tserver, TCredentials credentials, ZooLock lock)
-      throws AccumuloException {
+      throws AccumuloException, IOException {
     log.info("Incomplete split " + metadataEntry + " attempting to fix");
     
-    Value oper = columns.get(Constants.METADATA_OLD_PREV_ROW_COLUMN);
+    Value oper = columns.get(OLD_PREV_ROW_COLUMN);
     
-    if (columns.get(Constants.METADATA_SPLIT_RATIO_COLUMN) == null) {
+    if (columns.get(SPLIT_RATIO_COLUMN) == null) {
       throw new IllegalArgumentException("Metadata entry does not have split ratio (" + metadataEntry + ")");
     }
     
-    double splitRatio = Double.parseDouble(new String(columns.get(Constants.METADATA_SPLIT_RATIO_COLUMN).get()));
+    double splitRatio = Double.parseDouble(new String(columns.get(SPLIT_RATIO_COLUMN).get()));
     
-    Value prevEndRowIBW = columns.get(Constants.METADATA_PREV_ROW_COLUMN);
+    Value prevEndRowIBW = columns.get(PREV_ROW_COLUMN);
     
     if (prevEndRowIBW == null) {
       throw new IllegalArgumentException("Metadata entry does not have prev row (" + metadataEntry + ")");
     }
     
-    Value time = columns.get(Constants.METADATA_TIME_COLUMN);
+    Value time = columns.get(TIME_COLUMN);
     
     if (time == null) {
       throw new IllegalArgumentException("Metadata entry does not have time (" + metadataEntry + ")");
     }
     
-    Value flushID = columns.get(Constants.METADATA_FLUSH_COLUMN);
+    Value flushID = columns.get(FLUSH_COLUMN);
     long initFlushID = -1;
     if (flushID != null)
       initFlushID = Long.parseLong(flushID.toString());
     
-    Value compactID = columns.get(Constants.METADATA_COMPACT_COLUMN);
+    Value compactID = columns.get(COMPACT_COLUMN);
     long initCompactID = -1;
     if (compactID != null)
       initCompactID = Long.parseLong(compactID.toString());
@@ -615,10 +622,10 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     return fixSplit(table, metadataEntry, metadataPrevEndRow, oper, splitRatio, tserver, credentials, time.toString(), initFlushID, initCompactID, lock);
   }
   
-  public static void deleteTable(String tableId, boolean insertDeletes, TCredentials credentials, ZooLock lock) throws AccumuloException {
-    Scanner ms = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, Constants.METADATA_TABLE_ID, Constants.NO_AUTHS);
+  public static void deleteTable(String tableId, boolean insertDeletes, TCredentials credentials, ZooLock lock) throws AccumuloException, IOException {
+    Scanner ms = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, ID, Authorizations.EMPTY);
     Text tableIdText = new Text(tableId);
-    BatchWriter bw = new BatchWriterImpl(HdfsZooInstance.getInstance(), credentials, Constants.METADATA_TABLE_ID, new BatchWriterConfig().setMaxMemory(1000000)
+    BatchWriter bw = new BatchWriterImpl(HdfsZooInstance.getInstance(), credentials, ID, new BatchWriterConfig().setMaxMemory(1000000)
         .setMaxLatency(120000l, TimeUnit.MILLISECONDS).setMaxWriteThreads(2));
     
     // scan metadata for our table and delete everything we find
@@ -628,20 +635,18 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     // insert deletes before deleting data from !METADATA... this makes the code fault tolerant
     if (insertDeletes) {
       
-      ms.fetchColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY);
-      Constants.METADATA_DIRECTORY_COLUMN.fetch(ms);
+      ms.fetchColumnFamily(DATAFILE_COLUMN_FAMILY);
+      DIRECTORY_COLUMN.fetch(ms);
       
       for (Entry<Key,Value> cell : ms) {
         Key key = cell.getKey();
         
-        if (key.getColumnFamily().equals(Constants.METADATA_DATAFILE_COLUMN_FAMILY)) {
-          String relPath = key.getColumnQualifier().toString();
-          // only insert deletes for files owned by this table
-          if (!relPath.startsWith("../"))
-            bw.addMutation(createDeleteMutation(tableId, relPath));
+        if (key.getColumnFamily().equals(DATAFILE_COLUMN_FAMILY)) {
+          FileRef ref = new FileRef(VolumeManagerImpl.get(), key);
+          bw.addMutation(createDeleteMutation(tableId, ref.meta().toString()));
         }
         
-        if (Constants.METADATA_DIRECTORY_COLUMN.hasColumns(key)) {
+        if (DIRECTORY_COLUMN.hasColumns(key)) {
           bw.addMutation(createDeleteMutation(tableId, cell.getValue().toString()));
         }
       }
@@ -697,7 +702,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
       extent.write(out);
       out.writeLong(timestamp);
       out.writeUTF(server);
-      out.writeUTF(filename);
+      out.writeUTF(filename.toString());
       out.write(tabletId);
       out.write(logSet.size());
       for (String s : logSet) {
@@ -725,7 +730,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   }
   
   private static String getZookeeperLogLocation() {
-    return ZooUtil.getRoot(HdfsZooInstance.getInstance()) + Constants.ZROOT_TABLET_WALOGS;
+    return ZooUtil.getRoot(HdfsZooInstance.getInstance()) + RootTable.ZROOT_TABLET_WALOGS;
   }
   
   public static void addLogEntry(TCredentials credentials, LogEntry entry, ZooLock zooLock) {
@@ -734,8 +739,11 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
       while (true) {
         try {
           IZooReaderWriter zoo = ZooReaderWriter.getInstance();
-          if (zoo.isLockHeld(zooLock.getLockID()))
-            zoo.putPersistentData(root + "/" + entry.filename, entry.toBytes(), NodeExistsPolicy.OVERWRITE);
+          if (zoo.isLockHeld(zooLock.getLockID())) {
+            String[] parts = entry.filename.split("/");
+            String uniqueId = parts[parts.length - 1];
+            zoo.putPersistentData(root + "/" + uniqueId, entry.toBytes(), NodeExistsPolicy.OVERWRITE);
+          }
           break;
         } catch (KeeperException e) {
           log.error(e, e);
@@ -749,15 +757,15 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     } else {
       String value = StringUtil.join(entry.logSet, ";") + "|" + entry.tabletId;
       Mutation m = new Mutation(entry.extent.getMetadataEntry());
-      m.put(Constants.METADATA_LOG_COLUMN_FAMILY, new Text(entry.server + "/" + entry.filename), new Value(value.getBytes()));
-      update(credentials, zooLock, m);
+      m.put(LOG_COLUMN_FAMILY, new Text(entry.server + "/" + entry.filename), new Value(value.getBytes()));
+      update(credentials, zooLock, m, entry.extent);
     }
   }
   
   public static LogEntry entryFromKeyValue(Key key, Value value) {
     MetadataTable.LogEntry e = new MetadataTable.LogEntry();
     e.extent = new KeyExtent(key.getRow(), EMPTY_TEXT);
-    String[] parts = key.getColumnQualifier().toString().split("/");
+    String[] parts = key.getColumnQualifier().toString().split("/", 2);
     e.server = parts[0];
     e.filename = parts[1];
     parts = value.toString().split("\\|");
@@ -767,28 +775,30 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     return e;
   }
   
-  public static Pair<List<LogEntry>,SortedMap<String,DataFileValue>> getFileAndLogEntries(TCredentials credentials, KeyExtent extent) throws KeeperException,
+  public static Pair<List<LogEntry>,SortedMap<FileRef,DataFileValue>> getFileAndLogEntries(TCredentials credentials, KeyExtent extent) throws KeeperException,
       InterruptedException, IOException {
     ArrayList<LogEntry> result = new ArrayList<LogEntry>();
-    TreeMap<String,DataFileValue> sizes = new TreeMap<String,DataFileValue>();
+    TreeMap<FileRef,DataFileValue> sizes = new TreeMap<FileRef,DataFileValue>();
     
+    VolumeManager fs = VolumeManagerImpl.get();
     if (extent.isRootTablet()) {
       getRootLogEntries(result);
-      FileSystem fs = TraceFileSystem.wrap(FileUtil.getFileSystem(CachedConfiguration.getInstance(), ServerConfiguration.getSiteConfiguration()));
-      FileStatus[] files = fs.listStatus(new Path(ServerConstants.getRootTabletDir()));
-      
+      Path rootDir = new Path(ServerConstants.getRootTabletDir());
+      rootDir = rootDir.makeQualified(fs.getDefaultVolume());
+      FileStatus[] files = fs.listStatus(rootDir);
       for (FileStatus fileStatus : files) {
         if (fileStatus.getPath().toString().endsWith("_tmp")) {
           continue;
         }
         DataFileValue dfv = new DataFileValue(0, 0);
-        sizes.put(Constants.ZROOT_TABLET + "/" + fileStatus.getPath().getName(), dfv);
+        sizes.put(new FileRef(fileStatus.getPath().toString(), fileStatus.getPath()), dfv);
       }
       
     } else {
-      Scanner scanner = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, Constants.METADATA_TABLE_ID, Constants.NO_AUTHS);
-      scanner.fetchColumnFamily(Constants.METADATA_LOG_COLUMN_FAMILY);
-      scanner.fetchColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY);
+      String systemTableToCheck = extent.isMeta() ? RootTable.ID : ID;
+      Scanner scanner = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, systemTableToCheck, Authorizations.EMPTY);
+      scanner.fetchColumnFamily(LOG_COLUMN_FAMILY);
+      scanner.fetchColumnFamily(DATAFILE_COLUMN_FAMILY);
       scanner.setRange(extent.toMetadataRange());
       
       for (Entry<Key,Value> entry : scanner) {
@@ -796,24 +806,24 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
           throw new RuntimeException("Unexpected row " + entry.getKey().getRow() + " expected " + extent.getMetadataEntry());
         }
         
-        if (entry.getKey().getColumnFamily().equals(Constants.METADATA_LOG_COLUMN_FAMILY)) {
+        if (entry.getKey().getColumnFamily().equals(LOG_COLUMN_FAMILY)) {
           result.add(entryFromKeyValue(entry.getKey(), entry.getValue()));
-        } else if (entry.getKey().getColumnFamily().equals(Constants.METADATA_DATAFILE_COLUMN_FAMILY)) {
+        } else if (entry.getKey().getColumnFamily().equals(DATAFILE_COLUMN_FAMILY)) {
           DataFileValue dfv = new DataFileValue(entry.getValue().get());
-          sizes.put(entry.getKey().getColumnQualifier().toString(), dfv);
+          sizes.put(new FileRef(fs, entry.getKey()), dfv);
         } else {
           throw new RuntimeException("Unexpected col fam " + entry.getKey().getColumnFamily());
         }
       }
     }
     
-    return new Pair<List<LogEntry>,SortedMap<String,DataFileValue>>(result, sizes);
+    return new Pair<List<LogEntry>,SortedMap<FileRef,DataFileValue>>(result, sizes);
   }
   
   public static List<LogEntry> getLogEntries(TCredentials credentials, KeyExtent extent) throws IOException, KeeperException, InterruptedException {
     log.info("Scanning logging entries for " + extent);
     ArrayList<LogEntry> result = new ArrayList<LogEntry>();
-    if (extent.equals(Constants.ROOT_TABLET_EXTENT)) {
+    if (extent.equals(RootTable.EXTENT)) {
       log.info("Getting logs for root tablet from zookeeper");
       getRootLogEntries(result);
     } else {
@@ -822,7 +832,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
       Text pattern = extent.getMetadataEntry();
       for (Entry<Key,Value> entry : scanner) {
         Text row = entry.getKey().getRow();
-        if (entry.getKey().getColumnFamily().equals(Constants.METADATA_LOG_COLUMN_FAMILY)) {
+        if (entry.getKey().getColumnFamily().equals(LOG_COLUMN_FAMILY)) {
           if (row.equals(pattern)) {
             result.add(entryFromKeyValue(entry.getKey(), entry.getValue()));
           }
@@ -848,8 +858,8 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   private static void getRootLogEntries(ArrayList<LogEntry> result) throws KeeperException, InterruptedException, IOException {
     IZooReaderWriter zoo = ZooReaderWriter.getInstance();
     String root = getZookeeperLogLocation();
-    // there's a little race between getting the children and fetching 
-    // the data.  The log can be removed in between.
+    // there's a little race between getting the children and fetching
+    // the data. The log can be removed in between.
     while (true) {
       result.clear();
       for (String child : zoo.getChildren(root)) {
@@ -866,10 +876,13 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   }
   
   private static Scanner getTabletLogScanner(TCredentials credentials, KeyExtent extent) {
-    Scanner scanner = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, Constants.METADATA_TABLE_ID, Constants.NO_AUTHS);
-    scanner.fetchColumnFamily(Constants.METADATA_LOG_COLUMN_FAMILY);
+    String tableId = ID;
+    if (extent.isMeta())
+      tableId = RootTable.ID;
+    Scanner scanner = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, tableId, Authorizations.EMPTY);
+    scanner.fetchColumnFamily(LOG_COLUMN_FAMILY);
     Text start = extent.getMetadataEntry();
-    Key endKey = new Key(start, Constants.METADATA_LOG_COLUMN_FAMILY);
+    Key endKey = new Key(start, LOG_COLUMN_FAMILY);
     endKey = endKey.followingKey(PartialKey.ROW_COLFAM);
     scanner.setRange(new Range(new Key(start), endKey));
     return scanner;
@@ -881,11 +894,13 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     Iterator<Entry<Key,Value>> metadataEntries = null;
     
     LogEntryIterator(TCredentials creds) throws IOException, KeeperException, InterruptedException {
-      rootTabletEntries = getLogEntries(creds, Constants.ROOT_TABLET_EXTENT).iterator();
+      rootTabletEntries = getLogEntries(creds, RootTable.EXTENT).iterator();
       try {
         Scanner scanner = HdfsZooInstance.getInstance().getConnector(creds.getPrincipal(), CredentialHelper.extractToken(creds))
-            .createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
-        scanner.fetchColumnFamily(Constants.METADATA_LOG_COLUMN_FAMILY);
+            .createScanner(NAME, Authorizations.EMPTY);
+        log.info("Setting range to " + KEYSPACE);
+        scanner.setRange(KEYSPACE);
+        scanner.fetchColumnFamily(LOG_COLUMN_FAMILY);
         metadataEntries = scanner.iterator();
       } catch (Exception ex) {
         throw new IOException(ex);
@@ -933,18 +948,19 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
         }
       } else {
         Mutation m = new Mutation(entry.extent.getMetadataEntry());
-        m.putDelete(Constants.METADATA_LOG_COLUMN_FAMILY, new Text(entry.server + "/" + entry.filename));
-        update(SecurityConstants.getSystemCredentials(), zooLock, m);
+        m.putDelete(LOG_COLUMN_FAMILY, new Text(entry.server + "/" + entry.filename));
+        update(SecurityConstants.getSystemCredentials(), zooLock, m, entry.extent);
       }
     }
   }
   
   private static void getFiles(Set<String> files, Map<Key,Value> tablet, String srcTableId) {
     for (Entry<Key,Value> entry : tablet.entrySet()) {
-      if (entry.getKey().getColumnFamily().equals(Constants.METADATA_DATAFILE_COLUMN_FAMILY)) {
+      if (entry.getKey().getColumnFamily().equals(DATAFILE_COLUMN_FAMILY)) {
         String cf = entry.getKey().getColumnQualifier().toString();
-        if (srcTableId != null && !cf.startsWith("../"))
+        if (srcTableId != null && !cf.startsWith("../") && !cf.contains(":")) {
           cf = "../" + srcTableId + entry.getKey().getColumnQualifier();
+        }
         files.add(cf);
       }
     }
@@ -956,14 +972,14 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     Mutation m = new Mutation(KeyExtent.getMetadataEntry(new Text(tableId), ke.getEndRow()));
     
     for (Entry<Key,Value> entry : tablet.entrySet()) {
-      if (entry.getKey().getColumnFamily().equals(Constants.METADATA_DATAFILE_COLUMN_FAMILY)) {
+      if (entry.getKey().getColumnFamily().equals(DATAFILE_COLUMN_FAMILY)) {
         String cf = entry.getKey().getColumnQualifier().toString();
-        if (!cf.startsWith("../"))
+        if (!cf.startsWith("../") && !cf.contains(":"))
           cf = "../" + srcTableId + entry.getKey().getColumnQualifier();
         m.put(entry.getKey().getColumnFamily(), new Text(cf), entry.getValue());
-      } else if (entry.getKey().getColumnFamily().equals(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY)) {
-        m.put(Constants.METADATA_LAST_LOCATION_COLUMN_FAMILY, entry.getKey().getColumnQualifier(), entry.getValue());
-      } else if (entry.getKey().getColumnFamily().equals(Constants.METADATA_LAST_LOCATION_COLUMN_FAMILY)) {
+      } else if (entry.getKey().getColumnFamily().equals(CURRENT_LOCATION_COLUMN_FAMILY)) {
+        m.put(LAST_LOCATION_COLUMN_FAMILY, entry.getKey().getColumnQualifier(), entry.getValue());
+      } else if (entry.getKey().getColumnFamily().equals(LAST_LOCATION_COLUMN_FAMILY)) {
         // skip
       } else {
         m.put(entry.getKey().getColumnFamily(), entry.getKey().getColumnQualifier(), entry.getValue());
@@ -973,14 +989,14 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   }
   
   private static Scanner createCloneScanner(String tableId, Connector conn) throws TableNotFoundException {
-    Scanner mscanner = new IsolatedScanner(conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS));
+    Scanner mscanner = new IsolatedScanner(conn.createScanner(NAME, Authorizations.EMPTY));
     mscanner.setRange(new KeyExtent(new Text(tableId), null, null).toMetadataRange());
-    mscanner.fetchColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY);
-    mscanner.fetchColumnFamily(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY);
-    mscanner.fetchColumnFamily(Constants.METADATA_LAST_LOCATION_COLUMN_FAMILY);
-    mscanner.fetchColumnFamily(Constants.METADATA_CLONED_COLUMN_FAMILY);
-    Constants.METADATA_PREV_ROW_COLUMN.fetch(mscanner);
-    Constants.METADATA_TIME_COLUMN.fetch(mscanner);
+    mscanner.fetchColumnFamily(DATAFILE_COLUMN_FAMILY);
+    mscanner.fetchColumnFamily(CURRENT_LOCATION_COLUMN_FAMILY);
+    mscanner.fetchColumnFamily(LAST_LOCATION_COLUMN_FAMILY);
+    mscanner.fetchColumnFamily(CLONED_COLUMN_FAMILY);
+    PREV_ROW_COLUMN.fetch(mscanner);
+    TIME_COLUMN.fetch(mscanner);
     return mscanner;
   }
   
@@ -1017,7 +1033,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
       
       boolean cloneSuccessful = false;
       for (Entry<Key,Value> entry : cloneTablet.entrySet()) {
-        if (entry.getKey().getColumnFamily().equals(Constants.METADATA_CLONED_COLUMN_FAMILY)) {
+        if (entry.getKey().getColumnFamily().equals(CLONED_COLUMN_FAMILY)) {
           cloneSuccessful = true;
           break;
         }
@@ -1073,7 +1089,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
       } else {
         // write out marker that this tablet was successfully cloned
         Mutation m = new Mutation(cloneTablet.keySet().iterator().next().getRow());
-        m.put(Constants.METADATA_CLONED_COLUMN_FAMILY, new Text(""), new Value("OK".getBytes()));
+        m.put(CLONED_COLUMN_FAMILY, new Text(""), new Value("OK".getBytes()));
         bw.addMutation(m);
       }
     }
@@ -1085,7 +1101,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   public static void cloneTable(Instance instance, String srcTableId, String tableId) throws Exception {
     
     Connector conn = instance.getConnector(SecurityConstants.SYSTEM_PRINCIPAL, SecurityConstants.getSystemToken());
-    BatchWriter bw = conn.createBatchWriter(Constants.METADATA_TABLE_NAME, new BatchWriterConfig());
+    BatchWriter bw = conn.createBatchWriter(NAME, new BatchWriterConfig());
     
     while (true) {
       
@@ -1118,9 +1134,9 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     }
     
     // delete the clone markers and create directory entries
-    Scanner mscanner = conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
+    Scanner mscanner = conn.createScanner(NAME, Authorizations.EMPTY);
     mscanner.setRange(new KeyExtent(new Text(tableId), null, null).toMetadataRange());
-    mscanner.fetchColumnFamily(Constants.METADATA_CLONED_COLUMN_FAMILY);
+    mscanner.fetchColumnFamily(CLONED_COLUMN_FAMILY);
     
     int dirCount = 0;
     
@@ -1128,7 +1144,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
       Key k = entry.getKey();
       Mutation m = new Mutation(k.getRow());
       m.putDelete(k.getColumnFamily(), k.getColumnQualifier());
-      Constants.METADATA_DIRECTORY_COLUMN.put(m, new Value(FastFormat.toZeroPaddedString(dirCount++, 8, 16, "/c-".getBytes())));
+      DIRECTORY_COLUMN.put(m, new Value(FastFormat.toZeroPaddedString(dirCount++, 8, 16, "/c-".getBytes())));
       bw.addMutation(m);
     }
     
@@ -1138,15 +1154,15 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   
   public static void chopped(KeyExtent extent, ZooLock zooLock) {
     Mutation m = new Mutation(extent.getMetadataEntry());
-    Constants.METADATA_CHOPPED_COLUMN.put(m, new Value("chopped".getBytes()));
-    update(SecurityConstants.getSystemCredentials(), zooLock, m);
+    CHOPPED_COLUMN.put(m, new Value("chopped".getBytes()));
+    update(SecurityConstants.getSystemCredentials(), zooLock, m, extent);
   }
   
   public static void removeBulkLoadEntries(Connector conn, String tableId, long tid) throws Exception {
-    Scanner mscanner = new IsolatedScanner(conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS));
+    Scanner mscanner = new IsolatedScanner(conn.createScanner(NAME, Authorizations.EMPTY));
     mscanner.setRange(new KeyExtent(new Text(tableId), null, null).toMetadataRange());
-    mscanner.fetchColumnFamily(Constants.METADATA_BULKFILE_COLUMN_FAMILY);
-    BatchWriter bw = conn.createBatchWriter(Constants.METADATA_TABLE_NAME, new BatchWriterConfig());
+    mscanner.fetchColumnFamily(BULKFILE_COLUMN_FAMILY);
+    BatchWriter bw = conn.createBatchWriter(NAME, new BatchWriterConfig());
     for (Entry<Key,Value> entry : mscanner) {
       log.debug("Looking at entry " + entry + " with tid " + tid);
       if (Long.parseLong(entry.getValue().toString()) == tid) {
@@ -1159,15 +1175,16 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     bw.close();
   }
   
-  public static List<String> getBulkFilesLoaded(Connector conn, KeyExtent extent, long tid) {
-    List<String> result = new ArrayList<String>();
+  public static List<FileRef> getBulkFilesLoaded(Connector conn, KeyExtent extent, long tid) throws IOException {
+    List<FileRef> result = new ArrayList<FileRef>();
     try {
-      Scanner mscanner = new IsolatedScanner(conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS));
+      VolumeManager fs = VolumeManagerImpl.get();
+      Scanner mscanner = new IsolatedScanner(conn.createScanner(extent.isMeta() ? RootTable.NAME : NAME, Authorizations.EMPTY));
       mscanner.setRange(extent.toMetadataRange());
-      mscanner.fetchColumnFamily(Constants.METADATA_BULKFILE_COLUMN_FAMILY);
+      mscanner.fetchColumnFamily(BULKFILE_COLUMN_FAMILY);
       for (Entry<Key,Value> entry : mscanner) {
         if (Long.parseLong(entry.getValue().toString()) == tid) {
-          result.add(entry.getKey().getColumnQualifier().toString());
+          result.add(new FileRef(fs, entry.getKey()));
         }
       }
       return result;
@@ -1177,59 +1194,60 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
     }
   }
   
-  public static Map<String,Long> getBulkFilesLoaded(TCredentials credentials, KeyExtent extent) {
-    return getBulkFilesLoaded(credentials, extent.getMetadataEntry());
-  }
-  
-  public static Map<String,Long> getBulkFilesLoaded(TCredentials credentials, Text metadataRow) {
+  public static Map<FileRef,Long> getBulkFilesLoaded(TCredentials credentials, KeyExtent extent) throws IOException {
+    Text metadataRow = extent.getMetadataEntry();
+    Map<FileRef,Long> ret = new HashMap<FileRef,Long>();
     
-    Map<String,Long> ret = new HashMap<String,Long>();
-    
-    Scanner scanner = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, Constants.METADATA_TABLE_ID, Constants.NO_AUTHS);
+    VolumeManager fs = VolumeManagerImpl.get();
+    Scanner scanner = new ScannerImpl(HdfsZooInstance.getInstance(), credentials, extent.isMeta() ? RootTable.ID : ID, Authorizations.EMPTY);
     scanner.setRange(new Range(metadataRow));
-    scanner.fetchColumnFamily(Constants.METADATA_BULKFILE_COLUMN_FAMILY);
+    scanner.fetchColumnFamily(BULKFILE_COLUMN_FAMILY);
     for (Entry<Key,Value> entry : scanner) {
-      String file = entry.getKey().getColumnQualifier().toString();
       Long tid = Long.parseLong(entry.getValue().toString());
-      
-      ret.put(file, tid);
+      ret.put(new FileRef(fs, entry.getKey()), tid);
     }
     return ret;
   }
   
   public static void addBulkLoadInProgressFlag(String path) {
     
-    Mutation m = new Mutation(Constants.METADATA_BLIP_FLAG_PREFIX + path);
+    Mutation m = new Mutation(BLIP_FLAG_PREFIX + path);
     m.put(EMPTY_TEXT, EMPTY_TEXT, new Value(new byte[] {}));
     
-    update(SecurityConstants.getSystemCredentials(), m);
+    // new KeyExtent is only added to force update to write to the metadata table, not the root table
+    // because bulk loads aren't supported to the metadata table
+    update(SecurityConstants.getSystemCredentials(), m, new KeyExtent(new Text("anythingNotMetadata"), null, null));
   }
   
   public static void removeBulkLoadInProgressFlag(String path) {
     
-    Mutation m = new Mutation(Constants.METADATA_BLIP_FLAG_PREFIX + path);
+    Mutation m = new Mutation(BLIP_FLAG_PREFIX + path);
     m.putDelete(EMPTY_TEXT, EMPTY_TEXT);
     
-    update(SecurityConstants.getSystemCredentials(), m);
+    // new KeyExtent is only added to force update to write to the metadata table, not the root table
+    // because bulk loads aren't supported to the metadata table
+    update(SecurityConstants.getSystemCredentials(), m, new KeyExtent(new Text("anythingNotMetadata"), null, null));
   }
-
+  
   public static void moveMetaDeleteMarkers(Instance instance, TCredentials creds) {
+    if (true)
+      throw new UnsupportedOperationException();
     // move delete markers from the normal delete keyspace to the root tablet delete keyspace if the files are for the !METADATA table
-    Scanner scanner = new ScannerImpl(instance, creds, Constants.METADATA_TABLE_ID, Constants.NO_AUTHS);
-    scanner.setRange(new Range(Constants.METADATA_DELETES_KEYSPACE));
+    Scanner scanner = new ScannerImpl(instance, creds, ID, Authorizations.EMPTY);
+    scanner.setRange(new Range(DELETED_RANGE));
     for (Entry<Key,Value> entry : scanner) {
       String row = entry.getKey().getRow().toString();
-      if (row.startsWith(Constants.METADATA_DELETE_FLAG_PREFIX + "/" + Constants.METADATA_TABLE_ID)) {
-        String filename = row.substring(Constants.METADATA_DELETE_FLAG_PREFIX.length());
+      if (row.startsWith(DELETED_RANGE.getStartKey().getRow().toString())) {
+        String filename = row.substring(DELETED_RANGE.getStartKey().getRow().toString().length());
         // add the new entry first
         log.info("Moving " + filename + " marker to the root tablet");
-        Mutation m = new Mutation(Constants.METADATA_DELETE_FLAG_FOR_METADATA_PREFIX + filename);
-        m.put(new byte[]{}, new byte[]{}, new byte[]{});
-        update(creds, m);
+        Mutation m = new Mutation(DELETED_RANGE.getStartKey().getRow().toString() + filename);
+        m.put(new byte[] {}, new byte[] {}, new byte[] {});
+        update(creds, m, null);
         // remove the old entry
         m = new Mutation(entry.getKey().getRow());
-        m.putDelete(new byte[]{}, new byte[]{});
-        update(creds, m);
+        m.putDelete(new byte[] {}, new byte[] {});
+        update(creds, m, null);
       } else {
         break;
       }

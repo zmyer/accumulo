@@ -22,7 +22,6 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.Serializable;
-import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -46,13 +45,15 @@ import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.KeyExtent;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.master.state.tables.TableState;
+import org.apache.accumulo.core.security.Authorizations;
+import org.apache.accumulo.core.util.MetadataTable;
 import org.apache.accumulo.fate.Repo;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.conf.ServerConfiguration;
 import org.apache.accumulo.server.conf.TableConfiguration;
+import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.master.Master;
 import org.apache.hadoop.fs.FSDataOutputStream;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
 
@@ -95,12 +96,12 @@ class WriteExportFiles extends MasterRepo {
     
     checkOffline(conn);
     
-    Scanner metaScanner = conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
+    Scanner metaScanner = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
     metaScanner.setRange(new KeyExtent(new Text(tableInfo.tableID), null, null).toMetadataRange());
     
     // scan for locations
-    metaScanner.fetchColumnFamily(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY);
-    metaScanner.fetchColumnFamily(Constants.METADATA_FUTURE_LOCATION_COLUMN_FAMILY);
+    metaScanner.fetchColumnFamily(MetadataTable.CURRENT_LOCATION_COLUMN_FAMILY);
+    metaScanner.fetchColumnFamily(MetadataTable.FUTURE_LOCATION_COLUMN_FAMILY);
     
     if (metaScanner.iterator().hasNext()) {
       return 500;
@@ -109,7 +110,7 @@ class WriteExportFiles extends MasterRepo {
     // use the same range to check for walogs that we used to check for hosted (or future hosted) tablets
     // this is done as a separate scan after we check for locations, because walogs are okay only if there is no location
     metaScanner.clearColumns();
-    metaScanner.fetchColumnFamily(Constants.METADATA_LOG_COLUMN_FAMILY);
+    metaScanner.fetchColumnFamily(MetadataTable.LOG_COLUMN_FAMILY);
     
     if (metaScanner.iterator().hasNext()) {
       throw new ThriftTableOperationException(tableInfo.tableID, tableInfo.tableName, TableOperation.EXPORT, TableOperationExceptionType.OTHER,
@@ -139,7 +140,7 @@ class WriteExportFiles extends MasterRepo {
     Utils.unreserveTable(tableInfo.tableID, tid, false);
   }
   
-  public static void exportTable(FileSystem fs, Connector conn, String tableName, String tableID, String exportDir) throws Exception {
+  public static void exportTable(VolumeManager fs, Connector conn, String tableName, String tableID, String exportDir) throws Exception {
     
     fs.mkdirs(new Path(exportDir));
     
@@ -160,7 +161,7 @@ class WriteExportFiles extends MasterRepo {
       osw.append("srcZookeepers:" + conn.getInstance().getZooKeepers() + "\n");
       osw.append("srcTableName:" + tableName + "\n");
       osw.append("srcTableID:" + tableID + "\n");
-      osw.append(ExportTable.DATA_VERSION_PROP + ":" + Constants.DATA_VERSION + "\n");
+      osw.append(ExportTable.DATA_VERSION_PROP + ":" + ServerConstants.DATA_VERSION + "\n");
       osw.append("srcCodeVersion:" + Constants.VERSION + "\n");
       
       osw.flush();
@@ -169,7 +170,7 @@ class WriteExportFiles extends MasterRepo {
       exportConfig(conn, tableID, zipOut, dataOut);
       dataOut.flush();
       
-      Map<String,String> uniqueFiles = exportMetadata(conn, tableID, zipOut, dataOut);
+      Map<String,String> uniqueFiles = exportMetadata(fs, conn, tableID, zipOut, dataOut);
       
       dataOut.close();
       dataOut = null;
@@ -182,24 +183,16 @@ class WriteExportFiles extends MasterRepo {
     }
   }
   
-  private static void createDistcpFile(FileSystem fs, String exportDir, Path exportMetaFilePath, Map<String,String> uniqueFiles) throws IOException {
+  private static void createDistcpFile(VolumeManager fs, String exportDir, Path exportMetaFilePath, Map<String,String> uniqueFiles) throws IOException {
     BufferedWriter distcpOut = new BufferedWriter(new OutputStreamWriter(fs.create(new Path(exportDir, "distcp.txt"), false)));
     
     try {
-      URI uri = fs.getUri();
-      
-      for (String relPath : uniqueFiles.values()) {
-        Path absPath = new Path(uri.getScheme(), uri.getAuthority(), ServerConstants.getTablesDir() + relPath);
-        distcpOut.append(absPath.toUri().toString());
+      for (String file : uniqueFiles.values()) {
+        distcpOut.append(file);
         distcpOut.newLine();
       }
       
-      Path absEMP = exportMetaFilePath;
-      if (!exportMetaFilePath.isAbsolute())
-        absEMP = new Path(fs.getWorkingDirectory().toUri().getPath(), exportMetaFilePath);
-      
-      distcpOut.append(new Path(uri.getScheme(), uri.getAuthority(), absEMP.toString()).toUri().toString());
-      
+      distcpOut.append(exportMetaFilePath.toString());
       distcpOut.newLine();
       
       distcpOut.close();
@@ -211,41 +204,35 @@ class WriteExportFiles extends MasterRepo {
     }
   }
   
-  private static Map<String,String> exportMetadata(Connector conn, String tableID, ZipOutputStream zipOut, DataOutputStream dataOut) throws IOException,
+  private static Map<String,String> exportMetadata(VolumeManager fs, Connector conn, String tableID, ZipOutputStream zipOut, DataOutputStream dataOut) throws IOException,
       TableNotFoundException {
     zipOut.putNextEntry(new ZipEntry(Constants.EXPORT_METADATA_FILE));
     
     Map<String,String> uniqueFiles = new HashMap<String,String>();
     
-    Scanner metaScanner = conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
-    metaScanner.fetchColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY);
-    Constants.METADATA_PREV_ROW_COLUMN.fetch(metaScanner);
-    Constants.METADATA_TIME_COLUMN.fetch(metaScanner);
+    Scanner metaScanner = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
+    metaScanner.fetchColumnFamily(MetadataTable.DATAFILE_COLUMN_FAMILY);
+    MetadataTable.PREV_ROW_COLUMN.fetch(metaScanner);
+    MetadataTable.TIME_COLUMN.fetch(metaScanner);
     metaScanner.setRange(new KeyExtent(new Text(tableID), null, null).toMetadataRange());
     
     for (Entry<Key,Value> entry : metaScanner) {
       entry.getKey().write(dataOut);
       entry.getValue().write(dataOut);
       
-      if (entry.getKey().getColumnFamily().equals(Constants.METADATA_DATAFILE_COLUMN_FAMILY)) {
-        String relPath = entry.getKey().getColumnQualifierData().toString();
-        
-        if (relPath.startsWith("../"))
-          relPath = relPath.substring(2);
-        else
-          relPath = "/" + tableID + relPath;
-        
-        String tokens[] = relPath.split("/");
-        if (tokens.length != 4) {
-          throw new RuntimeException("Illegal path " + relPath);
+      if (entry.getKey().getColumnFamily().equals(MetadataTable.DATAFILE_COLUMN_FAMILY)) {
+        String path = fs.getFullPath(entry.getKey()).toString();
+        String tokens[] = path.split("/");
+        if (tokens.length < 1) {
+          throw new RuntimeException("Illegal path " + path);
         }
         
-        String filename = tokens[3];
+        String filename = tokens[tokens.length - 1];
         
         String existingPath = uniqueFiles.get(filename);
         if (existingPath == null) {
-          uniqueFiles.put(filename, relPath);
-        } else if (!existingPath.equals(relPath)) {
+          uniqueFiles.put(filename, path);
+        } else if (!existingPath.equals(path)) {
           // make sure file names are unique, should only apply for tables with file names generated by Accumulo 1.3 and earlier
           throw new IOException("Cannot export table with nonunique file names " + filename + ". Major compact table.");
         }

@@ -39,8 +39,10 @@ import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.iterators.SortedKeyIterator;
+import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.util.LoggingRunnable;
 import org.apache.accumulo.core.util.NamingThreadFactory;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
 import org.apache.accumulo.server.client.HdfsZooInstance;
@@ -84,7 +86,7 @@ public class ProblemReports implements Iterable<ProblemReport> {
         log.debug("Filing problem report " + pr.getTableName() + " " + pr.getProblemType() + " " + pr.getResource());
         
         try {
-          if (pr.getTableName().equals(Constants.METADATA_TABLE_ID)) {
+          if (pr.getTableName().equals(MetadataTable.ID) || pr.getTableName().equals(RootTable.ID)) {
             // file report in zookeeper
             pr.saveToZooKeeper();
           } else {
@@ -120,7 +122,7 @@ public class ProblemReports implements Iterable<ProblemReport> {
       @Override
       public void run() {
         try {
-          if (pr.getTableName().equals(Constants.METADATA_TABLE_ID)) {
+          if (pr.getTableName().equals(MetadataTable.ID)) {
             // file report in zookeeper
             pr.removeFromZooKeeper();
           } else {
@@ -144,7 +146,7 @@ public class ProblemReports implements Iterable<ProblemReport> {
   
   public void deleteProblemReports(String table) throws Exception {
     
-    if (Constants.METADATA_TABLE_ID.equals(table)) {
+    if (MetadataTable.ID.equals(table)) {
       Iterator<ProblemReport> pri = iterator(table);
       while (pri.hasNext()) {
         pri.next().removeFromZooKeeper();
@@ -153,7 +155,7 @@ public class ProblemReports implements Iterable<ProblemReport> {
     }
     
     Connector connector = HdfsZooInstance.getInstance().getConnector(SecurityConstants.getSystemPrincipal(), SecurityConstants.getSystemToken());
-    Scanner scanner = connector.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
+    Scanner scanner = connector.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
     scanner.addScanIterator(new IteratorSetting(1, "keys-only", SortedKeyIterator.class));
     
     if (table == null) {
@@ -187,7 +189,7 @@ public class ProblemReports implements Iterable<ProblemReport> {
           if (iter1 == null) {
             try {
               List<String> children;
-              if (table == null || table.equals(Constants.METADATA_TABLE_ID)) {
+              if (table == null || table.equals(MetadataTable.ID)) {
                 children = zoo.getChildren(ZooUtil.getRoot(HdfsZooInstance.getInstance()) + Constants.ZPROBLEMS);
               } else {
                 children = Collections.emptyList();
@@ -206,9 +208,9 @@ public class ProblemReports implements Iterable<ProblemReport> {
         private Iterator<Entry<Key,Value>> getIter2() {
           if (iter2 == null) {
             try {
-              if ((table == null || !table.equals(Constants.METADATA_TABLE_ID)) && iter1Count == 0) {
+              if ((table == null || !table.equals(MetadataTable.ID)) && iter1Count == 0) {
                 Connector connector = HdfsZooInstance.getInstance().getConnector(SecurityConstants.getSystemPrincipal(), SecurityConstants.getSystemToken());
-                Scanner scanner = connector.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
+                Scanner scanner = connector.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
                 
                 scanner.setTimeout(3, TimeUnit.SECONDS);
                 

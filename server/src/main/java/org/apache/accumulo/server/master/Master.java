@@ -16,7 +16,6 @@
  */
 package org.apache.accumulo.server.master;
 
-
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -58,7 +57,6 @@ import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.KeyExtent;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.data.thrift.TKeyExtent;
-import org.apache.accumulo.core.file.FileUtil;
 import org.apache.accumulo.core.iterators.IteratorUtil;
 import org.apache.accumulo.core.master.state.tables.TableState;
 import org.apache.accumulo.core.master.thrift.MasterClientService;
@@ -71,11 +69,12 @@ import org.apache.accumulo.core.master.thrift.TableInfo;
 import org.apache.accumulo.core.master.thrift.TabletLoadState;
 import org.apache.accumulo.core.master.thrift.TabletServerStatus;
 import org.apache.accumulo.core.master.thrift.TabletSplit;
+import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.security.SecurityUtil;
 import org.apache.accumulo.core.security.thrift.TCredentials;
 import org.apache.accumulo.core.util.ByteBufferUtil;
-import org.apache.accumulo.core.util.CachedConfiguration;
 import org.apache.accumulo.core.util.Daemon;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.util.UtilWaitThread;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.AgeOffStore;
@@ -87,8 +86,11 @@ import org.apache.accumulo.fate.zookeeper.ZooReaderWriter.Mutator;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
 import org.apache.accumulo.server.Accumulo;
+import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
+import org.apache.accumulo.server.fs.VolumeManager;
+import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.accumulo.server.master.LiveTServerSet.TServerConnection;
 import org.apache.accumulo.server.master.balancer.DefaultLoadBalancer;
 import org.apache.accumulo.server.master.balancer.TabletBalancer;
@@ -126,7 +128,6 @@ import org.apache.accumulo.server.monitor.Monitor;
 import org.apache.accumulo.server.security.AuditedSecurityOperation;
 import org.apache.accumulo.server.security.SecurityConstants;
 import org.apache.accumulo.server.security.SecurityOperation;
-import org.apache.accumulo.server.trace.TraceFileSystem;
 import org.apache.accumulo.server.util.AddressUtil;
 import org.apache.accumulo.server.util.DefaultMap;
 import org.apache.accumulo.server.util.Halt;
@@ -141,7 +142,6 @@ import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.accumulo.start.classloader.vfs.AccumuloVFSClassLoader;
 import org.apache.accumulo.trace.instrument.thrift.TraceWrap;
 import org.apache.accumulo.trace.thrift.TInfo;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.io.DataInputBuffer;
 import org.apache.hadoop.io.DataOutputBuffer;
 import org.apache.hadoop.io.Text;
@@ -165,17 +165,17 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   final static Logger log = Logger.getLogger(Master.class);
   
   final private static int ONE_SECOND = 1000;
-  final private static Text METADATA_TABLE_ID = new Text(Constants.METADATA_TABLE_ID);
+  final private static Text METADATA_TABLE_ID = new Text(MetadataTable.ID);
   final static long TIME_TO_WAIT_BETWEEN_SCANS = 60 * ONE_SECOND;
   final private static long TIME_BETWEEN_MIGRATION_CLEANUPS = 5 * 60 * ONE_SECOND;
   final static long WAIT_BETWEEN_ERRORS = ONE_SECOND;
   final private static long DEFAULT_WAIT_FOR_WATCHER = 10 * ONE_SECOND;
-  final private static int MAX_CLEANUP_WAIT_TIME = 1000;
-  final private static int TIME_TO_WAIT_BETWEEN_LOCK_CHECKS = 1000;
-  final static int MAX_TSERVER_WORK_CHUNK = 5000;
+  final private static int MAX_CLEANUP_WAIT_TIME = ONE_SECOND;
+  final private static int TIME_TO_WAIT_BETWEEN_LOCK_CHECKS = ONE_SECOND;
+  final static int MAX_TSERVER_WORK_CHUNK = 5 * ONE_SECOND;
   final private static int MAX_BAD_STATUS_COUNT = 3;
   
-  final private FileSystem fs;
+  final VolumeManager fs;
   final private Instance instance;
   final private String hostname;
   final LiveTServerSet tserverSet;
@@ -196,8 +196,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   
   private Fate<Master> fate;
   
-  volatile SortedMap<TServerInstance,TabletServerStatus> tserverStatus = Collections
-      .unmodifiableSortedMap(new TreeMap<TServerInstance,TabletServerStatus>());
+  volatile SortedMap<TServerInstance,TabletServerStatus> tserverStatus = Collections.unmodifiableSortedMap(new TreeMap<TServerInstance,TabletServerStatus>());
   
   private final Set<String> recoveriesInProgress = Collections.synchronizedSet(new HashSet<String>());
   
@@ -255,7 +254,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   }
   
   private void upgradeZookeeper() {
-    if (Accumulo.getAccumuloPersistentVersion(fs) == Constants.PREV_DATA_VERSION) {
+    if (Accumulo.getAccumuloPersistentVersion(fs) == ServerConstants.PREV_DATA_VERSION) {
       try {
         log.info("Upgrading zookeeper");
         
@@ -283,7 +282,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   private final ServerConfiguration serverConfig;
   
   private void upgradeMetadata() {
-    if (Accumulo.getAccumuloPersistentVersion(fs) == Constants.PREV_DATA_VERSION) {
+    if (Accumulo.getAccumuloPersistentVersion(fs) == ServerConstants.PREV_DATA_VERSION) {
       if (upgradeMetadataRunning.compareAndSet(false, true)) {
         Runnable upgradeTask = new Runnable() {
           @Override
@@ -329,7 +328,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   }
   
   private int nonMetaDataTabletsAssignedOrHosted() {
-    return totalAssignedOrHosted() - assignedOrHosted(new Text(Constants.METADATA_TABLE_ID));
+    return totalAssignedOrHosted() - assignedOrHosted(new Text(MetadataTable.ID)) - assignedOrHosted(new Text(RootTable.ID));
   }
   
   private int notHosted() {
@@ -345,7 +344,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   // The number of unassigned tablets that should be assigned: displayed on the monitor page
   private int displayUnassigned() {
     int result = 0;
-    Text meta = new Text(Constants.METADATA_TABLE_ID);
+    Text meta = new Text(MetadataTable.ID);
     switch (getMasterState()) {
       case NORMAL:
         // Count offline tablets for online tables
@@ -380,8 +379,8 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   }
   
   private void checkNotMetadataTable(String tableName, TableOperation operation) throws ThriftTableOperationException {
-    if (tableName.compareTo(Constants.METADATA_TABLE_NAME) == 0) {
-      String why = "Table names cannot be == " + Constants.METADATA_TABLE_NAME;
+    if (tableName.compareTo(MetadataTable.NAME) == 0) {
+      String why = "Table names cannot be == " + MetadataTable.NAME;
       log.warn(why);
       throw new ThriftTableOperationException(null, tableName, operation, TableOperationExceptionType.OTHER, why);
     }
@@ -434,10 +433,10 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
     return instance;
   }
   
-  public Master(ServerConfiguration config, FileSystem fs, String hostname) throws IOException {
+  public Master(ServerConfiguration config, VolumeManager fs, String hostname) throws IOException {
     this.serverConfig = config;
     this.instance = config.getInstance();
-    this.fs = TraceFileSystem.wrap(fs);
+    this.fs = fs;
     this.hostname = hostname;
     
     AccumuloConfiguration aconf = serverConfig.getConfiguration();
@@ -527,11 +526,11 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
         
         try {
           Connector conn = getConnector();
-          Scanner scanner = new IsolatedScanner(conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS));
-          Constants.METADATA_FLUSH_COLUMN.fetch(scanner);
-          Constants.METADATA_DIRECTORY_COLUMN.fetch(scanner);
-          scanner.fetchColumnFamily(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY);
-          scanner.fetchColumnFamily(Constants.METADATA_LOG_COLUMN_FAMILY);
+          Scanner scanner = new IsolatedScanner(conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY));
+          MetadataTable.FLUSH_COLUMN.fetch(scanner);
+          MetadataTable.DIRECTORY_COLUMN.fetch(scanner);
+          scanner.fetchColumnFamily(MetadataTable.CURRENT_LOCATION_COLUMN_FAMILY);
+          scanner.fetchColumnFamily(MetadataTable.LOG_COLUMN_FAMILY);
           scanner.setRange(new KeyExtent(new Text(tableId), null, ByteBufferUtil.toText(startRow)).toMetadataRange());
           
           RowIterator ri = new RowIterator(scanner);
@@ -554,14 +553,14 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
               entry = row.next();
               Key key = entry.getKey();
               
-              if (Constants.METADATA_FLUSH_COLUMN.equals(key.getColumnFamily(), key.getColumnQualifier())) {
+              if (MetadataTable.FLUSH_COLUMN.equals(key.getColumnFamily(), key.getColumnQualifier())) {
                 tabletFlushID = Long.parseLong(entry.getValue().toString());
               }
               
-              if (Constants.METADATA_LOG_COLUMN_FAMILY.equals(key.getColumnFamily()))
+              if (MetadataTable.LOG_COLUMN_FAMILY.equals(key.getColumnFamily()))
                 logs++;
               
-              if (Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY.equals(key.getColumnFamily())) {
+              if (MetadataTable.CURRENT_LOCATION_COLUMN_FAMILY.equals(key.getColumnFamily())) {
                 online = true;
                 server = new TServerInstance(entry.getValue(), key.getColumnQualifier());
               }
@@ -591,9 +590,9 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
             throw new ThriftTableOperationException(tableId, null, TableOperation.FLUSH, TableOperationExceptionType.NOTFOUND, null);
           
         } catch (AccumuloException e) {
-          log.debug("Failed to scan " + Constants.METADATA_TABLE_NAME + " table to wait for flush " + tableId, e);
+          log.debug("Failed to scan " + MetadataTable.NAME + " table to wait for flush " + tableId, e);
         } catch (TabletDeletedException tde) {
-          log.debug("Failed to scan " + Constants.METADATA_TABLE_NAME + " table to wait for flush " + tableId, tde);
+          log.debug("Failed to scan " + MetadataTable.NAME + " table to wait for flush " + tableId, tde);
         } catch (AccumuloSecurityException e) {
           log.warn(e.getMessage(), e);
           throw new ThriftSecurityException();
@@ -900,13 +899,9 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
           Text startRow = ByteBufferUtil.toText(arguments.get(1));
           Text endRow = ByteBufferUtil.toText(arguments.get(2));
           final String tableId = checkTableId(tableName, TableOperation.MERGE);
-          if (tableName.equals(Constants.METADATA_TABLE_NAME)) {
-            if (startRow.compareTo(new Text("0")) < 0) {
-              startRow = new Text("0");
-              if (endRow.getLength() != 0 && endRow.compareTo(startRow) < 0)
-                throw new ThriftTableOperationException(null, tableName, TableOperation.MERGE, TableOperationExceptionType.OTHER,
-                    "end-row specification is in the root tablet, which cannot be merged or split");
-            }
+          if (tableId.equals(RootTable.ID)) {
+            throw new ThriftTableOperationException(null, tableName, TableOperation.MERGE, TableOperationExceptionType.OTHER,
+                "cannot merge or split the root table");
           }
           log.debug("Creating merge op: " + tableId + " " + startRow + " " + endRow);
           
@@ -1061,7 +1056,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   
   public void setMergeState(MergeInfo info, MergeState state) throws IOException, KeeperException, InterruptedException {
     synchronized (mergeLock) {
-      String path = ZooUtil.getRoot(instance.getInstanceID()) + Constants.ZTABLES + "/" + info.getRange().getTableId().toString() + "/merge";
+      String path = ZooUtil.getRoot(instance.getInstanceID()) + Constants.ZTABLES + "/" + info.getExtent().getTableId().toString() + "/merge";
       info.setState(state);
       if (state.equals(MergeState.NONE)) {
         ZooReaderWriter.getInstance().recursiveDelete(path, NodeMissingPolicy.SKIP);
@@ -1077,7 +1072,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
       }
       mergeLock.notifyAll();
     }
-    nextEvent.event("Merge state of %s set to %s", info.getRange(), state);
+    nextEvent.event("Merge state of %s set to %s", info.getExtent(), state);
   }
   
   public void clearMergeState(Text tableId) throws IOException, KeeperException, InterruptedException {
@@ -1163,9 +1158,9 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
         return TabletGoalState.UNASSIGNED;
       case STOP:
         return TabletGoalState.UNASSIGNED;
+      default:
+        throw new IllegalStateException("Unknown Master State");
     }
-    // unreachable
-    return TabletGoalState.HOSTED;
   }
   
   TabletGoalState getTableGoalState(KeyExtent extent) {
@@ -1192,7 +1187,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
         return TabletGoalState.UNASSIGNED;
       }
       // Handle merge transitions
-      if (mergeInfo.getRange() != null) {
+      if (mergeInfo.getExtent() != null) {
         log.debug("mergeInfo overlaps: " + extent + " " + mergeInfo.overlaps(extent));
         if (mergeInfo.overlaps(extent)) {
           switch (mergeInfo.getState()) {
@@ -1254,8 +1249,8 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
     // remove any migrating tablets that no longer exist.
     private void cleanupMutations() throws AccumuloException, AccumuloSecurityException, TableNotFoundException {
       Connector connector = getConnector();
-      Scanner scanner = connector.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
-      Constants.METADATA_PREV_ROW_COLUMN.fetch(scanner);
+      Scanner scanner = connector.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
+      MetadataTable.PREV_ROW_COLUMN.fetch(scanner);
       Set<KeyExtent> found = new HashSet<KeyExtent>();
       for (Entry<Key,Value> entry : scanner) {
         KeyExtent extent = new KeyExtent(entry.getKey().getRow(), entry.getValue());
@@ -1302,6 +1297,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
                   break;
                 case UNLOAD_METADATA_TABLETS:
                   count = assignedOrHosted(METADATA_TABLE_ID);
+                  count += assignedOrHosted(new Text(RootTable.ID));
                   log.debug(String.format("There are %d metadata tablets assigned or hosted", count));
                   // Assumes last tablet hosted is the root tablet;
                   // it's possible
@@ -1311,6 +1307,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
                   break;
                 case UNLOAD_ROOT_TABLET:
                   count = assignedOrHosted(METADATA_TABLE_ID);
+                  count += assignedOrHosted(new Text(RootTable.ID));
                   if (count > 0)
                     log.debug(String.format("The root tablet is still assigned or hosted"));
                   if (count == 0) {
@@ -1632,7 +1629,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
     try {
       SecurityUtil.serverLogin();
       
-      FileSystem fs = FileUtil.getFileSystem(CachedConfiguration.getInstance(), ServerConfiguration.getSiteConfiguration());
+      VolumeManager fs = VolumeManagerImpl.get();
       String hostname = Accumulo.getLocalAddress(args);
       Instance instance = HdfsZooInstance.getInstance();
       ServerConfiguration conf = new ServerConfiguration(instance);
@@ -1728,7 +1725,9 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
     Set<String> result = new HashSet<String>();
     if (getMasterState() != MasterState.NORMAL) {
       if (getMasterState() != MasterState.UNLOAD_METADATA_TABLETS)
-        result.add(Constants.METADATA_TABLE_ID);
+        result.add(MetadataTable.ID);
+      if (getMasterState() != MasterState.UNLOAD_ROOT_TABLET)
+        result.add(RootTable.ID);
       return result;
     }
     TableManager manager = TableManager.getInstance();
@@ -1784,7 +1783,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
     return serverConfig;
   }
   
-  public FileSystem getFileSystem() {
+  public VolumeManager getFileSystem() {
     return this.fs;
   }
   

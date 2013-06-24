@@ -41,6 +41,9 @@ import org.apache.accumulo.core.data.KeyExtent;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.master.state.tables.TableState;
+import org.apache.accumulo.core.security.Authorizations;
+import org.apache.accumulo.core.util.MetadataTable;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.fate.Repo;
 import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
 import org.apache.accumulo.fate.zookeeper.ZooReaderWriter.Mutator;
@@ -87,20 +90,20 @@ class CompactionDriver extends MasterRepo {
       // compaction was canceled
       throw new ThriftTableOperationException(tableId, null, TableOperation.COMPACT, TableOperationExceptionType.OTHER, "Compaction canceled");
     }
-
+    
     MapCounter<TServerInstance> serversToFlush = new MapCounter<TServerInstance>();
     Connector conn = master.getConnector();
-    Scanner scanner = new IsolatedScanner(conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS));
+    Scanner scanner = new IsolatedScanner(conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY));
     
     Range range = new KeyExtent(new Text(tableId), null, startRow == null ? null : new Text(startRow)).toMetadataRange();
     
-    if (tableId.equals(Constants.METADATA_TABLE_ID))
-      range = range.clip(new Range(Constants.ROOT_TABLET_EXTENT.getMetadataEntry(), false, null, true));
+    if (tableId.equals(MetadataTable.ID))
+      range = range.clip(new Range(RootTable.EXTENT.getMetadataEntry(), false, null, true));
     
     scanner.setRange(range);
-    Constants.METADATA_COMPACT_COLUMN.fetch(scanner);
-    Constants.METADATA_DIRECTORY_COLUMN.fetch(scanner);
-    scanner.fetchColumnFamily(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY);
+    MetadataTable.COMPACT_COLUMN.fetch(scanner);
+    MetadataTable.DIRECTORY_COLUMN.fetch(scanner);
+    scanner.fetchColumnFamily(MetadataTable.CURRENT_LOCATION_COLUMN_FAMILY);
     
     long t1 = System.currentTimeMillis();
     RowIterator ri = new RowIterator(scanner);
@@ -119,10 +122,10 @@ class CompactionDriver extends MasterRepo {
         entry = row.next();
         Key key = entry.getKey();
         
-        if (Constants.METADATA_COMPACT_COLUMN.equals(key.getColumnFamily(), key.getColumnQualifier()))
+        if (MetadataTable.COMPACT_COLUMN.equals(key.getColumnFamily(), key.getColumnQualifier()))
           tabletCompactID = Long.parseLong(entry.getValue().toString());
         
-        if (Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY.equals(key.getColumnFamily()))
+        if (MetadataTable.CURRENT_LOCATION_COLUMN_FAMILY.equals(key.getColumnFamily()))
           server = new TServerInstance(entry.getValue(), key.getColumnQualifier());
       }
       
@@ -189,7 +192,6 @@ class CompactionDriver extends MasterRepo {
   
 }
 
-
 public class CompactRange extends MasterRepo {
   
   private static final long serialVersionUID = 1L;
@@ -214,7 +216,7 @@ public class CompactRange extends MasterRepo {
       endRow = null;
       iterators = Collections.emptyList();
     }
-
+    
     @Override
     public void write(DataOutput out) throws IOException {
       out.writeBoolean(startRow != null);
@@ -275,7 +277,7 @@ public class CompactRange extends MasterRepo {
       return iterators;
     }
   }
-
+  
   public CompactRange(String tableId, byte[] startRow, byte[] endRow, List<IteratorSetting> iterators) throws ThriftTableOperationException {
     this.tableId = tableId;
     this.startRow = startRow.length == 0 ? null : startRow;
@@ -286,7 +288,7 @@ public class CompactRange extends MasterRepo {
     } else {
       iterators = null;
     }
-
+    
     if (this.startRow != null && this.endRow != null && new Text(startRow).compareTo(new Text(endRow)) >= 0)
       throw new ThriftTableOperationException(tableId, null, TableOperation.COMPACT, TableOperationExceptionType.BAD_RANGE,
           "start row must be less than end row");
@@ -317,13 +319,13 @@ public class CompactRange extends MasterRepo {
           for (int i = 1; i < tokens.length; i++) {
             if (tokens[i].startsWith(txidString))
               continue; // skip self
-
+              
             throw new ThriftTableOperationException(tableId, null, TableOperation.COMPACT, TableOperationExceptionType.OTHER,
                 "Another compaction with iterators is running");
           }
-
+          
           StringBuilder encodedIterators = new StringBuilder();
-
+          
           if (iterators != null) {
             Hex hex = new Hex();
             encodedIterators.append(",");
@@ -354,7 +356,7 @@ public class CompactRange extends MasterRepo {
         String cvs = new String(currentValue);
         String[] tokens = cvs.split(",");
         long flushID = Long.parseLong(new String(tokens[0]));
-
+        
         String txidString = String.format("%016x", txid);
         
         StringBuilder encodedIterators = new StringBuilder();
@@ -368,9 +370,9 @@ public class CompactRange extends MasterRepo {
         return ("" + flushID + encodedIterators).getBytes();
       }
     });
-
+    
   }
-
+  
   @Override
   public void undo(long tid, Master environment) throws Exception {
     try {

@@ -22,17 +22,13 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 
 import org.apache.accumulo.core.client.TableNotFoundException;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
-import org.apache.accumulo.core.conf.ConfigurationCopy;
-import org.apache.accumulo.core.util.TableDiskUsage;
-import org.apache.accumulo.core.util.TableDiskUsage.Printer;
+import org.apache.accumulo.core.client.admin.DiskUsage;
+import org.apache.accumulo.core.util.NumUtil;
 import org.apache.accumulo.core.util.shell.Shell;
 import org.apache.accumulo.core.util.shell.Shell.Command;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
 
 public class DUCommand extends Command {
   
@@ -40,33 +36,36 @@ public class DUCommand extends Command {
 
   public int execute(final String fullCommand, final CommandLine cl, final Shell shellState) throws IOException, TableNotFoundException {
 
-    final SortedSet<String> tablesToFlush = new TreeSet<String>(Arrays.asList(cl.getArgs()));
+    final SortedSet<String> tables = new TreeSet<String>(Arrays.asList(cl.getArgs()));
+    
+    if (cl.hasOption(Shell.tableOption)) {
+      String tableName = cl.getOptionValue(Shell.tableOption);
+      if (!shellState.getConnector().tableOperations().exists(tableName)) {
+        throw new TableNotFoundException(tableName, tableName, "specified table that doesn't exist");
+      }
+      tables.add(tableName);
+    }
 
     boolean prettyPrint = cl.hasOption(optHumanReadble.getOpt()) ? true : false;
 
     if (cl.hasOption(optTablePattern.getOpt())) {
       for (String table : shellState.getConnector().tableOperations().list()) {
         if (table.matches(cl.getOptionValue(optTablePattern.getOpt()))) {
-          tablesToFlush.add(table);
+          tables.add(table);
         }
       }
     } else {
-      shellState.checkTableState();
-      tablesToFlush.add(shellState.getTableName());
+      if (tables.isEmpty()) {
+        shellState.checkTableState();
+        tables.add(shellState.getTableName());
+      }
     }
     try {
-      final AccumuloConfiguration acuConf = new ConfigurationCopy(shellState.getConnector().instanceOperations().getSystemConfiguration());
-      TableDiskUsage.printDiskUsage(acuConf, tablesToFlush, FileSystem.get(new Configuration()), shellState.getConnector(), new Printer() {
-        @Override
-        public void print(String line) {
-          try {
-            shellState.getReader().println(line);
-          } catch (IOException ex) {
-            throw new RuntimeException(ex);
-          }
-        }
-        
-      }, prettyPrint);
+      String valueFormat = prettyPrint ? "%9s" : "%,24d";
+      for (DiskUsage usage : shellState.getConnector().tableOperations().getDiskUsage(tables)) {
+        Object value = prettyPrint ? NumUtil.bigNumberForSize(usage.getUsage()) : usage.getUsage();
+        shellState.getReader().println(String.format(valueFormat + " %s", value, usage.getTables()));
+      }
     } catch (Exception ex) {
       throw new RuntimeException(ex);
     }
@@ -87,6 +86,8 @@ public class DUCommand extends Command {
 
     optHumanReadble = new Option("h", "human-readable", false, "format large sizes to human readable units");
     optHumanReadble.setArgName("human readable output");
+    
+    o.addOption(OptUtil.tableOpt("table to examine"));
 
     o.addOption(optTablePattern);
     o.addOption(optHumanReadble);

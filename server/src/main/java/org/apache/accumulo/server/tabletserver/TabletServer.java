@@ -18,7 +18,6 @@ package org.apache.accumulo.server.tabletserver;
 
 import static org.apache.accumulo.server.problems.ProblemType.TABLET_LOAD;
 
-import java.io.EOFException;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -46,7 +45,6 @@ import java.util.SortedSet;
 import java.util.TimerTask;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.CancellationException;
@@ -97,7 +95,6 @@ import org.apache.accumulo.core.data.thrift.TKeyValue;
 import org.apache.accumulo.core.data.thrift.TMutation;
 import org.apache.accumulo.core.data.thrift.TRange;
 import org.apache.accumulo.core.data.thrift.UpdateErrors;
-import org.apache.accumulo.core.file.FileUtil;
 import org.apache.accumulo.core.iterators.IterationInterruptedException;
 import org.apache.accumulo.core.master.thrift.Compacting;
 import org.apache.accumulo.core.master.thrift.MasterClientService;
@@ -120,11 +117,11 @@ import org.apache.accumulo.core.tabletserver.thrift.TabletClientService.Processo
 import org.apache.accumulo.core.tabletserver.thrift.TabletStats;
 import org.apache.accumulo.core.util.AddressUtil;
 import org.apache.accumulo.core.util.ByteBufferUtil;
-import org.apache.accumulo.core.util.CachedConfiguration;
 import org.apache.accumulo.core.util.ColumnFQ;
 import org.apache.accumulo.core.util.Daemon;
 import org.apache.accumulo.core.util.LoggingRunnable;
 import org.apache.accumulo.core.util.Pair;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.util.ServerServices;
 import org.apache.accumulo.core.util.ServerServices.Service;
 import org.apache.accumulo.core.util.SimpleThreadPool;
@@ -143,8 +140,9 @@ import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
 import org.apache.accumulo.server.conf.TableConfiguration;
 import org.apache.accumulo.server.data.ServerMutation;
-import org.apache.accumulo.server.logger.LogFileKey;
-import org.apache.accumulo.server.logger.LogFileValue;
+import org.apache.accumulo.server.fs.FileRef;
+import org.apache.accumulo.server.fs.VolumeManager;
+import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.accumulo.server.master.state.Assignment;
 import org.apache.accumulo.server.master.state.DistributedStoreException;
 import org.apache.accumulo.server.master.state.TServerInstance;
@@ -182,7 +180,6 @@ import org.apache.accumulo.server.tabletserver.metrics.TabletServerMBean;
 import org.apache.accumulo.server.tabletserver.metrics.TabletServerMinCMetrics;
 import org.apache.accumulo.server.tabletserver.metrics.TabletServerScanMetrics;
 import org.apache.accumulo.server.tabletserver.metrics.TabletServerUpdateMetrics;
-import org.apache.accumulo.server.trace.TraceFileSystem;
 import org.apache.accumulo.server.util.FileSystemMonitor;
 import org.apache.accumulo.server.util.Halt;
 import org.apache.accumulo.server.util.MapCounter;
@@ -205,14 +202,8 @@ import org.apache.accumulo.trace.instrument.Trace;
 import org.apache.accumulo.trace.instrument.thrift.TraceWrap;
 import org.apache.accumulo.trace.thrift.TInfo;
 import org.apache.commons.collections.map.LRUMap;
-import org.apache.hadoop.fs.FSDataOutputStream;
-import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.Trash;
-import org.apache.hadoop.hdfs.DistributedFileSystem;
-import org.apache.hadoop.io.SequenceFile;
-import org.apache.hadoop.io.SequenceFile.Reader;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Logger;
 import org.apache.thrift.TException;
@@ -242,11 +233,11 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
   private ServerConfiguration serverConfig;
   private LogSorter logSorter = null;
   
-  public TabletServer(ServerConfiguration conf, FileSystem fs) {
+  public TabletServer(ServerConfiguration conf, VolumeManager fs) {
     super();
     this.serverConfig = conf;
     this.instance = conf.getInstance();
-    this.fs = TraceFileSystem.wrap(fs);
+    this.fs = fs;
     this.logSorter = new LogSorter(instance, fs, getSystemConfiguration());
     SimpleTimer.getInstance().schedule(new Runnable() {
       @Override
@@ -890,6 +881,13 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
       for (Entry<TKeyExtent,Map<String,MapFileInfo>> entry : files.entrySet()) {
         TKeyExtent tke = entry.getKey();
         Map<String,MapFileInfo> fileMap = entry.getValue();
+        Map<FileRef,MapFileInfo> fileRefMap = new HashMap<FileRef,MapFileInfo>();
+        for (Entry<String,MapFileInfo> mapping : fileMap.entrySet()) {
+          Path path = new Path(mapping.getKey());
+          FileSystem ns = fs.getFileSystemByPath(path);
+          path = ns.makeQualified(path);
+          fileRefMap.put(new FileRef(path.toString(), path), mapping.getValue());
+        }
         
         Tablet importTablet = onlineTablets.get(new KeyExtent(tke));
         
@@ -897,7 +895,7 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
           failures.add(tke);
         } else {
           try {
-            importTablet.importMapFiles(tid, fileMap, setTime);
+            importTablet.importMapFiles(tid, fileRefMap, setTime);
           } catch (IOException ioe) {
             log.info("files " + fileMap.keySet() + " not imported to " + new KeyExtent(tke) + ": " + ioe.getMessage());
             failures.add(tke);
@@ -1277,8 +1275,8 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
         } else if (keyExtent.isRootTablet()) {
           throw new IllegalArgumentException("Cannot batch query root tablet with other tablets " + threadPoolExtent + " " + keyExtent);
         } else if (keyExtent.isMeta() && !threadPoolExtent.isMeta()) {
-          throw new IllegalArgumentException("Cannot batch query " + Constants.METADATA_TABLE_NAME + " and non " + Constants.METADATA_TABLE_NAME + " tablets "
-              + threadPoolExtent + " " + keyExtent);
+          throw new IllegalArgumentException("Cannot batch query " + MetadataTable.NAME + " and non " + MetadataTable.NAME + " tablets " + threadPoolExtent
+              + " " + keyExtent);
         }
         
       }
@@ -2051,20 +2049,14 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
       
     }
     
-    /*
-     * (non-Javadoc)
-     * 
-     * @see org.apache.accumulo.core.tabletserver.thrift.TabletClientService.Iface#removeLogs(org.apache.accumulo.trace.thrift.TInfo,
-     * org.apache.accumulo.core.security.thrift.Credentials, java.util.List)
-     */
     @Override
     public void removeLogs(TInfo tinfo, TCredentials credentials, List<String> filenames) throws TException {
       String myname = getClientAddressString();
       myname = myname.replace(':', '+');
-      Path logDir = new Path(Constants.getWalDirectory(acuConf), myname);
       Set<String> loggers = new HashSet<String>();
       logger.getLoggers(loggers);
       nextFile: for (String filename : filenames) {
+        // skip any log we're currently using
         for (String logger : loggers) {
           if (logger.contains(filename))
             continue nextFile;
@@ -2081,29 +2073,30 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
             }
           }
         }
+        
         try {
-          String source = logDir + "/" + filename;
+          Path source = new Path(filename);
           if (acuConf.getBoolean(Property.TSERV_ARCHIVE_WALOGS)) {
-            String walogArchive = Constants.getBaseDir(acuConf) + "/walogArchive";
-            fs.mkdirs(new Path(walogArchive));
-            String dest = walogArchive + "/" + filename;
+            Path walogArchive = fs.matchingFileSystem(source, ServerConstants.getWalogArchives());
+            fs.mkdirs(walogArchive);
+            Path dest = new Path(walogArchive, source.getName());
             log.info("Archiving walog " + source + " to " + dest);
-            if (!fs.rename(new Path(source), new Path(dest)))
+            if (!fs.rename(source, dest))
               log.error("rename is unsuccessful");
           } else {
             log.info("Deleting walog " + filename);
-            Trash trash = new Trash(fs, fs.getConf());
-            Path sourcePath = new Path(source);
-            if (!trash.moveToTrash(sourcePath) && !fs.delete(sourcePath, true))
+            Path sourcePath = new Path(filename);
+            if (!fs.moveToTrash(sourcePath) && !fs.deleteRecursively(sourcePath))
               log.warn("Failed to delete walog " + source);
-            Path recoveryPath = new Path(Constants.getRecoveryDir(acuConf), filename);
-            try {
-              if (trash.moveToTrash(recoveryPath) || fs.delete(recoveryPath, true))
-                log.info("Deleted any recovery log " + filename);
-            } catch (FileNotFoundException ex) {
-              // ignore
+            for (String recovery : ServerConstants.getRecoveryDirs()) {
+              Path recoveryPath = new Path(recovery, source.getName());
+              try {
+                if (fs.moveToTrash(recoveryPath) || fs.deleteRecursively(recoveryPath))
+                  log.info("Deleted any recovery log " + filename);
+              } catch (FileNotFoundException ex) {
+                // ignore
+              }
             }
-            
           }
         } catch (IOException e) {
           log.warn("Error attempting to delete write-ahead log " + filename + ": " + e);
@@ -2559,7 +2552,7 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
     }
   }
   
-  private FileSystem fs;
+  private VolumeManager fs;
   private Instance instance;
   
   private final SortedMap<KeyExtent,Tablet> onlineTablets = Collections.synchronizedSortedMap(new TreeMap<KeyExtent,Tablet>());
@@ -2880,7 +2873,7 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
       throw new AccumuloException("Root tablet already has a location set");
     }
     
-    return new Pair<Text,KeyExtent>(new Text(Constants.ZROOT_TABLET), null);
+    return new Pair<Text,KeyExtent>(new Text(RootTable.ZROOT_TABLET), null);
   }
   
   public static Pair<Text,KeyExtent> verifyTabletInformation(KeyExtent extent, TServerInstance instance, SortedMap<Key,Value> tabletsKeyValues,
@@ -2890,12 +2883,14 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
     if (extent.isRootTablet()) {
       return verifyRootTablet(extent, instance);
     }
+    String tableToVerify = MetadataTable.ID;
+    if (extent.isMeta())
+      tableToVerify = RootTable.ID;
     
-    List<ColumnFQ> columnsToFetch = Arrays.asList(new ColumnFQ[] {Constants.METADATA_DIRECTORY_COLUMN, Constants.METADATA_PREV_ROW_COLUMN,
-        Constants.METADATA_SPLIT_RATIO_COLUMN, Constants.METADATA_OLD_PREV_ROW_COLUMN, Constants.METADATA_TIME_COLUMN});
+    List<ColumnFQ> columnsToFetch = Arrays.asList(new ColumnFQ[] {MetadataTable.DIRECTORY_COLUMN, MetadataTable.PREV_ROW_COLUMN,
+        MetadataTable.SPLIT_RATIO_COLUMN, MetadataTable.OLD_PREV_ROW_COLUMN, MetadataTable.TIME_COLUMN});
     
-    ScannerImpl scanner = new ScannerImpl(HdfsZooInstance.getInstance(), SecurityConstants.getSystemCredentials(), Constants.METADATA_TABLE_ID,
-        Constants.NO_AUTHS);
+    ScannerImpl scanner = new ScannerImpl(HdfsZooInstance.getInstance(), SecurityConstants.getSystemCredentials(), tableToVerify, Authorizations.EMPTY);
     scanner.setRange(extent.toMetadataRange());
     
     TreeMap<Key,Value> tkv = new TreeMap<Key,Value>();
@@ -2918,7 +2913,7 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
     
     Value oldPrevEndRow = null;
     for (Entry<Key,Value> entry : tabletsKeyValues.entrySet()) {
-      if (Constants.METADATA_OLD_PREV_ROW_COLUMN.hasColumns(entry.getKey())) {
+      if (MetadataTable.OLD_PREV_ROW_COLUMN.hasColumns(entry.getKey())) {
         oldPrevEndRow = entry.getValue();
       }
     }
@@ -2927,7 +2922,13 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
       SortedMap<Text,SortedMap<ColumnFQ,Value>> tabletEntries;
       tabletEntries = MetadataTable.getTabletEntries(tabletsKeyValues, columnsToFetch);
       
-      KeyExtent fke = MetadataTable.fixSplit(metadataEntry, tabletEntries.get(metadataEntry), instance, SecurityConstants.getSystemCredentials(), lock);
+      KeyExtent fke;
+      try {
+        fke = MetadataTable.fixSplit(metadataEntry, tabletEntries.get(metadataEntry), instance, SecurityConstants.getSystemCredentials(), lock);
+      } catch (IOException e) {
+        log.error("Error fixing split " + metadataEntry);
+        throw new AccumuloException(e.toString());
+      }
       
       if (!fke.equals(extent)) {
         return new Pair<Text,KeyExtent>(null, fke);
@@ -2955,19 +2956,19 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
         return null;
       }
       Text cf = key.getColumnFamily();
-      if (cf.equals(Constants.METADATA_FUTURE_LOCATION_COLUMN_FAMILY)) {
+      if (cf.equals(MetadataTable.FUTURE_LOCATION_COLUMN_FAMILY)) {
         if (future != null) {
           throw new AccumuloException("Tablet has multiple future locations " + extent);
         }
         future = new TServerInstance(entry.getValue(), key.getColumnQualifier());
-      } else if (cf.equals(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY)) {
+      } else if (cf.equals(MetadataTable.CURRENT_LOCATION_COLUMN_FAMILY)) {
         log.info("Tablet seems to be already assigned to " + new TServerInstance(entry.getValue(), key.getColumnQualifier()));
         return null;
-      } else if (Constants.METADATA_PREV_ROW_COLUMN.hasColumns(key)) {
+      } else if (MetadataTable.PREV_ROW_COLUMN.hasColumns(key)) {
         prevEndRow = entry.getValue();
-      } else if (Constants.METADATA_DIRECTORY_COLUMN.hasColumns(key)) {
+      } else if (MetadataTable.DIRECTORY_COLUMN.hasColumns(key)) {
         dir = entry.getValue();
-      } else if (Constants.METADATA_TIME_COLUMN.hasColumns(key)) {
+      } else if (MetadataTable.TIME_COLUMN.hasColumns(key)) {
         time = entry.getValue();
       }
     }
@@ -3221,104 +3222,17 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
   public static void main(String[] args) throws IOException {
     try {
       SecurityUtil.serverLogin();
-      FileSystem fs = FileUtil.getFileSystem(CachedConfiguration.getInstance(), ServerConfiguration.getSiteConfiguration());
+      VolumeManager fs = VolumeManagerImpl.get();
       String hostname = Accumulo.getLocalAddress(args);
       Instance instance = HdfsZooInstance.getInstance();
       ServerConfiguration conf = new ServerConfiguration(instance);
       Accumulo.init(fs, conf, "tserver");
-      ensureHdfsSyncIsEnabled(fs);
-      recoverLocalWriteAheadLogs(fs, conf);
       TabletServer server = new TabletServer(conf, fs);
       server.config(hostname);
       Accumulo.enableTracing(hostname, "tserver");
       server.run();
     } catch (Exception ex) {
       log.error("Uncaught exception in TabletServer.main, exiting", ex);
-    }
-  }
-  
-  private static void ensureHdfsSyncIsEnabled(FileSystem fs) {
-    if (fs instanceof DistributedFileSystem) {
-      if (!fs.getConf().getBoolean("dfs.durable.sync", false) && !fs.getConf().getBoolean("dfs.support.append", false)) {
-        String msg = "Must set dfs.durable.sync OR dfs.support.append to true.  Which one needs to be set depends on your version of HDFS.  See ACCUMULO-623. \n"
-            + "HADOOP RELEASE          VERSION           SYNC NAME             DEFAULT\n"
-            + "Apache Hadoop           0.20.205          dfs.support.append    false\n"
-            + "Apache Hadoop            0.23.x           dfs.support.append    true\n"
-            + "Apache Hadoop             1.0.x           dfs.support.append    false\n"
-            + "Apache Hadoop             1.1.x           dfs.durable.sync      true\n"
-            + "Apache Hadoop          2.0.0-2.0.2        dfs.support.append    true\n"
-            + "Cloudera CDH             3u0-3u3             ????               true\n"
-            + "Cloudera CDH               3u4            dfs.support.append    true\n"
-            + "Hortonworks HDP           `1.0            dfs.support.append    false\n"
-            + "Hortonworks HDP           `1.1            dfs.support.append    false";
-        log.fatal(msg);
-        System.exit(-1);
-      }
-      try {
-        // if this class exists
-        Class.forName("org.apache.hadoop.fs.CreateFlag");
-        // we're running hadoop 2.0, 1.1
-        if (!fs.getConf().getBoolean("dfs.datanode.synconclose", false)) {
-          log.warn("dfs.datanode.synconclose set to false: data loss is possible on system reset or power loss");
-        }
-      } catch (ClassNotFoundException ex) {
-        // hadoop 1.0
-      }
-    }
-    
-  }
-  
-  /**
-   * Copy local walogs into HDFS on an upgrade
-   * 
-   */
-  public static void recoverLocalWriteAheadLogs(FileSystem fs, ServerConfiguration serverConf) throws IOException {
-    FileSystem localfs = FileSystem.getLocal(fs.getConf()).getRawFileSystem();
-    AccumuloConfiguration conf = serverConf.getConfiguration();
-    String localWalDirectories = conf.get(Property.LOGGER_DIR);
-    for (String localWalDirectory : localWalDirectories.split(",")) {
-      if (!localWalDirectory.startsWith("/")) {
-        localWalDirectory = System.getenv("ACCUMULO_HOME") + "/" + localWalDirectory;
-      }
-      
-      FileStatus status = null;
-      try {
-        status = localfs.getFileStatus(new Path(localWalDirectory));
-      } catch (FileNotFoundException fne) {}
-      
-      if (status == null || !status.isDir()) {
-        log.debug("Local walog dir " + localWalDirectory + " not found ");
-        continue;
-      }
-      
-      for (FileStatus file : localfs.listStatus(new Path(localWalDirectory))) {
-        String name = file.getPath().getName();
-        try {
-          UUID.fromString(name);
-        } catch (IllegalArgumentException ex) {
-          log.info("Ignoring non-log file " + name + " in " + localWalDirectory);
-          continue;
-        }
-        LogFileKey key = new LogFileKey();
-        LogFileValue value = new LogFileValue();
-        log.info("Openning local log " + file.getPath());
-        Reader reader = new SequenceFile.Reader(localfs, file.getPath(), localfs.getConf());
-        Path tmp = new Path(Constants.getWalDirectory(conf) + "/" + name + ".copy");
-        FSDataOutputStream writer = fs.create(tmp);
-        while (reader.next(key, value)) {
-          try {
-            key.write(writer);
-            value.write(writer);
-          } catch (EOFException ex) {
-            break;
-          }
-        }
-        writer.close();
-        reader.close();
-        fs.rename(tmp, new Path(tmp.getParent(), name));
-        log.info("Copied local log " + name);
-        localfs.delete(new Path(localWalDirectory, name), true);
-      }
     }
   }
   
@@ -3331,8 +3245,9 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
     logger.minorCompactionStarted(tablet, lastUpdateSequence, newMapfileLocation);
   }
   
-  public void recover(Tablet tablet, List<LogEntry> logEntries, Set<String> tabletFiles, MutationReceiver mutationReceiver) throws IOException {
-    List<String> recoveryLogs = new ArrayList<String>();
+  public void recover(VolumeManager fs, Tablet tablet, List<LogEntry> logEntries, Set<String> tabletFiles, MutationReceiver mutationReceiver)
+      throws IOException {
+    List<Path> recoveryLogs = new ArrayList<Path>();
     List<LogEntry> sorted = new ArrayList<LogEntry>(logEntries);
     Collections.sort(sorted, new Comparator<LogEntry>() {
       @Override
@@ -3341,14 +3256,13 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
       }
     });
     for (LogEntry entry : sorted) {
-      String recovery = null;
+      Path recovery = null;
       for (String log : entry.logSet) {
         String[] parts = log.split("/"); // "host:port/filename"
-        log = ServerConstants.getRecoveryDir() + "/" + parts[1];
-        Path finished = new Path(log + "/finished");
+        Path finished = new Path(fs.getFullPath(ServerConstants.getRecoveryDirs(), parts[parts.length - 1]), "finished");
         TabletServer.log.info("Looking for " + finished);
         if (fs.exists(finished)) {
-          recovery = log;
+          recovery = finished.getParent();
           break;
         }
       }
@@ -3356,7 +3270,7 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
         throw new IOException("Unable to find recovery files for extent " + tablet.getExtent() + " logEntry: " + entry);
       recoveryLogs.add(recovery);
     }
-    logger.recover(tablet, recoveryLogs, tabletFiles, mutationReceiver);
+    logger.recover(fs, tablet, recoveryLogs, tabletFiles, mutationReceiver);
   }
   
   private final AtomicInteger logIdGenerator = new AtomicInteger();
@@ -3547,7 +3461,7 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
     return new DfsLogger.ServerResources() {
       
       @Override
-      public FileSystem getFileSystem() {
+      public VolumeManager getFileSystem() {
         return fs;
       }
       
@@ -3561,6 +3475,10 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
         return getSystemConfiguration();
       }
     };
+  }
+  
+  public VolumeManager getFileSystem() {
+    return fs;
   }
   
 }

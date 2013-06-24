@@ -52,10 +52,10 @@ import org.apache.accumulo.core.security.SystemPermission;
 import org.apache.accumulo.core.security.TablePermission;
 import org.apache.accumulo.core.security.thrift.TCredentials;
 import org.apache.accumulo.core.util.CachedConfiguration;
-import org.apache.accumulo.core.util.TableDiskUsage;
 import org.apache.accumulo.server.conf.ServerConfiguration;
 import org.apache.accumulo.server.security.AuditedSecurityOperation;
 import org.apache.accumulo.server.security.SecurityOperation;
+import org.apache.accumulo.server.util.TableDiskUsage;
 import org.apache.accumulo.server.zookeeper.TransactionWatcher;
 import org.apache.accumulo.start.classloader.vfs.AccumuloVFSClassLoader;
 import org.apache.accumulo.trace.thrift.TInfo;
@@ -197,19 +197,15 @@ public class ClientServiceHandler implements ClientService.Iface {
     return security.listUsers(credentials);
   }
   
-  static private Map<String,String> conf(TCredentials credentials, AccumuloConfiguration conf) throws TException {
+  private static Map<String,String> conf(TCredentials credentials, AccumuloConfiguration conf) throws TException {
     security.authenticateUser(credentials, credentials);
     conf.invalidateCache();
     
     Map<String,String> result = new HashMap<String,String>();
     for (Entry<String,String> entry : conf) {
-      if (entry.getKey().equals(Property.INSTANCE_SECRET.getKey()))
-        continue;
-      if (entry.getKey().toLowerCase().contains("password"))
-        continue;
-      if (entry.getKey().startsWith(Property.TRACE_TOKEN_PROPERTY_PREFIX.getKey()))
-        continue;
-      result.put(entry.getKey(), entry.getValue());
+      String key = entry.getKey();
+      if (!Property.isSensitive(key))
+        result.put(key, entry.getValue());
     }
     return result;
   }
@@ -293,7 +289,7 @@ public class ClientServiceHandler implements ClientService.Iface {
     security.authenticateUser(credentials, credentials);
     
     String tableId = checkTableId(tableName, null);
-
+    
     ClassLoader loader = getClass().getClassLoader();
     Class shouldMatch;
     try {
@@ -339,7 +335,7 @@ public class ClientServiceHandler implements ClientService.Iface {
       FileSystem fs = FileUtil.getFileSystem(CachedConfiguration.getInstance(), conf);
       
       // use the same set of tableIds that were validated above to avoid race conditions
-      Map<TreeSet<String>,Long> diskUsage = TableDiskUsage.getDiskUsage(new ServerConfiguration(instance).getConfiguration(), tableIds, fs, conn, false);
+      Map<TreeSet<String>,Long> diskUsage = TableDiskUsage.getDiskUsage(new ServerConfiguration(instance).getConfiguration(), tableIds, fs, conn);
       List<TDiskUsage> retUsages = new ArrayList<TDiskUsage>();
       for (Map.Entry<TreeSet<String>,Long> usageItem : diskUsage.entrySet()) {
         retUsages.add(new TDiskUsage(new ArrayList<String>(usageItem.getKey()), usageItem.getValue()));

@@ -20,7 +20,6 @@ import java.util.HashSet;
 import java.util.Map.Entry;
 import java.util.Set;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.cli.BatchWriterOpts;
 import org.apache.accumulo.core.client.MultiTableBatchWriter;
 import org.apache.accumulo.core.client.Scanner;
@@ -30,6 +29,9 @@ import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.PartialKey;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
+import org.apache.accumulo.core.security.Authorizations;
+import org.apache.accumulo.core.util.MetadataTable;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.cli.ClientOpts;
 import org.apache.hadoop.conf.Configuration;
@@ -46,12 +48,12 @@ public class AddFilesWithMissingEntries {
   static final Logger log = Logger.getLogger(AddFilesWithMissingEntries.class);
   
   public static class Opts extends ClientOpts {
-    @Parameter(names = "-update", description = "Make changes to the " + Constants.METADATA_TABLE_NAME + " table to include missing files")
+    @Parameter(names = "-update", description = "Make changes to the " + MetadataTable.NAME + " table to include missing files")
     boolean update = false;
   }
   
   /**
-   * A utility to add files to the {@value Constants#METADATA_TABLE_NAME} table that are not listed in the root tablet. This is a recovery tool for someone who
+   * A utility to add files to the {@value MetadataTable#NAME} table that are not listed in the root tablet. This is a recovery tool for someone who
    * knows what they are doing. It might be better to save off files, and recover your instance by re-initializing and importing the existing files.
    */
   public static void main(String[] args) throws Exception {
@@ -59,9 +61,9 @@ public class AddFilesWithMissingEntries {
     BatchWriterOpts bwOpts = new BatchWriterOpts();
     opts.parseArgs(AddFilesWithMissingEntries.class.getName(), args, bwOpts);
     
-    final Key rootTableEnd = new Key(Constants.ROOT_TABLET_EXTENT.getEndRow());
-    final Range range = new Range(rootTableEnd.followingKey(PartialKey.ROW), true, Constants.METADATA_RESERVED_KEYSPACE_START_KEY, false);
-    final Scanner scanner = opts.getConnector().createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
+    final Key rootTableEnd = new Key(RootTable.EXTENT.getEndRow());
+    final Range range = new Range(rootTableEnd.followingKey(PartialKey.ROW), true, MetadataTable.RESERVED_RANGE_START_KEY, false);
+    final Scanner scanner = opts.getConnector().createScanner(MetadataTable.NAME, Authorizations.EMPTY);
     scanner.setRange(range);
     final Configuration conf = new Configuration();
     final FileSystem fs = FileSystem.get(conf);
@@ -87,10 +89,10 @@ public class AddFilesWithMissingEntries {
         knownFiles.clear();
         last = ke;
       }
-      if (Constants.METADATA_DIRECTORY_COLUMN.hasColumns(key)) {
+      if (MetadataTable.DIRECTORY_COLUMN.hasColumns(key)) {
         directory = entry.getValue().toString();
         log.debug("Found directory " + directory + " for row " + key.getRow().toString());
-      } else if (key.compareColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY) == 0) {
+      } else if (key.compareColumnFamily(MetadataTable.DATAFILE_COLUMN_FAMILY) == 0) {
         String filename = key.getColumnQualifier().toString();
         knownFiles.add(filename);
         log.debug("METADATA file found: " + filename);
@@ -110,20 +112,22 @@ public class AddFilesWithMissingEntries {
     final String tableId = ke.getTableId().toString();
     final Text row = ke.getMetadataEntry();
     log.info(row.toString());
-    final Path path = new Path(ServerConstants.getTablesDir() + "/" + tableId + directory);
-    for (FileStatus file : fs.listStatus(path)) {
-      if (file.getPath().getName().endsWith("_tmp") || file.getPath().getName().endsWith("_tmp.rf"))
-        continue;
-      final String filename = directory + "/" + file.getPath().getName();
-      if (!knownFiles.contains(filename)) {
-        count++;
-        final Mutation m = new Mutation(row);
-        String size = Long.toString(file.getLen());
-        String entries = "1"; // lie
-        String value = size + "," + entries;
-        m.put(Constants.METADATA_DATAFILE_COLUMN_FAMILY, new Text(filename), new Value(value.getBytes()));
-        if (update) {
-          writer.getBatchWriter(Constants.METADATA_TABLE_NAME).addMutation(m);
+    for (String dir : ServerConstants.getTablesDirs()) {
+      final Path path = new Path(dir + "/" + tableId + directory);
+      for (FileStatus file : fs.listStatus(path)) {
+        if (file.getPath().getName().endsWith("_tmp") || file.getPath().getName().endsWith("_tmp.rf"))
+          continue;
+        final String filename = directory + "/" + file.getPath().getName();
+        if (!knownFiles.contains(filename)) {
+          count++;
+          final Mutation m = new Mutation(row);
+          String size = Long.toString(file.getLen());
+          String entries = "1"; // lie
+          String value = size + "," + entries;
+          m.put(MetadataTable.DATAFILE_COLUMN_FAMILY, new Text(filename), new Value(value.getBytes()));
+          if (update) {
+            writer.getBatchWriter(MetadataTable.NAME).addMutation(m);
+          }
         }
       }
     }

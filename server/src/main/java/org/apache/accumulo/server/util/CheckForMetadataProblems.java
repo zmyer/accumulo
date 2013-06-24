@@ -23,8 +23,6 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeSet;
 
-import org.apache.accumulo.core.Constants;
-import org.apache.accumulo.server.cli.ClientOpts;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.impl.Writer;
@@ -32,11 +30,13 @@ import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.KeyExtent;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Value;
+import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.security.CredentialHelper;
 import org.apache.accumulo.core.tabletserver.thrift.ConstraintViolationException;
-import org.apache.accumulo.core.util.CachedConfiguration;
+import org.apache.accumulo.server.cli.ClientOpts;
 import org.apache.accumulo.server.conf.ServerConfiguration;
-import org.apache.hadoop.fs.FileSystem;
+import org.apache.accumulo.server.fs.VolumeManager;
+import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.hadoop.io.Text;
 
 import com.beust.jcommander.Parameter;
@@ -97,7 +97,7 @@ public class CheckForMetadataProblems {
       sawProblems = true;
   }
   
-  public static void checkMetadataTableEntries(Opts opts, FileSystem fs) throws Exception {
+  public static void checkMetadataTableEntries(Opts opts, VolumeManager fs) throws Exception {
     Map<String,TreeSet<KeyExtent>> tables = new HashMap<String,TreeSet<KeyExtent>>();
     
     Scanner scanner;
@@ -105,12 +105,12 @@ public class CheckForMetadataProblems {
     if (opts.offline) {
       scanner = new OfflineMetadataScanner(ServerConfiguration.getSystemConfiguration(opts.getInstance()), fs);
     } else {
-      scanner =  opts.getConnector().createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
+      scanner = opts.getConnector().createScanner(MetadataTable.NAME, Authorizations.EMPTY);
     }
     
-    scanner.setRange(Constants.METADATA_KEYSPACE);
-    Constants.METADATA_PREV_ROW_COLUMN.fetch(scanner);
-    scanner.fetchColumnFamily(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY);
+    scanner.setRange(MetadataTable.KEYSPACE);
+    MetadataTable.PREV_ROW_COLUMN.fetch(scanner);
+    scanner.fetchColumnFamily(MetadataTable.CURRENT_LOCATION_COLUMN_FAMILY);
     
     Text colf = new Text();
     Text colq = new Text();
@@ -140,11 +140,11 @@ public class CheckForMetadataProblems {
         tables.put(tableName, tablets);
       }
       
-      if (Constants.METADATA_PREV_ROW_COLUMN.equals(colf, colq)) {
+      if (MetadataTable.PREV_ROW_COLUMN.equals(colf, colq)) {
         KeyExtent tabletKe = new KeyExtent(entry.getKey().getRow(), entry.getValue());
         tablets.add(tabletKe);
         justLoc = false;
-      } else if (colf.equals(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY)) {
+      } else if (colf.equals(MetadataTable.CURRENT_LOCATION_COLUMN_FAMILY)) {
         if (justLoc) {
           System.out.println("Problem at key " + entry.getKey());
           sawProblems = true;
@@ -166,7 +166,7 @@ public class CheckForMetadataProblems {
     }
     
     if (count == 0) {
-      System.err.println("ERROR : " + Constants.METADATA_TABLE_NAME + " table is empty");
+      System.err.println("ERROR : " + MetadataTable.NAME + " table is empty");
       sawProblems = true;
     }
     
@@ -180,19 +180,18 @@ public class CheckForMetadataProblems {
   }
   
   static class Opts extends ClientOpts {
-    @Parameter(names="--fix", description="best-effort attempt to fix problems found")
+    @Parameter(names = "--fix", description = "best-effort attempt to fix problems found")
     boolean fix = false;
     
-    @Parameter(names="--offline", description="perform the check on the files directly")
+    @Parameter(names = "--offline", description = "perform the check on the files directly")
     boolean offline = false;
   }
-  
   
   public static void main(String[] args) throws Exception {
     Opts opts = new Opts();
     opts.parseArgs(CheckForMetadataProblems.class.getName(), args);
     
-    FileSystem fs = FileSystem.get(CachedConfiguration.getInstance());
+    VolumeManager fs = VolumeManagerImpl.get();
     checkMetadataTableEntries(opts, fs);
     opts.stopTracing();
     if (sawProblems)

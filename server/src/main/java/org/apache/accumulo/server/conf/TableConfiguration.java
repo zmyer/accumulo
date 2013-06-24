@@ -52,7 +52,6 @@ public class TableConfiguration extends AccumuloConfiguration {
     this.parent = parent;
     
     this.observers = Collections.synchronizedSet(new HashSet<ConfigurationObserver>());
-    
     if (tablePropCache == null)
       synchronized (TableConfiguration.class) {
         if (tablePropCache == null)
@@ -99,6 +98,7 @@ public class TableConfiguration extends AccumuloConfiguration {
       co.propertiesChanged();
   }
   
+  @Override
   public String get(Property property) {
     String key = property.getKey();
     String value = get(key);

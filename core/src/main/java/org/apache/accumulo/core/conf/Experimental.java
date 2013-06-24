@@ -14,21 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.accumulo.core.security;
+package org.apache.accumulo.core.conf;
 
-import java.io.Serializable;
+import java.lang.annotation.Inherited;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
-public interface VisibilityInterpreter extends Serializable {
-  public abstract String getAbbreviatedValue();
+/**
+ * An annotation to denote experimental {@link AccumuloConfiguration} {@link Property} keys.
+ */
+@Inherited
+@Retention(RetentionPolicy.RUNTIME)
+@interface Experimental {
   
-  public abstract String getFullValue();
-  
-  public abstract void merge(ColumnVisibility other, Authorizations authorizations);
-  
-  public abstract void merge(VisibilityInterpreter other);
-  
-  // Factory type method that can be used from an instance
-  public abstract VisibilityInterpreter create();
-  
-  public abstract VisibilityInterpreter create(ColumnVisibility visibility, Authorizations authorizations);
 }

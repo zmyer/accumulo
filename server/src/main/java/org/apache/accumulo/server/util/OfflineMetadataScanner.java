@@ -28,7 +28,6 @@ import java.util.Map.Entry;
 import java.util.NoSuchElementException;
 import java.util.Set;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.impl.ScannerOptions;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
@@ -45,12 +44,15 @@ import org.apache.accumulo.core.iterators.system.DeletingIterator;
 import org.apache.accumulo.core.iterators.system.MultiIterator;
 import org.apache.accumulo.core.iterators.system.VisibilityFilter;
 import org.apache.accumulo.core.iterators.user.VersioningIterator;
-import org.apache.accumulo.core.util.CachedConfiguration;
+import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.util.LocalityGroupUtil;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.util.TextUtil;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
+import org.apache.accumulo.server.fs.VolumeManager;
+import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.accumulo.server.util.MetadataTable.LogEntry;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -60,13 +62,14 @@ public class OfflineMetadataScanner extends ScannerOptions implements Scanner {
   
   private Set<String> allFiles = new HashSet<String>();
   private Range range = new Range();
-  private final FileSystem fs;
+  private final VolumeManager fs;
   private final AccumuloConfiguration conf;
   
-  private List<SortedKeyValueIterator<Key,Value>> openMapFiles(Collection<String> files, FileSystem fs, AccumuloConfiguration conf) throws IOException {
+  private List<SortedKeyValueIterator<Key,Value>> openMapFiles(Collection<String> files, VolumeManager fs, AccumuloConfiguration conf) throws IOException {
     List<SortedKeyValueIterator<Key,Value>> readers = new ArrayList<SortedKeyValueIterator<Key,Value>>();
     for (String file : files) {
-      FileSKVIterator reader = FileOperations.getInstance().openReader(file, true, fs, fs.getConf(), conf);
+      FileSystem ns = fs.getFileSystemByPath(new Path(file));
+      FileSKVIterator reader = FileOperations.getInstance().openReader(file, true, ns, ns.getConf(), conf);
       readers.add(reader);
     }
     return readers;
@@ -78,7 +81,7 @@ public class OfflineMetadataScanner extends ScannerOptions implements Scanner {
     DeletingIterator delIter = new DeletingIterator(multiIterator, false);
     ColumnFamilySkippingIterator cfsi = new ColumnFamilySkippingIterator(delIter);
     ColumnQualifierFilter colFilter = new ColumnQualifierFilter(cfsi, columns);
-    VisibilityFilter visFilter = new VisibilityFilter(colFilter, Constants.NO_AUTHS, new byte[0]);
+    VisibilityFilter visFilter = new VisibilityFilter(colFilter, Authorizations.EMPTY, new byte[0]);
     
     visFilter.seek(r, LocalityGroupUtil.EMPTY_CF_SET, false);
     
@@ -117,13 +120,13 @@ public class OfflineMetadataScanner extends ScannerOptions implements Scanner {
     
   }
   
-  public OfflineMetadataScanner(AccumuloConfiguration conf, FileSystem fs) throws IOException {
+  public OfflineMetadataScanner(AccumuloConfiguration conf, VolumeManager fs) throws IOException {
     super();
     this.fs = fs;
     this.conf = conf;
     List<LogEntry> rwal;
     try {
-      rwal = MetadataTable.getLogEntries(null, Constants.ROOT_TABLET_EXTENT);
+      rwal = MetadataTable.getLogEntries(null, RootTable.EXTENT);
     } catch (Exception e) {
       throw new RuntimeException("Failed to check if root tablet has write ahead log entries", e);
     }
@@ -141,16 +144,16 @@ public class OfflineMetadataScanner extends ScannerOptions implements Scanner {
     List<SortedKeyValueIterator<Key,Value>> readers = openMapFiles(allFiles, fs, conf);
     
     HashSet<Column> columns = new HashSet<Column>();
-    columns.add(new Column(TextUtil.getBytes(Constants.METADATA_DATAFILE_COLUMN_FAMILY), null, null));
-    columns.add(new Column(TextUtil.getBytes(Constants.METADATA_LOG_COLUMN_FAMILY), null, null));
+    columns.add(new Column(TextUtil.getBytes(MetadataTable.DATAFILE_COLUMN_FAMILY), null, null));
+    columns.add(new Column(TextUtil.getBytes(MetadataTable.LOG_COLUMN_FAMILY), null, null));
     
     SortedKeyValueIterator<Key,Value> ssi = createSystemIter(new Range(), readers, columns);
     
     int walogs = 0;
     
     while (ssi.hasTop()) {
-      if (ssi.getTopKey().compareColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY) == 0) {
-        allFiles.add(ServerConstants.getMetadataTableDir() + "/" + ssi.getTopKey().getColumnQualifier().toString());
+      if (ssi.getTopKey().compareColumnFamily(MetadataTable.DATAFILE_COLUMN_FAMILY) == 0) {
+        allFiles.add(fs.getFullPath(ssi.getTopKey()).toString());
       } else {
         walogs++;
       }
@@ -255,10 +258,10 @@ public class OfflineMetadataScanner extends ScannerOptions implements Scanner {
   }
   
   public static void main(String[] args) throws IOException {
-    FileSystem fs = FileSystem.get(CachedConfiguration.getInstance());
     ServerConfiguration conf = new ServerConfiguration(HdfsZooInstance.getInstance());
+    VolumeManager fs = VolumeManagerImpl.get();
     OfflineMetadataScanner scanner = new OfflineMetadataScanner(conf.getConfiguration(), fs);
-    scanner.setRange(Constants.METADATA_KEYSPACE);
+    scanner.setRange(MetadataTable.KEYSPACE);
     for (Entry<Key,Value> entry : scanner)
       System.out.println(entry.getKey() + " " + entry.getValue());
   }

@@ -39,6 +39,8 @@ import org.apache.accumulo.core.security.CredentialHelper;
 import org.apache.accumulo.core.security.SystemPermission;
 import org.apache.accumulo.core.security.TablePermission;
 import org.apache.accumulo.core.security.thrift.TCredentials;
+import org.apache.accumulo.core.util.MetadataTable;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
 import org.apache.accumulo.server.master.Master;
@@ -105,6 +107,7 @@ public class SecurityOperation {
    * 
    * @deprecated not for client use
    */
+  @Deprecated
   public SecurityOperation(String instanceId) {
     ZKUserPath = Constants.ZROOT + "/" + instanceId + "/users";
     zooCache = new ZooCache();
@@ -132,7 +135,7 @@ public class SecurityOperation {
     authorizor.initializeSecurity(credentials, rootPrincipal);
     permHandle.initializeSecurity(credentials, rootPrincipal);
     try {
-      permHandle.grantTablePermission(rootPrincipal, Constants.METADATA_TABLE_ID, TablePermission.ALTER_TABLE);
+      permHandle.grantTablePermission(rootPrincipal, MetadataTable.ID, TablePermission.ALTER_TABLE);
     } catch (TableNotFoundException e) {
       // Shouldn't happen
       throw new RuntimeException(e);
@@ -209,7 +212,7 @@ public class SecurityOperation {
     
     // system user doesn't need record-level authorizations for the tables it reads (for now)
     if (user.equals(SecurityConstants.SYSTEM_PRINCIPAL))
-      return Constants.NO_AUTHS;
+      return Authorizations.EMPTY;
     
     try {
       return authorizor.getCachedUserAuthorizations(user);
@@ -253,7 +256,7 @@ public class SecurityOperation {
     
     targetUserExists(user);
     
-    if (table.equals(Constants.METADATA_TABLE_ID) && permission.equals(TablePermission.READ))
+    if ((table.equals(MetadataTable.ID) || table.equals(RootTable.ID)) && permission.equals(TablePermission.READ))
       return true;
     
     try {
@@ -293,11 +296,13 @@ public class SecurityOperation {
     return hasTablePermission(credentials.getPrincipal(), table, TablePermission.READ, true);
   }
   
-  public boolean canScan(TCredentials credentials, String table, TRange range, List<TColumn> columns, List<IterInfo> ssiList, Map<String,Map<String,String>> ssio, List<ByteBuffer> authorizations) throws ThriftSecurityException {
+  public boolean canScan(TCredentials credentials, String table, TRange range, List<TColumn> columns, List<IterInfo> ssiList,
+      Map<String,Map<String,String>> ssio, List<ByteBuffer> authorizations) throws ThriftSecurityException {
     return canScan(credentials, table);
   }
   
-  public boolean canScan(TCredentials credentials, String table, Map<TKeyExtent,List<TRange>> tbatch, List<TColumn> tcolumns, List<IterInfo> ssiList, Map<String,Map<String,String>> ssio, List<ByteBuffer> authorizations) throws ThriftSecurityException {
+  public boolean canScan(TCredentials credentials, String table, Map<TKeyExtent,List<TRange>> tbatch, List<TColumn> tcolumns, List<IterInfo> ssiList,
+      Map<String,Map<String,String>> ssio, List<ByteBuffer> authorizations) throws ThriftSecurityException {
     return canScan(credentials, table);
   }
   

@@ -39,9 +39,10 @@ import java.util.TreeSet;
 import java.util.UUID;
 import java.util.WeakHashMap;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.data.thrift.TKeyExtent;
 import org.apache.accumulo.core.util.ByteBufferUtil;
+import org.apache.accumulo.core.util.MetadataTable;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.util.TextUtil;
 import org.apache.hadoop.io.BinaryComparable;
 import org.apache.hadoop.io.Text;
@@ -250,6 +251,7 @@ public class KeyExtent implements WritableComparable<KeyExtent> {
    * Populates the extents data fields from a DataInput object
    * 
    */
+  @Override
   public void readFields(DataInput in) throws IOException {
     Text tid = new Text();
     tid.readFields(in);
@@ -279,6 +281,7 @@ public class KeyExtent implements WritableComparable<KeyExtent> {
    * Writes this extent's data fields to a DataOutput object
    * 
    */
+  @Override
   public void write(DataOutput out) throws IOException {
     getTableId().write(out);
     if (getEndRow() != null) {
@@ -395,7 +398,7 @@ public class KeyExtent implements WritableComparable<KeyExtent> {
   
   public static Mutation getPrevRowUpdateMutation(KeyExtent ke) {
     Mutation m = new Mutation(ke.getMetadataEntry());
-    Constants.METADATA_PREV_ROW_COLUMN.put(m, encodePrevEndRow(ke.getPrevEndRow()));
+    MetadataTable.PREV_ROW_COLUMN.put(m, encodePrevEndRow(ke.getPrevEndRow()));
     return m;
   }
   
@@ -403,6 +406,7 @@ public class KeyExtent implements WritableComparable<KeyExtent> {
    * Compares extents based on rows
    * 
    */
+  @Override
   public int compareTo(KeyExtent other) {
     
     int result = getTableId().compareTo(other.getTableId());
@@ -754,9 +758,6 @@ public class KeyExtent implements WritableComparable<KeyExtent> {
         : TextUtil.getByteBuffer(textPrevEndRow));
   }
   
-  /**
-   * @param prevExtent
-   */
   public boolean isPreviousExtent(KeyExtent prevExtent) {
     if (prevExtent == null)
       return getPrevEndRow() == null;
@@ -774,10 +775,10 @@ public class KeyExtent implements WritableComparable<KeyExtent> {
   }
   
   public boolean isMeta() {
-    return getTableId().toString().equals(Constants.METADATA_TABLE_ID);
+    return getTableId().toString().equals(MetadataTable.ID) || isRootTablet();
   }
   
   public boolean isRootTablet() {
-    return this.compareTo(Constants.ROOT_TABLET_EXTENT) == 0;
+    return getTableId().toString().equals(RootTable.ID);
   }
 }

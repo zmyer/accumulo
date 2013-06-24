@@ -23,13 +23,14 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeSet;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.TableNotFoundException;
 import org.apache.accumulo.core.client.impl.thrift.SecurityErrorCode;
 import org.apache.accumulo.core.security.SystemPermission;
 import org.apache.accumulo.core.security.TablePermission;
 import org.apache.accumulo.core.security.thrift.TCredentials;
+import org.apache.accumulo.core.util.MetadataTable;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
@@ -59,6 +60,7 @@ public class ZKPermHandler implements PermissionHandler {
     return zkPermHandlerInstance;
   }
   
+  @Override
   public void initialize(String instanceId, boolean initialize) {
     ZKUserPath = ZKSecurityTool.getInstancePath(instanceId) + "/users";
     ZKTablePath = ZKSecurityTool.getInstancePath(instanceId) + "/tables";
@@ -252,8 +254,9 @@ public class ZKPermHandler implements PermissionHandler {
     for (SystemPermission p : SystemPermission.values())
       rootPerms.add(p);
     Map<String,Set<TablePermission>> tablePerms = new HashMap<String,Set<TablePermission>>();
-    // Allow the root user to flush the !METADATA table
-    tablePerms.put(Constants.METADATA_TABLE_ID, Collections.singleton(TablePermission.ALTER_TABLE));
+    // Allow the root user to flush the system tables
+    tablePerms.put(RootTable.ID, Collections.singleton(TablePermission.ALTER_TABLE));
+    tablePerms.put(MetadataTable.ID, Collections.singleton(TablePermission.ALTER_TABLE));
     
     try {
       // prep parent node of users with root username
@@ -277,6 +280,7 @@ public class ZKPermHandler implements PermissionHandler {
    * @param user
    * @throws AccumuloSecurityException
    */
+  @Override
   public void initUser(String user) throws AccumuloSecurityException {
     IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
     try {

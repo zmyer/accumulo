@@ -21,7 +21,6 @@ import java.util.Map.Entry;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.BatchWriter;
 import org.apache.accumulo.core.client.BatchWriterConfig;
 import org.apache.accumulo.core.client.Connector;
@@ -32,10 +31,12 @@ import org.apache.accumulo.core.client.security.tokens.PasswordToken;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Value;
+import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.security.CredentialHelper;
 import org.apache.accumulo.core.security.thrift.TCredentials;
-import org.apache.accumulo.core.util.CachedConfiguration;
-import org.apache.hadoop.fs.FileSystem;
+import org.apache.accumulo.core.util.MetadataTable;
+import org.apache.accumulo.server.fs.VolumeManager;
+import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.hadoop.io.Text;
 import org.junit.Assert;
 import org.junit.Test;
@@ -93,7 +94,7 @@ public class TestConfirmDeletes {
     TCredentials auth = CredentialHelper.create("root", new PasswordToken(new byte[0]), "instance");
     
     Instance instance = new MockInstance();
-    FileSystem fs = FileSystem.getLocal(CachedConfiguration.getInstance());
+    VolumeManager fs = VolumeManagerImpl.getLocal();
     
     load(instance, metadata, deletes);
     
@@ -108,8 +109,8 @@ public class TestConfirmDeletes {
   private void load(Instance instance, String[] metadata, String[] deletes) throws Exception {
     TCredentials credential = CredentialHelper.create("root", new PasswordToken(new byte[0]), "instance");
     
-    Scanner scanner = instance.getConnector(credential.getPrincipal(), CredentialHelper.extractToken(credential)).createScanner(Constants.METADATA_TABLE_NAME,
-        Constants.NO_AUTHS);
+    Scanner scanner = instance.getConnector(credential.getPrincipal(), CredentialHelper.extractToken(credential)).createScanner(MetadataTable.NAME,
+        Authorizations.EMPTY);
     int count = 0;
     for (@SuppressWarnings("unused")
     Entry<Key,Value> entry : scanner) {
@@ -120,7 +121,7 @@ public class TestConfirmDeletes {
     Assert.assertEquals(0, count);
     
     Connector conn = instance.getConnector(credential.getPrincipal(), CredentialHelper.extractToken(credential));
-    BatchWriter bw = conn.createBatchWriter(Constants.METADATA_TABLE_NAME, new BatchWriterConfig());
+    BatchWriter bw = conn.createBatchWriter(MetadataTable.NAME, new BatchWriterConfig());
     for (String line : metadata) {
       String[] parts = line.split(" ");
       String[] columnParts = parts[1].split(":");

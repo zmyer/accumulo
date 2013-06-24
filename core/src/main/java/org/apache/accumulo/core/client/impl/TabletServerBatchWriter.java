@@ -35,7 +35,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.BatchWriterConfig;
@@ -61,6 +60,7 @@ import org.apache.accumulo.core.tabletserver.thrift.ConstraintViolationException
 import org.apache.accumulo.core.tabletserver.thrift.NoSuchScanIDException;
 import org.apache.accumulo.core.tabletserver.thrift.NotServingTabletException;
 import org.apache.accumulo.core.tabletserver.thrift.TabletClientService;
+import org.apache.accumulo.core.util.MetadataTable;
 import org.apache.accumulo.core.util.SimpleThreadPool;
 import org.apache.accumulo.core.util.ThriftUtil;
 import org.apache.accumulo.trace.instrument.Span;
@@ -211,6 +211,7 @@ public class TabletServerBatchWriter {
     
     if (this.maxLatency != Long.MAX_VALUE) {
       jtimer.schedule(new TimerTask() {
+        @Override
         public void run() {
           try {
             synchronized (TabletServerBatchWriter.this) {
@@ -460,9 +461,9 @@ public class TabletServerBatchWriter {
       }
     }
   }
-
+  
   private void updateAuthorizationFailures(Set<KeyExtent> keySet, SecurityErrorCode code) {
-    HashMap<KeyExtent, SecurityErrorCode> map = new HashMap<KeyExtent, SecurityErrorCode>();
+    HashMap<KeyExtent,SecurityErrorCode> map = new HashMap<KeyExtent,SecurityErrorCode>();
     for (KeyExtent ke : keySet)
       map.put(ke, code);
     
@@ -543,9 +544,6 @@ public class TabletServerBatchWriter {
   
   /**
    * Add mutations that previously failed back into the mix
-   * 
-   * @param failedMutations
-   *          static final Logger log = Logger.getLogger(TabletServerBatchWriter.class);
    */
   private synchronized void addFailedMutations(MutationSet failedMutations) throws Exception {
     mutations.addAll(failedMutations);
@@ -601,11 +599,11 @@ public class TabletServerBatchWriter {
         
         if (rf != null) {
           if (log.isTraceEnabled())
-            log.trace("requeuing " + rf.size() + " failed mutations");
+            log.trace("tid=" + Thread.currentThread().getId() + "  Requeuing " + rf.size() + " failed mutations");
           addFailedMutations(rf);
         }
       } catch (Throwable t) {
-        updateUnknownErrors("Failed to requeue failed mutations " + t.getMessage(), t);
+        updateUnknownErrors("tid=" + Thread.currentThread().getId() + "  Failed to requeue failed mutations " + t.getMessage(), t);
         cancel();
       }
     }
@@ -673,7 +671,7 @@ public class TabletServerBatchWriter {
         // assume an IOError communicating with !METADATA tablet
         failedMutations.add(mutationsToProcess);
       } catch (AccumuloSecurityException e) {
-        updateAuthorizationFailures(Collections.singletonMap(new KeyExtent(new Text(Constants.METADATA_TABLE_ID), null, null),
+        updateAuthorizationFailures(Collections.singletonMap(new KeyExtent(new Text(MetadataTable.ID), null, null),
             SecurityErrorCode.valueOf(e.getSecurityErrorCode().name())));
       } catch (TableDeletedException e) {
         updateUnknownErrors(e.getMessage(), e);

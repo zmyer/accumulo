@@ -21,7 +21,6 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Random;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.data.KeyExtent;
 import org.apache.accumulo.core.iterators.IteratorUtil.IteratorScope;
@@ -35,7 +34,8 @@ import org.apache.accumulo.server.problems.ProblemReports;
 import org.apache.accumulo.server.problems.ProblemType;
 import org.apache.accumulo.server.tabletserver.Tablet.MinorCompactionReason;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
+import org.apache.accumulo.server.fs.FileRef;
+import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.hadoop.fs.Path;
 import org.apache.log4j.Logger;
 
@@ -43,16 +43,16 @@ public class MinorCompactor extends Compactor {
   
   private static final Logger log = Logger.getLogger(MinorCompactor.class);
   
-  private static final Map<String,DataFileValue> EMPTY_MAP = Collections.emptyMap();
+  private static final Map<FileRef,DataFileValue> EMPTY_MAP = Collections.emptyMap();
   
-  private static Map<String,DataFileValue> toFileMap(String mergeFile, DataFileValue dfv) {
+  private static Map<FileRef,DataFileValue> toFileMap(FileRef mergeFile, DataFileValue dfv) {
     if (mergeFile == null)
       return EMPTY_MAP;
     
     return Collections.singletonMap(mergeFile, dfv);
   }
   
-  MinorCompactor(Configuration conf, FileSystem fs, InMemoryMap imm, String mergeFile, DataFileValue dfv, String outputFile, TableConfiguration acuTableConf,
+  MinorCompactor(Configuration conf, VolumeManager fs, InMemoryMap imm, FileRef mergeFile, DataFileValue dfv, FileRef outputFile, TableConfiguration acuTableConf,
       KeyExtent extent, MinorCompactionReason mincReason) {
     super(conf, fs, toFileMap(mergeFile, dfv), imm, outputFile, true, acuTableConf, extent, new CompactionEnv() {
       
@@ -78,7 +78,7 @@ public class MinorCompactor extends Compactor {
       return false; // can not get positive confirmation that its deleting.
     }
   }
-
+  
   @Override
   public CompactionStats call() {
     log.debug("Begin minor compaction " + getOutputFile() + " " + getExtent());
@@ -86,7 +86,7 @@ public class MinorCompactor extends Compactor {
     // output to new MapFile with a temporary name
     int sleepTime = 100;
     double growthFactor = 4;
-    int maxSleepTime = 1000 * Constants.DEFAULT_MINOR_COMPACTION_MAX_SLEEP_TIME;
+    int maxSleepTime = 1000 * 60 * 3; // 3 minutes
     boolean reportedProblem = false;
     
     runningCompactions.add(this);
@@ -127,7 +127,7 @@ public class MinorCompactor extends Compactor {
         // clean up
         try {
           if (getFileSystem().exists(new Path(getOutputFile()))) {
-            getFileSystem().delete(new Path(getOutputFile()), true);
+            getFileSystem().deleteRecursively(new Path(getOutputFile()));
           }
         } catch (IOException e) {
           log.warn("Failed to delete failed MinC file " + getOutputFile() + " " + e.getMessage());

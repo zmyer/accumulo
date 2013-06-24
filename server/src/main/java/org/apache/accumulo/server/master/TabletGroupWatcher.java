@@ -46,9 +46,12 @@ import org.apache.accumulo.core.data.PartialKey;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.master.thrift.TabletServerStatus;
+import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.tabletserver.thrift.NotServingTabletException;
 import org.apache.accumulo.core.util.Daemon;
+import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.util.UtilWaitThread;
+import org.apache.accumulo.server.fs.FileRef;
 import org.apache.accumulo.server.master.LiveTServerSet.TServerConnection;
 import org.apache.accumulo.server.master.Master.TabletGoalState;
 import org.apache.accumulo.server.master.state.Assignment;
@@ -126,7 +129,8 @@ class TabletGroupWatcher extends Daemon {
         
         int[] counts = new int[TabletState.values().length];
         stats.begin();
-        // Walk through the tablets in our store, and work tablets towards their goal
+        // Walk through the tablets in our store, and work tablets
+        // towards their goal
         for (TabletLocationState tls : store) {
           if (tls == null) {
             continue;
@@ -282,7 +286,7 @@ class TabletGroupWatcher extends Daemon {
     if (!state.equals(TabletState.HOSTED))
       return;
     // Does this extent cover the end points of the delete?
-    KeyExtent range = info.getRange();
+    KeyExtent range = info.getExtent();
     if (tls.extent.overlaps(range)) {
       for (Text splitPoint : new Text[] {range.getPrevEndRow(), range.getEndRow()}) {
         if (splitPoint == null)
@@ -365,72 +369,73 @@ class TabletGroupWatcher extends Daemon {
           }
         }
       } catch (Exception ex) {
-        Master.log.error("Unable to update merge state for merge " + stats.getMergeInfo().getRange(), ex);
+        Master.log.error("Unable to update merge state for merge " + stats.getMergeInfo().getExtent(), ex);
       }
     }
   }
   
   private void deleteTablets(MergeInfo info) throws AccumuloException {
-    KeyExtent range = info.getRange();
-    Master.log.debug("Deleting tablets for " + range);
+    KeyExtent extent = info.getExtent();
+    String targetSystemTable = extent.isMeta() ? RootTable.NAME : MetadataTable.NAME;
+    Master.log.debug("Deleting tablets for " + extent);
     char timeType = '\0';
     KeyExtent followingTablet = null;
-    if (range.getEndRow() != null) {
-      Key nextExtent = new Key(range.getEndRow()).followingKey(PartialKey.ROW);
-      followingTablet = getHighTablet(new KeyExtent(range.getTableId(), nextExtent.getRow(), range.getEndRow()));
+    if (extent.getEndRow() != null) {
+      Key nextExtent = new Key(extent.getEndRow()).followingKey(PartialKey.ROW);
+      followingTablet = getHighTablet(new KeyExtent(extent.getTableId(), nextExtent.getRow(), extent.getEndRow()));
       Master.log.debug("Found following tablet " + followingTablet);
     }
     try {
       Connector conn = this.master.getConnector();
-      Text start = range.getPrevEndRow();
+      Text start = extent.getPrevEndRow();
       if (start == null) {
         start = new Text();
       }
-      Master.log.debug("Making file deletion entries for " + range);
-      Range deleteRange = new Range(KeyExtent.getMetadataEntry(range.getTableId(), start), false, KeyExtent.getMetadataEntry(range.getTableId(),
-          range.getEndRow()), true);
-      Scanner scanner = conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
+      Master.log.debug("Making file deletion entries for " + extent);
+      Range deleteRange = new Range(KeyExtent.getMetadataEntry(extent.getTableId(), start), false, KeyExtent.getMetadataEntry(extent.getTableId(),
+          extent.getEndRow()), true);
+      Scanner scanner = conn.createScanner(targetSystemTable, Authorizations.EMPTY);
       scanner.setRange(deleteRange);
-      Constants.METADATA_DIRECTORY_COLUMN.fetch(scanner);
-      Constants.METADATA_TIME_COLUMN.fetch(scanner);
-      scanner.fetchColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY);
-      scanner.fetchColumnFamily(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY);
-      Set<String> datafiles = new TreeSet<String>();
+      MetadataTable.DIRECTORY_COLUMN.fetch(scanner);
+      MetadataTable.TIME_COLUMN.fetch(scanner);
+      scanner.fetchColumnFamily(MetadataTable.DATAFILE_COLUMN_FAMILY);
+      scanner.fetchColumnFamily(MetadataTable.CURRENT_LOCATION_COLUMN_FAMILY);
+      Set<FileRef> datafiles = new TreeSet<FileRef>();
       for (Entry<Key,Value> entry : scanner) {
         Key key = entry.getKey();
-        if (key.compareColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY) == 0) {
-          datafiles.add(key.getColumnQualifier().toString());
+        if (key.compareColumnFamily(MetadataTable.DATAFILE_COLUMN_FAMILY) == 0) {
+          datafiles.add(new FileRef(this.master.fs, key));
           if (datafiles.size() > 1000) {
-            MetadataTable.addDeleteEntries(range, datafiles, SecurityConstants.getSystemCredentials());
+            MetadataTable.addDeleteEntries(extent, datafiles, SecurityConstants.getSystemCredentials());
             datafiles.clear();
           }
-        } else if (Constants.METADATA_TIME_COLUMN.hasColumns(key)) {
+        } else if (MetadataTable.TIME_COLUMN.hasColumns(key)) {
           timeType = entry.getValue().toString().charAt(0);
-        } else if (key.compareColumnFamily(Constants.METADATA_CURRENT_LOCATION_COLUMN_FAMILY) == 0) {
+        } else if (key.compareColumnFamily(MetadataTable.CURRENT_LOCATION_COLUMN_FAMILY) == 0) {
           throw new IllegalStateException("Tablet " + key.getRow() + " is assigned during a merge!");
-        } else if (Constants.METADATA_DIRECTORY_COLUMN.hasColumns(key)) {
-          datafiles.add(entry.getValue().toString());
+        } else if (MetadataTable.DIRECTORY_COLUMN.hasColumns(key)) {
+          datafiles.add(new FileRef(this.master.fs, key));
           if (datafiles.size() > 1000) {
-            MetadataTable.addDeleteEntries(range, datafiles, SecurityConstants.getSystemCredentials());
+            MetadataTable.addDeleteEntries(extent, datafiles, SecurityConstants.getSystemCredentials());
             datafiles.clear();
           }
         }
       }
-      MetadataTable.addDeleteEntries(range, datafiles, SecurityConstants.getSystemCredentials());
-      BatchWriter bw = conn.createBatchWriter(Constants.METADATA_TABLE_NAME, new BatchWriterConfig());
+      MetadataTable.addDeleteEntries(extent, datafiles, SecurityConstants.getSystemCredentials());
+      BatchWriter bw = conn.createBatchWriter(targetSystemTable, new BatchWriterConfig());
       try {
-        deleteTablets(deleteRange, bw, conn);
+        deleteTablets(info, deleteRange, bw, conn);
       } finally {
         bw.close();
       }
       
       if (followingTablet != null) {
-        Master.log.debug("Updating prevRow of " + followingTablet + " to " + range.getPrevEndRow());
-        bw = conn.createBatchWriter(Constants.METADATA_TABLE_NAME, new BatchWriterConfig());
+        Master.log.debug("Updating prevRow of " + followingTablet + " to " + extent.getPrevEndRow());
+        bw = conn.createBatchWriter(targetSystemTable, new BatchWriterConfig());
         try {
           Mutation m = new Mutation(followingTablet.getMetadataEntry());
-          Constants.METADATA_PREV_ROW_COLUMN.put(m, KeyExtent.encodePrevEndRow(range.getPrevEndRow()));
-          Constants.METADATA_CHOPPED_COLUMN.putDelete(m);
+          MetadataTable.PREV_ROW_COLUMN.put(m, KeyExtent.encodePrevEndRow(extent.getPrevEndRow()));
+          MetadataTable.CHOPPED_COLUMN.putDelete(m);
           bw.addMutation(m);
           bw.flush();
         } finally {
@@ -438,8 +443,8 @@ class TabletGroupWatcher extends Daemon {
         }
       } else {
         // Recreate the default tablet to hold the end of the table
-        Master.log.debug("Recreating the last tablet to point to " + range.getPrevEndRow());
-        MetadataTable.addTablet(new KeyExtent(range.getTableId(), null, range.getPrevEndRow()), Constants.DEFAULT_TABLET_LOCATION,
+        Master.log.debug("Recreating the last tablet to point to " + extent.getPrevEndRow());
+        MetadataTable.addTablet(new KeyExtent(extent.getTableId(), null, extent.getPrevEndRow()), Constants.DEFAULT_TABLET_LOCATION,
             SecurityConstants.getSystemCredentials(), timeType, this.master.masterLock);
       }
     } catch (Exception ex) {
@@ -448,7 +453,7 @@ class TabletGroupWatcher extends Daemon {
   }
   
   private void mergeMetadataRecords(MergeInfo info) throws AccumuloException {
-    KeyExtent range = info.getRange();
+    KeyExtent range = info.getExtent();
     Master.log.debug("Merging metadata for " + range);
     KeyExtent stop = getHighTablet(range);
     Master.log.debug("Highest tablet is " + stop);
@@ -459,56 +464,54 @@ class TabletGroupWatcher extends Daemon {
       start = new Text();
     }
     Range scanRange = new Range(KeyExtent.getMetadataEntry(range.getTableId(), start), false, stopRow, false);
-    if (range.isMeta())
-      scanRange = scanRange.clip(Constants.METADATA_ROOT_TABLET_KEYSPACE);
+    String targetSystemTable = MetadataTable.NAME;
+    if (range.isMeta()) {
+      targetSystemTable = RootTable.NAME;
+    }
     
     BatchWriter bw = null;
     try {
       long fileCount = 0;
       Connector conn = this.master.getConnector();
       // Make file entries in highest tablet
-      bw = conn.createBatchWriter(Constants.METADATA_TABLE_NAME, new BatchWriterConfig());
-      Scanner scanner = conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
+      bw = conn.createBatchWriter(targetSystemTable, new BatchWriterConfig());
+      Scanner scanner = conn.createScanner(targetSystemTable, Authorizations.EMPTY);
       scanner.setRange(scanRange);
-      Constants.METADATA_PREV_ROW_COLUMN.fetch(scanner);
-      Constants.METADATA_TIME_COLUMN.fetch(scanner);
-      Constants.METADATA_DIRECTORY_COLUMN.fetch(scanner);
-      scanner.fetchColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY);
+      MetadataTable.PREV_ROW_COLUMN.fetch(scanner);
+      MetadataTable.TIME_COLUMN.fetch(scanner);
+      MetadataTable.DIRECTORY_COLUMN.fetch(scanner);
+      scanner.fetchColumnFamily(MetadataTable.DATAFILE_COLUMN_FAMILY);
       Mutation m = new Mutation(stopRow);
       String maxLogicalTime = null;
       for (Entry<Key,Value> entry : scanner) {
         Key key = entry.getKey();
         Value value = entry.getValue();
-        if (key.getColumnFamily().equals(Constants.METADATA_DATAFILE_COLUMN_FAMILY)) {
+        if (key.getColumnFamily().equals(MetadataTable.DATAFILE_COLUMN_FAMILY)) {
           m.put(key.getColumnFamily(), key.getColumnQualifier(), value);
           fileCount++;
-        } else if (Constants.METADATA_PREV_ROW_COLUMN.hasColumns(key) && firstPrevRowValue == null) {
+        } else if (MetadataTable.PREV_ROW_COLUMN.hasColumns(key) && firstPrevRowValue == null) {
           Master.log.debug("prevRow entry for lowest tablet is " + value);
           firstPrevRowValue = new Value(value);
-        } else if (Constants.METADATA_TIME_COLUMN.hasColumns(key)) {
+        } else if (MetadataTable.TIME_COLUMN.hasColumns(key)) {
           maxLogicalTime = TabletTime.maxMetadataTime(maxLogicalTime, value.toString());
-        } else if (Constants.METADATA_DIRECTORY_COLUMN.hasColumns(key)) {
-          if (!range.isMeta())
-            bw.addMutation(MetadataTable.createDeleteMutation(range.getTableId().toString(), entry.getValue().toString()));
+        } else if (MetadataTable.DIRECTORY_COLUMN.hasColumns(key)) {
+          bw.addMutation(MetadataTable.createDeleteMutation(range.getTableId().toString(), entry.getValue().toString()));
         }
       }
       
       // read the logical time from the last tablet in the merge range, it is not included in
       // the loop above
-      scanner = conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
-      Range last = new Range(stopRow);
-      if (range.isMeta())
-        last = last.clip(Constants.METADATA_ROOT_TABLET_KEYSPACE);
-      scanner.setRange(last);
-      Constants.METADATA_TIME_COLUMN.fetch(scanner);
+      scanner = conn.createScanner(targetSystemTable, Authorizations.EMPTY);
+      scanner.setRange(new Range(stopRow));
+      MetadataTable.TIME_COLUMN.fetch(scanner);
       for (Entry<Key,Value> entry : scanner) {
-        if (Constants.METADATA_TIME_COLUMN.hasColumns(entry.getKey())) {
+        if (MetadataTable.TIME_COLUMN.hasColumns(entry.getKey())) {
           maxLogicalTime = TabletTime.maxMetadataTime(maxLogicalTime, entry.getValue().toString());
         }
       }
       
       if (maxLogicalTime != null)
-        Constants.METADATA_TIME_COLUMN.put(m, new Value(maxLogicalTime.getBytes()));
+        MetadataTable.TIME_COLUMN.put(m, new Value(maxLogicalTime.getBytes()));
       
       if (!m.getUpdates().isEmpty()) {
         bw.addMutation(m);
@@ -529,11 +532,11 @@ class TabletGroupWatcher extends Daemon {
       bw.addMutation(updatePrevRow);
       bw.flush();
       
-      deleteTablets(scanRange, bw, conn);
+      deleteTablets(info, scanRange, bw, conn);
       
       // Clean-up the last chopped marker
       m = new Mutation(stopRow);
-      Constants.METADATA_CHOPPED_COLUMN.putDelete(m);
+      MetadataTable.CHOPPED_COLUMN.putDelete(m);
       bw.addMutation(m);
       bw.flush();
       
@@ -549,14 +552,14 @@ class TabletGroupWatcher extends Daemon {
     }
   }
   
-  private void deleteTablets(Range scanRange, BatchWriter bw, Connector conn) throws TableNotFoundException, MutationsRejectedException {
+  private void deleteTablets(MergeInfo info, Range scanRange, BatchWriter bw, Connector conn) throws TableNotFoundException, MutationsRejectedException {
     Scanner scanner;
     Mutation m;
     // Delete everything in the other tablets
     // group all deletes into tablet into one mutation, this makes tablets
     // either disappear entirely or not all.. this is important for the case
     // where the process terminates in the loop below...
-    scanner = conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
+    scanner = conn.createScanner(info.getExtent().isMeta() ? RootTable.NAME : MetadataTable.NAME, Authorizations.EMPTY);
     Master.log.debug("Deleting range " + scanRange);
     scanner.setRange(scanRange);
     RowIterator rowIter = new RowIterator(scanner);
@@ -582,8 +585,8 @@ class TabletGroupWatcher extends Daemon {
   private KeyExtent getHighTablet(KeyExtent range) throws AccumuloException {
     try {
       Connector conn = this.master.getConnector();
-      Scanner scanner = conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
-      Constants.METADATA_PREV_ROW_COLUMN.fetch(scanner);
+      Scanner scanner = conn.createScanner(range.isMeta() ? RootTable.NAME : MetadataTable.NAME, Authorizations.EMPTY);
+      MetadataTable.PREV_ROW_COLUMN.fetch(scanner);
       KeyExtent start = new KeyExtent(range.getTableId(), range.getEndRow(), null);
       scanner.setRange(new Range(start.getMetadataEntry(), null));
       Iterator<Entry<Key,Value>> iterator = scanner.iterator();

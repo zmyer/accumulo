@@ -21,7 +21,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map.Entry;
 
-import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.cli.ClientOnRequiredTable;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Scanner;
@@ -32,6 +31,7 @@ import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.KeyExtent;
 import org.apache.accumulo.core.data.Value;
+import org.apache.accumulo.core.security.Authorizations;
 import org.apache.commons.cli.ParseException;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Logger;
@@ -61,6 +61,7 @@ public class Merge {
       return AccumuloConfiguration.getMemoryInBytes(value);
     }
   }
+  
   static class TextConverter implements IStringConverter<Text> {
     @Override
     public Text convert(String value) {
@@ -69,13 +70,13 @@ public class Merge {
   }
   
   static class Opts extends ClientOnRequiredTable {
-    @Parameter(names={"-s", "--size"}, description="merge goal size", converter=MemoryConverter.class)
+    @Parameter(names = {"-s", "--size"}, description = "merge goal size", converter = MemoryConverter.class)
     Long goalSize = null;
-    @Parameter(names={"-f", "--force"}, description="merge small tablets even if merging them to larger tablets might cause a split")
+    @Parameter(names = {"-f", "--force"}, description = "merge small tablets even if merging them to larger tablets might cause a split")
     boolean force = false;
-    @Parameter(names={"-b", "--begin"}, description="start tablet", converter=TextConverter.class)
+    @Parameter(names = {"-b", "--begin"}, description = "start tablet", converter = TextConverter.class)
     Text begin = null;
-    @Parameter(names={"-e", "--end"}, description="end tablet", converter=TextConverter.class)
+    @Parameter(names = {"-e", "--end"}, description = "end tablet", converter = TextConverter.class)
     Text end = null;
   }
   
@@ -119,7 +120,7 @@ public class Merge {
   
   public void mergomatic(Connector conn, String table, Text start, Text end, long goalSize, boolean force) throws MergeException {
     try {
-      if (table.equals(Constants.METADATA_TABLE_NAME)) {
+      if (table.equals(MetadataTable.NAME)) {
         throw new IllegalArgumentException("cannot merge tablets on the metadata table");
       }
       List<Size> sizes = new ArrayList<Size>();
@@ -210,13 +211,13 @@ public class Merge {
     Scanner scanner;
     try {
       tableId = Tables.getTableId(conn.getInstance(), tablename);
-      scanner = conn.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS);
+      scanner = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
     } catch (Exception e) {
       throw new MergeException(e);
     }
     scanner.setRange(new KeyExtent(new Text(tableId), end, start).toMetadataRange());
-    scanner.fetchColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY);
-    Constants.METADATA_PREV_ROW_COLUMN.fetch(scanner);
+    scanner.fetchColumnFamily(MetadataTable.DATAFILE_COLUMN_FAMILY);
+    MetadataTable.PREV_ROW_COLUMN.fetch(scanner);
     final Iterator<Entry<Key,Value>> iterator = scanner.iterator();
     
     Iterator<Size> result = new Iterator<Size>() {
@@ -232,12 +233,12 @@ public class Merge {
         while (iterator.hasNext()) {
           Entry<Key,Value> entry = iterator.next();
           Key key = entry.getKey();
-          if (key.getColumnFamily().equals(Constants.METADATA_DATAFILE_COLUMN_FAMILY)) {
+          if (key.getColumnFamily().equals(MetadataTable.DATAFILE_COLUMN_FAMILY)) {
             String[] sizeEntries = new String(entry.getValue().get()).split(",");
             if (sizeEntries.length == 2) {
               tabletSize += Long.parseLong(sizeEntries[0]);
             }
-          } else if (Constants.METADATA_PREV_ROW_COLUMN.hasColumns(key)) {
+          } else if (MetadataTable.PREV_ROW_COLUMN.hasColumns(key)) {
             KeyExtent extent = new KeyExtent(key.getRow(), entry.getValue());
             return new Size(extent, tabletSize);
           }
