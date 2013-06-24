@@ -16,95 +16,35 @@
  */
 package org.apache.accumulo.server.conf;
 
-import org.apache.accumulo.core.Constants;
-import org.apache.accumulo.core.client.Instance;
-import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.log4j.Level;
+import org.apache.accumulo.fate.curator.CuratorUtil;
+import org.apache.curator.framework.CuratorFramework;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheListener;
 import org.apache.log4j.Logger;
-import org.apache.zookeeper.WatchedEvent;
-import org.apache.zookeeper.Watcher;
 
-class TableConfWatcher implements Watcher {
-  static {
-    Logger.getLogger("org.apache.zookeeper").setLevel(Level.WARN);
-    Logger.getLogger("org.apache.hadoop.io.compress").setLevel(Level.WARN);
-  }
-  
+class TableConfWatcher implements PathChildrenCacheListener {
   private static final Logger log = Logger.getLogger(TableConfWatcher.class);
-  private Instance instance = null;
-  
-  TableConfWatcher(Instance instance) {
-    this.instance = instance;
+  private TableConfiguration tableConfig;
+
+  TableConfWatcher(TableConfiguration tableConfiguration) {
+    tableConfig = tableConfiguration;
   }
   
   @Override
-  public void process(WatchedEvent event) {
-    String path = event.getPath();
+  public void childEvent(CuratorFramework client, PathChildrenCacheEvent event) throws Exception {
     if (log.isTraceEnabled())
-      log.trace("WatchEvent : " + path + " " + event.getState() + " " + event.getType());
-    
-    String tablesPrefix = ZooUtil.getRoot(instance) + Constants.ZTABLES + "/";
-    
-    String tableId = null;
-    String key = null;
-    
-    if (path != null) {
-      if (path.startsWith(tablesPrefix)) {
-        tableId = path.substring(tablesPrefix.length());
-        if (tableId.contains("/")) {
-          tableId = tableId.substring(0, tableId.indexOf('/'));
-          if (path.startsWith(tablesPrefix + tableId + Constants.ZTABLE_CONF + "/"))
-            key = path.substring((tablesPrefix + tableId + Constants.ZTABLE_CONF + "/").length());
-        }
-      }
-      
-      if (tableId == null) {
-        log.warn("Zookeeper told me about a path I was not watching " + path + " state=" + event.getState() + " type=" + event.getType());
-        return;
-      }
-    }
+      log.trace("WatchEvent : " + event.getData().getPath() + " " + event.getType());
+    String key = CuratorUtil.getNodeName(event.getData());
     
     switch (event.getType()) {
-      case NodeDataChanged:
-        if (log.isTraceEnabled())
-          log.trace("EventNodeDataChanged " + event.getPath());
-        if (key != null)
-          ServerConfiguration.getTableConfiguration(instance, tableId).propertyChanged(key);
-        break;
-      case NodeChildrenChanged:
-        ServerConfiguration.getTableConfiguration(instance, tableId).propertiesChanged(key);
-        break;
-      case NodeDeleted:
-        if (key == null) {
-          // only remove the AccumuloConfiguration object when a
-          // table node is deleted, not when a tables property is
-          // deleted.
-          ServerConfiguration.removeTableIdInstance(tableId);
-        }
-        break;
-      case None:
-        switch (event.getState()) {
-          case Expired:
-            ServerConfiguration.expireAllTableObservers();
-            break;
-          case SyncConnected:
-            break;
-          case Disconnected:
-            break;
-          default:
-            log.warn("EventNone event not handled path = " + event.getPath() + " state=" + event.getState());
-        }
-        break;
-      case NodeCreated:
-        switch (event.getState()) {
-          case SyncConnected:
-            break;
-          default:
-            log.warn("Event NodeCreated event not handled path = " + event.getPath() + " state=" + event.getState());
-        }
+      case INITIALIZED:
+      case CHILD_ADDED:
+      case CHILD_UPDATED:
+      case CHILD_REMOVED:
+        tableConfig.propertyChanged(key);
         break;
       default:
-        log.warn("Event not handled path = " + event.getPath() + " state=" + event.getState() + " type = " + event.getType());
+        log.debug("Unhandled state " + event.getType() + " encountered for table " + tableConfig.getTableId() + ". Ignoring.");
     }
   }
 }

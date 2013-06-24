@@ -29,8 +29,10 @@ import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.curator.framework.recipes.cache.NodeCache;
 import org.apache.curator.framework.recipes.cache.PathChildrenCache;
 import org.apache.curator.framework.recipes.cache.PathChildrenCache.StartMode;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent.Type;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheListener;
 import org.apache.log4j.Logger;
-import org.apache.zookeeper.Watcher;
 
 /**
  * Caches values stored in zookeeper and keeps them up to date as they change in zookeeper.
@@ -45,31 +47,40 @@ public class ZooCache {
   private CuratorFramework curator;
   
   public ZooCache(String zooKeepers, int sessionTimeout) {
-    this(zooKeepers, sessionTimeout, null);
+    this(CuratorUtil.constructCurator(zooKeepers, sessionTimeout, null));
   }
   
-  public ZooCache(String zooKeepers, int sessionTimeout, Watcher watcher) {
-    this(CuratorUtil.constructCurator(zooKeepers, sessionTimeout, null), watcher);
-  }
-  
-  public ZooCache(CuratorFramework curator, Watcher watcher) {
+  public ZooCache(CuratorFramework curator) {
     this.curator = curator;
     this.nodeCache = new HashMap<String,NodeCache>();
     this.childrenCache = new HashMap<String,PathChildrenCache>();
   }
   
   public synchronized List<ChildData> getChildren(final String zPath) {
+    return getChildren(zPath, null);
+  }
+  
+  public synchronized List<ChildData> getChildren(String zPath, PathChildrenCacheListener listener) {
     PathChildrenCache cache = childrenCache.get(zPath);
     if (cache == null) {
       cache = new PathChildrenCache(curator, zPath, true);
+      if (listener != null) {
+        cache.getListenable().addListener(listener);
+      }
       try {
         cache.start(StartMode.BUILD_INITIAL_CACHE);
+        // I'll do it myself!
+        if (listener != null)
+          for (ChildData cd : cache.getCurrentData()) {
+            listener.childEvent(curator, new PathChildrenCacheEvent(Type.INITIALIZED, cd));
+          }
         
-        // Because parent's children are being watched, we don't need a node watcher on the individual node
+        // Because parent's children are being watched, we don't need to cache the individual node
+        // UNLESS we have a listener on it
         for (ChildData child : cache.getCurrentData()) {
           NodeCache childCache = nodeCache.get(child.getPath());
-          if (childCache != null)
-          {
+          if (childCache != null && childCache.getListenable().size() == 0) {
+            log.debug("Removing cache " + childCache.getCurrentData().getPath() + " because parent cache was added");
             childCache.close();
             nodeCache.remove(child.getPath());
           }
@@ -85,6 +96,8 @@ public class ZooCache {
         return null;
       }
       childrenCache.put(zPath, cache);
+    } else if (listener != null) {
+      log.debug("LISTENER- cache is null for path " + zPath + ", but got listener " + listener.getClass() + ". this is a broken case!");
     }
     return cache.getCurrentData();
   }
@@ -166,6 +179,10 @@ public class ZooCache {
     
     nodeCache.clear();
     childrenCache.clear();
+  }
+  
+  public CuratorFramework getCurator() {
+    return curator;
   }
   
   public synchronized void clear(String zPath) {

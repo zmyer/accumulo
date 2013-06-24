@@ -20,9 +20,14 @@ import static org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy.SKIP;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 
 import org.apache.accumulo.core.Constants;
@@ -36,6 +41,7 @@ import org.apache.accumulo.core.tabletserver.thrift.TabletClientService;
 import org.apache.accumulo.core.util.ServerServices;
 import org.apache.accumulo.core.util.ThriftUtil;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.security.SecurityConstants;
 import org.apache.accumulo.server.util.AddressUtil;
@@ -45,18 +51,18 @@ import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.accumulo.server.zookeeper.ZooLock;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.accumulo.trace.instrument.Tracer;
+import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.cache.ChildData;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheListener;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Logger;
 import org.apache.thrift.TException;
 import org.apache.thrift.transport.TTransport;
-import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.NoNodeException;
 import org.apache.zookeeper.KeeperException.NotEmptyException;
-import org.apache.zookeeper.WatchedEvent;
-import org.apache.zookeeper.Watcher;
 
-public class LiveTServerSet implements Watcher {
+public class LiveTServerSet {
   
   public interface Listener {
     void update(LiveTServerSet current, Set<TServerInstance> deleted, Set<TServerInstance> added);
@@ -214,124 +220,133 @@ public class LiveTServerSet implements Watcher {
   
   public synchronized ZooCache getZooCache() {
     if (zooCache == null)
-      zooCache = new ZooCache(this);
+      zooCache = new ZooCache();
     return zooCache;
   }
   
   public synchronized void startListeningForTabletServerChanges() {
-    scanServers();
     SimpleTimer.getInstance().schedule(new Runnable() {
       @Override
       public void run() {
-        scanServers();
+        synchronized (locklessServers) {
+          if (!locklessServers.isEmpty()) {
+            List<String> toRemove = new ArrayList<String>();
+            for (Entry<String,Long> entry : locklessServers.entrySet()) {
+              if (System.currentTimeMillis() - entry.getValue() > 600000) {
+                deleteServerNode(entry.getKey());
+                toRemove.add(entry.getKey());
+              }
+            }
+            locklessServers.keySet().removeAll(toRemove);
+          }
+        }
       }
     }, 0, 5000);
+    
+    Collection<ChildData> result = getZooCache().getChildren(ZooUtil.getRoot(instance) + Constants.ZTSERVERS, serversListener);
+    log.debug("Attaching SERVERSLISTENER to " + (ZooUtil.getRoot(instance) + Constants.ZTSERVERS) + " - received " + result);
   }
   
-  public synchronized void scanServers() {
+  private void deleteServerNode(String server) {
     try {
-      final Set<TServerInstance> updates = new HashSet<TServerInstance>();
-      final Set<TServerInstance> doomed = new HashSet<TServerInstance>();
-      
-      final String path = ZooUtil.getRoot(instance) + Constants.ZTSERVERS;
-      
-      HashSet<String> all = new HashSet<String>(current.keySet());
-      all.addAll(getZooCache().getChildKeys(path));
-      
-      locklessServers.keySet().retainAll(all);
-      
-      for (String server : all) {
-        checkServer(updates, doomed, path, server);
-      }
-      
-      // log.debug("Current: " + current.keySet());
-      if (!doomed.isEmpty() || !updates.isEmpty())
-        this.cback.update(this, doomed, updates);
-    } catch (Exception ex) {
-      log.error(ex, ex);
-    }
-  }
-  
-  private void deleteServerNode(String serverNode) throws InterruptedException, KeeperException {
-    try {
-      ZooReaderWriter.getInstance().delete(serverNode, -1);
+      getZooCache().getCurator().delete().forPath(ZooUtil.getRoot(instance) + Constants.ZTSERVERS + '/' + server);
     } catch (NotEmptyException ex) {
       // race condition: tserver created the lock after our last check; we'll see it at the next check
     } catch (NoNodeException nne) {
       // someone else deleted it
+    } catch (Exception e) {
+      // Some other curator exception, we don't care that much here.
+      log.error(e,e);
     }
   }
   
-  private synchronized void checkServer(final Set<TServerInstance> updates, final Set<TServerInstance> doomed, final String path, final String server)
-      throws TException, InterruptedException, KeeperException {
-    
-    TServerInfo info = current.get(server);
-    
-    final String lockPath = path + "/" + server;
-    ChildData lockData = ZooLock.getLockData(getZooCache(), lockPath);
-    
-    if (lockData == null) {
-      if (info != null) {
-        doomed.add(info.instance);
-        current.remove(server);
-      }
-      
-      Long firstSeen = locklessServers.get(server);
-      if (firstSeen == null) {
-        locklessServers.put(server, System.currentTimeMillis());
-      } else if (System.currentTimeMillis() - firstSeen > 600000) {
-        deleteServerNode(path + "/" + server);
-        locklessServers.remove(server);
-      }
-    } else {
-      locklessServers.remove(server);
-      ServerServices services = new ServerServices(new String(lockData.getData()));
-      InetSocketAddress client = services.getAddress(ServerServices.Service.TSERV_CLIENT);
-      InetSocketAddress addr = AddressUtil.parseAddress(server);
-      TServerInstance instance = new TServerInstance(client, lockData.getStat().getEphemeralOwner());
-      
-      if (info == null) {
-        updates.add(instance);
-        current.put(server, new TServerInfo(instance, new TServerConnection(addr)));
-      } else if (!info.instance.equals(instance)) {
-        doomed.add(info.instance);
-        updates.add(instance);
-        current.put(server, new TServerInfo(instance, new TServerConnection(addr)));
-      }
-    }
-  }
+  private ServersDirectoryListener serversListener = new ServersDirectoryListener(this);
+  private TServerLockListener lockListener = new TServerLockListener(this);
   
-  @Override
-  public void process(WatchedEvent event) {
+  private class ServersDirectoryListener implements PathChildrenCacheListener {
+    LiveTServerSet liveTServerSet;
     
-    // its important that these event are propagated by ZooCache, because this ensures when reading zoocache that is has already processed the event and cleared
-    // relevant nodes before code below reads from zoocache
+    public ServersDirectoryListener(LiveTServerSet liveTServerSet) {
+      this.liveTServerSet = liveTServerSet;
+    }
     
-    if (event.getPath() != null) {
-      if (event.getPath().endsWith(Constants.ZTSERVERS)) {
-        scanServers();
-      } else if (event.getPath().contains(Constants.ZTSERVERS)) {
-        int pos = event.getPath().lastIndexOf('/');
-        
-        // do only if ZTSERVER is parent
-        if (pos >= 0 && event.getPath().substring(0, pos).endsWith(Constants.ZTSERVERS)) {
-          
-          String server = event.getPath().substring(pos + 1);
-          
-          final Set<TServerInstance> updates = new HashSet<TServerInstance>();
-          final Set<TServerInstance> doomed = new HashSet<TServerInstance>();
-          
-          final String path = ZooUtil.getRoot(instance) + Constants.ZTSERVERS;
-          
-          try {
-            checkServer(updates, doomed, path, server);
-            if (!doomed.isEmpty() || !updates.isEmpty())
-              this.cback.update(this, doomed, updates);
-          } catch (Exception ex) {
-            log.error(ex, ex);
+    @Override
+    public void childEvent(CuratorFramework curator, PathChildrenCacheEvent event) throws Exception {
+      final Set<TServerInstance> doomed = new HashSet<TServerInstance>();
+      log.debug("SERVERSLISTENER - Received event " + event.getType() + " for node " + event.getData().getPath());
+
+      String server = CuratorUtil.getNodeName(event.getData());
+      TServerInfo info = current.get(server);
+      
+      switch (event.getType()) {
+        case INITIALIZED:
+        case CHILD_ADDED:
+        case CHILD_UPDATED:
+          getZooCache().getChildren(event.getData().getPath(), lockListener);
+          break;
+        case CHILD_REMOVED:
+          getZooCache().clear(event.getData().getPath());
+          if (info != null) {
+            doomed.add(info.instance);
+            current.remove(server);
           }
-        }
+          break;
+        default:
+          log.debug("Unhandled state " + event.getType() + " encountered for tserver manager. Ignoring.");
       }
+      if (!doomed.isEmpty())
+        liveTServerSet.cback.update(liveTServerSet, doomed, Collections.<TServerInstance> emptySet());
+    }
+  }
+  
+  private class TServerLockListener implements PathChildrenCacheListener {
+    LiveTServerSet liveTServerSet;
+    
+    public TServerLockListener(LiveTServerSet liveTServerSet) {
+      this.liveTServerSet = liveTServerSet;
+    }
+    
+    @Override
+    public void childEvent(CuratorFramework curator, PathChildrenCacheEvent event) throws Exception {
+      final Set<TServerInstance> updates = new HashSet<TServerInstance>();
+      final Set<TServerInstance> doomed = new HashSet<TServerInstance>();
+      log.debug("LOCKLISTENER - Received event " + event.getType() + " for node " + event.getData().getPath());
+
+      String server = CuratorUtil.getNodeName(CuratorUtil.getNodeParent(event.getData()));
+      TServerInfo info = current.get(server);
+      
+      switch (event.getType()) {
+        case INITIALIZED:
+        case CHILD_ADDED:
+        case CHILD_UPDATED:
+          synchronized (locklessServers) {
+            locklessServers.remove(server);
+          }
+          ServerServices services = new ServerServices(new String(event.getData().getData()));
+          InetSocketAddress client = services.getAddress(ServerServices.Service.TSERV_CLIENT);
+          InetSocketAddress addr = AddressUtil.parseAddress(server);
+          TServerInstance instance = new TServerInstance(client, event.getData().getStat().getEphemeralOwner());
+          
+          if (info == null) {
+            updates.add(instance);
+            current.put(server, new TServerInfo(instance, new TServerConnection(addr)));
+          } else if (!info.instance.equals(instance)) {
+            doomed.add(info.instance);
+            updates.add(instance);
+            current.put(server, new TServerInfo(instance, new TServerConnection(addr)));
+          }
+          break;
+        case CHILD_REMOVED:
+          synchronized (locklessServers) {
+            locklessServers.put(server, System.currentTimeMillis());
+          }
+          break;
+        default:
+          log.debug("Unhandled state " + event.getType() + " encountered for tserver lock manager. Ignoring.");
+      }
+
+      if (!doomed.isEmpty() || !updates.isEmpty())
+        liveTServerSet.cback.update(liveTServerSet, doomed, updates);
     }
   }
   
@@ -354,6 +369,7 @@ public class LiveTServerSet implements Watcher {
     for (TServerInfo c : current.values()) {
       result.add(c.instance);
     }
+    log.debug("Returning " + result + " for current tservers");
     return result;
   }
   

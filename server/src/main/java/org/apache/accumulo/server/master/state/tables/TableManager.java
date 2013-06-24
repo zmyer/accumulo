@@ -37,12 +37,13 @@ import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.util.TablePropUtil;
 import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.cache.ChildData;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent.Type;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheListener;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
-import org.apache.zookeeper.WatchedEvent;
-import org.apache.zookeeper.Watcher;
-import org.apache.zookeeper.Watcher.Event.EventType;
 
 public class TableManager {
   private static SecurityPermission TABLE_MANAGER_PERMISSION = new SecurityPermission("tableManagerPermission");
@@ -82,7 +83,8 @@ public class TableManager {
   
   private TableManager() {
     instance = HdfsZooInstance.getInstance();
-    zooStateCache = new ZooCache(new TableStateWatcher());
+    zooStateCache = new ZooCache();
+    setupListeners();
     updateTableStateCache();
   }
   
@@ -159,10 +161,11 @@ public class TableManager {
     }
   }
   
-  public TableState updateTableStateCache(String tableId) {
+  // tableId argument for better debug statements
+  private TableState updateTableStateCache(ChildData node, String tableId) {
     synchronized (tableStateCache) {
       TableState tState = TableState.UNKNOWN;
-      byte[] data = zooStateCache.get(ZooUtil.getRoot(instance) + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_STATE).getData();
+      byte[] data = node.getData();
       if (data != null) {
         String sState = new String(data);
         try {
@@ -175,6 +178,10 @@ public class TableManager {
       }
       return tState;
     }
+  }
+  
+  public TableState updateTableStateCache(String tableId) {
+    return updateTableStateCache(zooStateCache.get(ZooUtil.getRoot(instance) + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_STATE), tableId);
   }
   
   public void addTable(String tableId, String tableName, NodeExistsPolicy existsPolicy) throws KeeperException, InterruptedException {
@@ -221,74 +228,46 @@ public class TableManager {
     return observers.remove(to);
   }
   
-  private class TableStateWatcher implements Watcher {
+  // Sets up cache listeners for the zookeeper cache
+  private void setupListeners() {
+    zooStateCache.getChildren(ZooUtil.getRoot(instance) + Constants.ZTABLES, new AllTablesListener());
+  }
+  
+  // This just manages the listeners for each table. Let the table listener do the heavy lifting
+  private class AllTablesListener implements PathChildrenCacheListener {
     @Override
-    public void process(WatchedEvent event) {
-      if (log.isTraceEnabled())
-        log.trace(event);
-      
-      final String zPath = event.getPath();
-      final EventType zType = event.getType();
-      
-      String tablesPrefix = ZooUtil.getRoot(instance) + Constants.ZTABLES;
-      String tableId = null;
-      
-      if (zPath != null && zPath.startsWith(tablesPrefix + "/")) {
-        String suffix = zPath.substring(tablesPrefix.length() + 1);
-        if (suffix.contains("/")) {
-          String[] sa = suffix.split("/", 2);
-          if (Constants.ZTABLE_STATE.equals("/" + sa[1]))
-            tableId = sa[0];
-        }
-        if (tableId == null) {
-          log.warn("Unknown path in " + event);
-          return;
-        }
+    public void childEvent(CuratorFramework client, PathChildrenCacheEvent event) throws Exception {
+      if (event.getType().equals(Type.CHILD_ADDED)) {
+        zooStateCache.getChildren(event.getData().getPath(), new TableListener());
+      } else if (event.getType().equals(Type.CHILD_REMOVED)) {
+        zooStateCache.clear(event.getData().getPath());
       }
-      
-      switch (zType) {
-        case NodeChildrenChanged:
-          if (zPath != null && zPath.equals(tablesPrefix)) {
-            updateTableStateCache();
-          } else {
-            log.warn("Unexpected path " + zPath);
-          }
-          break;
-        case NodeCreated:
-        case NodeDataChanged:
-          // state transition
-          TableState tState = updateTableStateCache(tableId);
-          log.debug("State transition to " + tState + " @ " + event);
-          synchronized (observers) {
-            for (TableObserver to : observers)
-              to.stateChanged(tableId, tState);
-          }
-          break;
-        case NodeDeleted:
-          if (zPath != null
-              && tableId != null
-              && (zPath.equals(tablesPrefix + "/" + tableId + Constants.ZTABLE_STATE) || zPath.equals(tablesPrefix + "/" + tableId + Constants.ZTABLE_CONF) || zPath
-                  .equals(tablesPrefix + "/" + tableId + Constants.ZTABLE_NAME)))
+    }
+  }
+  
+  private class TableListener implements PathChildrenCacheListener {
+    @Override
+    public void childEvent(CuratorFramework client, PathChildrenCacheEvent event) throws Exception {
+      if (event.getData().getPath().endsWith(Constants.ZTABLE_STATE)) {
+        String tableId = CuratorUtil.getNodeName(CuratorUtil.getNodeParent(event.getData().getPath()));
+        String msg = null;
+        switch (event.getType()) {
+          case CHILD_ADDED:
+          case INITIALIZED:
+            msg = "Initializing ";
+          case CHILD_UPDATED:
+            if (msg == null)
+              msg = "Updating ";
+            TableState state = updateTableStateCache(event.getData(), tableId);
+            log.debug(msg + tableId + " to state " + state);
+            break;
+          case CHILD_REMOVED:
             tableStateCache.remove(tableId);
-          break;
-        case None:
-          switch (event.getState()) {
-            case Expired:
-              if (log.isTraceEnabled())
-                log.trace("Session expired " + event);
-              synchronized (observers) {
-                for (TableObserver to : observers)
-                  to.sessionExpired();
-              }
-              break;
-            case SyncConnected:
-            default:
-              if (log.isTraceEnabled())
-                log.trace("Ignored " + event);
-          }
-          break;
-        default:
-          log.warn("Unandled " + event);
+            log.debug("Table " + tableId + " removed.");
+            break;
+          default:
+            log.debug("Unhandled state " + event.getType() + " encountered for table " + tableId + ". Ignoring.");
+        }
       }
     }
   }

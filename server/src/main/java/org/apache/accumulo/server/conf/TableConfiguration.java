@@ -26,14 +26,13 @@ import java.util.Set;
 import java.util.TreeMap;
 
 import org.apache.accumulo.core.Constants;
-import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigurationObserver;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.curator.CuratorUtil;
-import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 
@@ -53,20 +52,14 @@ public class TableConfiguration extends AccumuloConfiguration {
     this.parent = parent;
     
     this.observers = Collections.synchronizedSet(new HashSet<ConfigurationObserver>());
-  }
-  
-  /**
-   * @deprecated not for client use
-   */
-  @Deprecated
-  private static ZooCache getTablePropCache() {
-    Instance inst = HdfsZooInstance.getInstance();
+    
     if (tablePropCache == null)
       synchronized (TableConfiguration.class) {
         if (tablePropCache == null)
-          tablePropCache = new ZooCache(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut(), new TableConfWatcher(inst));
+          tablePropCache = new ZooCache(HdfsZooInstance.getInstance().getConfiguration());
       }
-    return tablePropCache;
+    String confPath = ZooUtil.getRoot(instanceId) + Constants.ZTABLES + '/' + table + Constants.ZTABLE_CONF;
+    tablePropCache.getChildren(confPath, new TableConfWatcher(this));
   }
   
   public void addObserver(ConfigurationObserver co) {
@@ -100,7 +93,7 @@ public class TableConfiguration extends AccumuloConfiguration {
       co.propertyChanged(key);
   }
   
-  public void propertiesChanged(String key) {
+  public void propertiesChanged() {
     Collection<ConfigurationObserver> copy = Collections.unmodifiableCollection(observers);
     for (ConfigurationObserver co : copy)
       co.propertiesChanged();
@@ -120,7 +113,7 @@ public class TableConfiguration extends AccumuloConfiguration {
   
   private String get(String key) {
     String zPath = ZooUtil.getRoot(instanceId) + Constants.ZTABLES + "/" + table + Constants.ZTABLE_CONF + "/" + key;
-    ChildData v = getTablePropCache().get(zPath);
+    ChildData v = tablePropCache.get(zPath);
     String value = null;
     if (v != null)
       value = new String(v.getData());
@@ -135,7 +128,7 @@ public class TableConfiguration extends AccumuloConfiguration {
       entries.put(parentEntry.getKey(), parentEntry.getValue());
     
     String path = ZooUtil.getRoot(instanceId) + Constants.ZTABLES + "/" + table + Constants.ZTABLE_CONF;
-    List<ChildData> children = getTablePropCache().getChildren(path);
+    List<ChildData> children = tablePropCache.getChildren(path);
     if (children != null) {
       for (ChildData child : children) {
         entries.put(CuratorUtil.getNodeName(child), new String(child.getData()));
