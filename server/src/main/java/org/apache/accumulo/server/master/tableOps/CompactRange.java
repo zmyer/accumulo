@@ -45,14 +45,13 @@ import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.util.MetadataTable;
 import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.fate.Repo;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooReaderWriter.Mutator;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.Mutator;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.master.LiveTServerSet.TServerConnection;
 import org.apache.accumulo.server.master.Master;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.util.MapCounter;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.commons.codec.binary.Hex;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
@@ -84,7 +83,7 @@ class CompactionDriver extends MasterRepo {
     String zCancelID = Constants.ZROOT + "/" + HdfsZooInstance.getInstance().getInstanceID() + Constants.ZTABLES + "/" + tableId
         + Constants.ZTABLE_COMPACT_CANCEL_ID;
     
-    IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     
     if (Long.parseLong(new String(zoo.getData(zCancelID, null))) >= compactId) {
       // compaction was canceled
@@ -303,10 +302,10 @@ public class CompactRange extends MasterRepo {
   public Repo<Master> call(final long tid, Master environment) throws Exception {
     String zTablePath = Constants.ZROOT + "/" + HdfsZooInstance.getInstance().getInstanceID() + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_COMPACT_ID;
     
-    IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     byte[] cid;
     try {
-      cid = zoo.mutate(zTablePath, null, null, new Mutator() {
+      cid = zoo.mutate(zTablePath, null, false, new Mutator() {
         @Override
         public byte[] mutate(byte[] currentValue) throws Exception {
           String cvs = new String(currentValue);
@@ -348,9 +347,9 @@ public class CompactRange extends MasterRepo {
   static void removeIterators(final long txid, String tableId) throws Exception {
     String zTablePath = Constants.ZROOT + "/" + HdfsZooInstance.getInstance().getInstanceID() + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_COMPACT_ID;
     
-    IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     
-    zoo.mutate(zTablePath, null, null, new Mutator() {
+    zoo.mutate(zTablePath, null, false, new Mutator() {
       @Override
       public byte[] mutate(byte[] currentValue) throws Exception {
         String cvs = new String(currentValue);

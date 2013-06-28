@@ -23,7 +23,7 @@ import java.util.Map;
 import java.util.Random;
 
 import org.apache.accumulo.trace.instrument.receivers.SendSpansViaThrift;
-import org.apache.accumulo.fate.zookeeper.ZooReader;
+import org.apache.accumulo.fate.curator.CuratorReader;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
@@ -38,12 +38,12 @@ public class ZooTraceClient extends SendSpansViaThrift implements Watcher {
   
   private static final Logger log = Logger.getLogger(ZooTraceClient.class);
   
-  final ZooReader zoo;
+  final CuratorReader zoo;
   final String path;
   final Random random = new Random();
   final List<String> hosts = new ArrayList<String>();
   
-  public ZooTraceClient(ZooReader zoo, String path, String host, String service, long millis) throws IOException, KeeperException, InterruptedException {
+  public ZooTraceClient(CuratorReader zoo, String path, String host, String service, long millis) throws IOException, KeeperException, InterruptedException {
     super(host, service, millis);
     this.path = path;
     this.zoo = zoo;

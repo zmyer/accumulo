@@ -32,6 +32,7 @@ import org.apache.accumulo.core.util.ColumnFQ;
 import org.apache.accumulo.core.util.MetadataTable;
 import org.apache.accumulo.core.util.MetadataTable.DataFileValue;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.accumulo.fate.zookeeper.TransactionWatcher.Arbitrator;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.zookeeper.TransactionWatcher.ZooArbitrator;
@@ -247,7 +248,7 @@ public class MetadataConstraints implements Constraint {
           String lockId = new String(columnUpdate.getValue());
           
           try {
-            lockHeld = ZooLock.isLockHeld(zooCache, new ZooUtil.LockID(zooRoot, lockId));
+            lockHeld = ZooLock.isLockHeld(zooCache, new CuratorUtil.LockID(zooRoot, lockId));
           } catch (Exception e) {
             log.debug("Failed to verify lock was held " + lockId + " " + e.getMessage());
           }

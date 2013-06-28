@@ -30,8 +30,8 @@ import org.apache.accumulo.core.client.ZooKeeperInstance;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorCaches;
 import org.apache.accumulo.fate.curator.CuratorUtil;
-import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.client.HdfsZooInstance.AccumuloNotInitializedException;
 import org.apache.curator.framework.recipes.cache.ChildData;
@@ -43,7 +43,7 @@ public class ZooConfiguration extends AccumuloConfiguration {
   private final AccumuloConfiguration parent;
   private static ZooConfiguration instance = null;
   private static String instanceId = null;
-  private static ZooCache propCache = null;
+  private static CuratorCaches propCache = null;
   private final Map<String,String> fixedProps = Collections.synchronizedMap(new HashMap<String,String>());
   
   private ZooConfiguration(AccumuloConfiguration parent) {
@@ -52,7 +52,7 @@ public class ZooConfiguration extends AccumuloConfiguration {
   
   synchronized public static ZooConfiguration getInstance(Instance inst, AccumuloConfiguration parent) {
     if (instance == null) {
-      propCache = new ZooCache(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut());
+      propCache = new CuratorCaches(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut());
       instance = new ZooConfiguration(parent);
       instanceId = inst.getInstanceID();
       // Sets up a child cache listener for all properties
@@ -63,7 +63,7 @@ public class ZooConfiguration extends AccumuloConfiguration {
   
   synchronized public static ZooConfiguration getInstance(AccumuloConfiguration parent) {
     if (instance == null) {
-      propCache = new ZooCache(parent.get(Property.INSTANCE_ZK_HOST), (int) parent.getTimeInMillis(Property.INSTANCE_ZK_TIMEOUT));
+      propCache = new CuratorCaches(parent.get(Property.INSTANCE_ZK_HOST), (int) parent.getTimeInMillis(Property.INSTANCE_ZK_TIMEOUT));
       instance = new ZooConfiguration(parent);
       @SuppressWarnings("deprecation")
       String deprecatedInstanceIdFromHdfs = ZooKeeperInstance.getInstanceIDFromHdfs(ServerConstants.getInstanceIdLocation());

@@ -16,19 +16,20 @@
  */
 package org.apache.accumulo.server.zookeeper;
 
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.zookeeper.KeeperException;
 
 public class ZooLock extends org.apache.accumulo.fate.zookeeper.ZooLock {
   
   public ZooLock(String path) {
-    super(new ZooCache(), ZooReaderWriter.getInstance(), path);
+    super(new ZooCache(), CuratorReaderWriter.getInstance(), path);
   }
   
   public static void deleteLock(String path) throws InterruptedException, KeeperException {
-    deleteLock(ZooReaderWriter.getInstance(), path);
+    deleteLock(CuratorReaderWriter.getInstance(), path);
   }
   
   public static boolean deleteLock(String path, String lockData) throws InterruptedException, KeeperException {
-    return deleteLock(ZooReaderWriter.getInstance(), path, lockData);
+    return deleteLock(CuratorReaderWriter.getInstance(), path, lockData);
   }
 }

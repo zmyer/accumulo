@@ -27,13 +27,12 @@ import org.apache.accumulo.core.client.impl.thrift.TableOperation;
 import org.apache.accumulo.core.client.impl.thrift.TableOperationExceptionType;
 import org.apache.accumulo.core.client.impl.thrift.ThriftTableOperationException;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.Mutator;
 import org.apache.accumulo.fate.zookeeper.DistributedReadWriteLock;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooReaderWriter.Mutator;
 import org.apache.accumulo.fate.zookeeper.ZooReservation;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.zookeeper.ZooQueueLock;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
@@ -52,9 +51,9 @@ public class Utils {
     
     String tableId = null;
     try {
-      IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+      CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
       final String ntp = ZooUtil.getRoot(instance) + Constants.ZTABLES;
-      byte[] nid = zoo.mutate(ntp, "0".getBytes(), ZooUtil.PUBLIC, new Mutator() {
+      byte[] nid = zoo.mutate(ntp, "0".getBytes(), false, new Mutator() {
         @Override
         public byte[] mutate(byte[] currentValue) throws Exception {
           BigInteger nextId = new BigInteger(new String(currentValue), Character.MAX_RADIX);
@@ -77,7 +76,7 @@ public class Utils {
     if (getLock(tableId, tid, writeLock).tryLock()) {
       if (tableMustExist) {
         Instance instance = HdfsZooInstance.getInstance();
-        IZooReaderWriter zk = ZooReaderWriter.getRetryingInstance();
+        CuratorReaderWriter zk = CuratorReaderWriter.getInstance();
         if (!zk.exists(ZooUtil.getRoot(instance) + Constants.ZTABLES + "/" + tableId))
           throw new ThriftTableOperationException(tableId, "", op, TableOperationExceptionType.NOTFOUND, "Table does not exists");
       }
@@ -97,7 +96,7 @@ public class Utils {
     
     String resvPath = ZooUtil.getRoot(instance) + Constants.ZHDFS_RESERVATIONS + "/" + new String(Base64.encodeBase64(directory.getBytes()));
     
-    IZooReaderWriter zk = ZooReaderWriter.getRetryingInstance();
+    CuratorReaderWriter zk = CuratorReaderWriter.getInstance();
     
     if (ZooReservation.attempt(zk, resvPath, String.format("%016x", tid), "")) {
       return 0;
@@ -108,7 +107,7 @@ public class Utils {
   public static void unreserveHdfsDirectory(String directory, long tid) throws KeeperException, InterruptedException {
     Instance instance = HdfsZooInstance.getInstance();
     String resvPath = ZooUtil.getRoot(instance) + Constants.ZHDFS_RESERVATIONS + "/" + new String(Base64.encodeBase64(directory.getBytes()));
-    ZooReservation.release(ZooReaderWriter.getRetryingInstance(), resvPath, String.format("%016x", tid));
+    ZooReservation.release(CuratorReaderWriter.getInstance(), resvPath, String.format("%016x", tid));
   }
   
   private static Lock getLock(String tableId, long tid, boolean writeLock) throws Exception {

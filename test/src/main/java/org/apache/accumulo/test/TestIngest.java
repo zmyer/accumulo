@@ -43,7 +43,7 @@ import org.apache.accumulo.core.security.ColumnVisibility;
 import org.apache.accumulo.core.trace.DistributedTrace;
 import org.apache.accumulo.core.util.CachedConfiguration;
 import org.apache.accumulo.core.util.FastFormat;
-import org.apache.accumulo.fate.zookeeper.ZooReader;
+import org.apache.accumulo.fate.curator.CuratorReader;
 import org.apache.accumulo.server.cli.ClientOnDefaultTable;
 import org.apache.accumulo.server.conf.ServerConfiguration;
 import org.apache.accumulo.trace.instrument.Trace;
@@ -184,7 +184,7 @@ public class TestIngest {
     Instance instance = opts.getInstance();
     
     String name = TestIngest.class.getSimpleName();
-    DistributedTrace.enable(instance, new ZooReader(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut()), name, null);
+    DistributedTrace.enable(instance, new CuratorReader(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut()), name, null);
     
     try {
       opts.startTracing(name);

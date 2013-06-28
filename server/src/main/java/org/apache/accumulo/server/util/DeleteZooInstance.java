@@ -21,9 +21,7 @@ import java.util.Set;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.cli.Help;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.zookeeper.KeeperException;
 
 import com.beust.jcommander.Parameter;
@@ -35,10 +33,10 @@ public class DeleteZooInstance {
     String instance;
   }
   
-  static void deleteRetry(IZooReaderWriter zk, String path) throws Exception {
+  static void deleteRetry(CuratorReaderWriter zk, String path) throws Exception {
     for (int i = 0; i < 10; i++){
       try {
-        zk.recursiveDelete(path, NodeMissingPolicy.SKIP);
+        zk.recursiveDelete(path);
         return;
       } catch (KeeperException.NotEmptyException ex) {
         // ignored
@@ -56,7 +54,7 @@ public class DeleteZooInstance {
     Opts opts = new Opts();
     opts.parseArgs(DeleteZooInstance.class.getName(), args);
     
-    IZooReaderWriter zk = ZooReaderWriter.getInstance();
+    CuratorReaderWriter zk = CuratorReaderWriter.getInstance();
     // try instance name:
     Set<String> instances = new HashSet<String>(zk.getChildren(Constants.ZROOT + Constants.ZINSTANCES));
     Set<String> uuids = new HashSet<String>(zk.getChildren(Constants.ZROOT));

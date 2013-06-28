@@ -21,15 +21,14 @@ import org.apache.accumulo.core.master.thrift.TabletServerStatus;
 import org.apache.accumulo.core.util.AddressUtil;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.Repo;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.master.EventCoordinator.Listener;
 import org.apache.accumulo.server.master.LiveTServerSet.TServerConnection;
 import org.apache.accumulo.server.master.Master;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.master.tableOps.MasterRepo;
 import org.apache.accumulo.server.zookeeper.ZooLock;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.log4j.Logger;
 import org.apache.thrift.transport.TTransportException;
 
@@ -58,7 +57,7 @@ public class ShutdownTServer extends MasterRepo {
       String path = ZooUtil.getRoot(master.getInstance()) + Constants.ZTSERVERS + "/" + tserver;
       ZooLock.deleteLock(path);
       path = ZooUtil.getRoot(master.getInstance()) + Constants.ZDEADTSERVERS + "/" + tserver;
-      IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+      CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
       zoo.putPersistentData(path, "forced down".getBytes(), NodeExistsPolicy.OVERWRITE);
       return null;
     }

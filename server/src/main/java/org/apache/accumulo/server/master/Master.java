@@ -80,15 +80,14 @@ import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.AgeOffStore;
 import org.apache.accumulo.fate.Fate;
 import org.apache.accumulo.fate.TStore.TStatus;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.Mutator;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.fate.zookeeper.ZooLock.LockLossReason;
-import org.apache.accumulo.fate.zookeeper.ZooReaderWriter.Mutator;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
 import org.apache.accumulo.server.Accumulo;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.accumulo.server.master.LiveTServerSet.TServerConnection;
@@ -138,7 +137,6 @@ import org.apache.accumulo.server.util.TablePropUtil;
 import org.apache.accumulo.server.util.TabletIterator.TabletDeletedException;
 import org.apache.accumulo.server.util.time.SimpleTimer;
 import org.apache.accumulo.server.zookeeper.ZooLock;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.accumulo.start.classloader.vfs.AccumuloVFSClassLoader;
 import org.apache.accumulo.trace.instrument.thrift.TraceWrap;
 import org.apache.accumulo.trace.thrift.TInfo;
@@ -258,10 +256,10 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
       try {
         log.info("Upgrading zookeeper");
         
-        IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+        CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
         
-        zoo.recursiveDelete(ZooUtil.getRoot(instance) + "/loggers", NodeMissingPolicy.SKIP);
-        zoo.recursiveDelete(ZooUtil.getRoot(instance) + "/dead/loggers", NodeMissingPolicy.SKIP);
+        zoo.recursiveDelete(ZooUtil.getRoot(instance) + "/loggers");
+        zoo.recursiveDelete(ZooUtil.getRoot(instance) + "/dead/loggers");
         
         zoo.putPersistentData(ZooUtil.getRoot(instance) + Constants.ZRECOVERY, new byte[] {'0'}, NodeExistsPolicy.SKIP);
         
@@ -474,10 +472,10 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
       String zTablePath = Constants.ZROOT + "/" + getConfiguration().getInstance().getInstanceID() + Constants.ZTABLES + "/" + tableId
           + Constants.ZTABLE_FLUSH_ID;
       
-      IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+      CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
       byte fid[];
       try {
-        fid = zoo.mutate(zTablePath, null, null, new Mutator() {
+        fid = zoo.mutate(zTablePath, null, false, new Mutator() {
           @Override
           public byte[] mutate(byte[] currentValue) throws Exception {
             long flushID = Long.parseLong(new String(currentValue));
@@ -1036,9 +1034,9 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
     synchronized (mergeLock) {
       try {
         String path = ZooUtil.getRoot(instance.getInstanceID()) + Constants.ZTABLES + "/" + tableId.toString() + "/merge";
-        if (!ZooReaderWriter.getInstance().exists(path))
+        if (!CuratorReaderWriter.getInstance().exists(path))
           return new MergeInfo();
-        byte[] data = ZooReaderWriter.getInstance().getData(path, new Stat());
+        byte[] data = CuratorReaderWriter.getInstance().getData(path, new Stat());
         DataInputBuffer in = new DataInputBuffer();
         in.reset(data, data.length);
         MergeInfo info = new MergeInfo();
@@ -1059,7 +1057,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
       String path = ZooUtil.getRoot(instance.getInstanceID()) + Constants.ZTABLES + "/" + info.getExtent().getTableId().toString() + "/merge";
       info.setState(state);
       if (state.equals(MergeState.NONE)) {
-        ZooReaderWriter.getInstance().recursiveDelete(path, NodeMissingPolicy.SKIP);
+        CuratorReaderWriter.getInstance().recursiveDelete(path);
       } else {
         DataOutputBuffer out = new DataOutputBuffer();
         try {
@@ -1067,8 +1065,8 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
         } catch (IOException ex) {
           throw new RuntimeException("Unlikely", ex);
         }
-        ZooReaderWriter.getInstance().putPersistentData(path, out.getData(),
-            state.equals(MergeState.STARTED) ? ZooUtil.NodeExistsPolicy.FAIL : ZooUtil.NodeExistsPolicy.OVERWRITE);
+        CuratorReaderWriter.getInstance().putPersistentData(path, out.getData(),
+            state.equals(MergeState.STARTED) ? CuratorReaderWriter.NodeExistsPolicy.FAIL : CuratorReaderWriter.NodeExistsPolicy.OVERWRITE);
       }
       mergeLock.notifyAll();
     }
@@ -1078,7 +1076,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   public void clearMergeState(Text tableId) throws IOException, KeeperException, InterruptedException {
     synchronized (mergeLock) {
       String path = ZooUtil.getRoot(instance.getInstanceID()) + Constants.ZTABLES + "/" + tableId.toString() + "/merge";
-      ZooReaderWriter.getInstance().recursiveDelete(path, NodeMissingPolicy.SKIP);
+      CuratorReaderWriter.getInstance().recursiveDelete(path);
       mergeLock.notifyAll();
     }
     nextEvent.event("Merge state of %s cleared", tableId);
@@ -1086,7 +1084,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   
   private void setMasterGoalState(MasterGoalState state) {
     try {
-      ZooReaderWriter.getInstance().putPersistentData(ZooUtil.getRoot(instance) + Constants.ZMASTER_GOAL_STATE, state.name().getBytes(),
+      CuratorReaderWriter.getInstance().putPersistentData(ZooUtil.getRoot(instance) + Constants.ZMASTER_GOAL_STATE, state.name().getBytes(),
           NodeExistsPolicy.OVERWRITE);
     } catch (Exception ex) {
       log.error("Unable to set master goal state in zookeeper");
@@ -1096,7 +1094,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   MasterGoalState getMasterGoalState() {
     while (true)
       try {
-        byte[] data = ZooReaderWriter.getInstance().getData(ZooUtil.getRoot(instance) + Constants.ZMASTER_GOAL_STATE, null);
+        byte[] data = CuratorReaderWriter.getInstance().getData(ZooUtil.getRoot(instance) + Constants.ZMASTER_GOAL_STATE, null);
         return MasterGoalState.valueOf(new String(data));
       } catch (Exception e) {
         log.error("Problem getting real goal state: " + e);
@@ -1473,7 +1471,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
     // TODO: add shutdown for fate object - ACCUMULO-1307
     try {
       final AgeOffStore<Master> store = new AgeOffStore<Master>(new org.apache.accumulo.fate.ZooStore<Master>(ZooUtil.getRoot(instance) + Constants.ZFATE,
-          ZooReaderWriter.getRetryingInstance()), 1000 * 60 * 60 * 8);
+          CuratorReaderWriter.getInstance()), 1000 * 60 * 60 * 8);
       
       int threads = this.getConfiguration().getConfiguration().getCount(Property.MASTER_FATE_THREADPOOL_SIZE);
       
@@ -1492,13 +1490,13 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
       throw new IOException(e);
     }
     
-    ZooReaderWriter.getInstance().getChildren(zroot + Constants.ZRECOVERY, new Watcher() {
+    CuratorReaderWriter.getInstance().getChildren(zroot + Constants.ZRECOVERY, new Watcher() {
       @Override
       public void process(WatchedEvent event) {
         nextEvent.event("Noticed recovery changes", event.getType());
         try {
           // watcher only fires once, add it back
-          ZooReaderWriter.getInstance().getChildren(zroot + Constants.ZRECOVERY, this);
+          CuratorReaderWriter.getInstance().getChildren(zroot + Constants.ZRECOVERY, this);
         } catch (Exception e) {
           log.error("Failed to add log recovery watcher back", e);
         }

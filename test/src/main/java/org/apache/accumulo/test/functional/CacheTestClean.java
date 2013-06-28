@@ -19,9 +19,7 @@ package org.apache.accumulo.test.functional;
 import java.io.File;
 import java.util.Arrays;
 
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 
 public class CacheTestClean {
   
@@ -32,10 +30,10 @@ public class CacheTestClean {
     String rootDir = args[0];
     File reportDir = new File(args[1]);
     
-    IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     
     if (zoo.exists(rootDir)) {
-      zoo.recursiveDelete(rootDir, NodeMissingPolicy.FAIL);
+      zoo.recursiveDelete(rootDir);
     }
     
     if (!reportDir.exists()) {

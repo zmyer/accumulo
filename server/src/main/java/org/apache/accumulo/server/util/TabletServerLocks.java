@@ -21,10 +21,9 @@ import java.util.List;
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.cli.Help;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.zookeeper.ZooLock;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 
 import com.beust.jcommander.Parameter;
 
@@ -36,9 +35,7 @@ public class TabletServerLocks {
     @Parameter(names="-delete")
     String delete = null;
   }
-  /**
-   * @param args
-   */
+
   public static void main(String[] args) throws Exception {
     
     String tserverPath = ZooUtil.getRoot(HdfsZooInstance.getInstance()) + Constants.ZTSERVERS;
@@ -46,7 +43,7 @@ public class TabletServerLocks {
     opts.parseArgs(TabletServerLocks.class.getName(), args);
     
     if (opts.list) {
-      IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+      CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
       
       List<String> tabletServers = zoo.getChildren(tserverPath);
       

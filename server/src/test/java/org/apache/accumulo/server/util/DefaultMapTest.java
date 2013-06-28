@@ -16,11 +16,11 @@
  */
 package org.apache.accumulo.server.util;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.apache.accumulo.server.util.DefaultMap;
 import org.junit.Test;
 
 public class DefaultMapTest {

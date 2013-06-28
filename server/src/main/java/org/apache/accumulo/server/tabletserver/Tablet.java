@@ -88,11 +88,11 @@ import org.apache.accumulo.core.util.MetadataTable.DataFileValue;
 import org.apache.accumulo.core.util.Pair;
 import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.util.UtilWaitThread;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.TableConfiguration;
 import org.apache.accumulo.server.constraints.ConstraintChecker;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.fs.FileRef;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.fs.VolumeManagerImpl;
@@ -118,7 +118,6 @@ import org.apache.accumulo.server.util.MapCounter;
 import org.apache.accumulo.server.util.MetadataTable;
 import org.apache.accumulo.server.util.MetadataTable.LogEntry;
 import org.apache.accumulo.server.util.TabletOperations;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.accumulo.start.classloader.vfs.AccumuloVFSClassLoader;
 import org.apache.accumulo.trace.instrument.Span;
 import org.apache.accumulo.trace.instrument.Trace;
@@ -781,7 +780,7 @@ public class Tablet {
     void bringMinorCompactionOnline(FileRef tmpDatafile, FileRef newDatafile, FileRef absMergeFile, DataFileValue dfv, CommitSession commitSession, long flushId)
         throws IOException {
       
-      IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+      CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
       if (extent.isRootTablet()) {
         try {
           if (!zoo.isLockHeld(tabletServer.getLock().getLockID())) {
@@ -951,7 +950,7 @@ public class Tablet {
         
         t1 = System.currentTimeMillis();
         
-        IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+        CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
         
         dataSourceDeletions.incrementAndGet();
         
@@ -2318,7 +2317,7 @@ public class Tablet {
     try {
       String zTablePath = Constants.ZROOT + "/" + HdfsZooInstance.getInstance().getInstanceID() + Constants.ZTABLES + "/" + extent.getTableId()
           + Constants.ZTABLE_FLUSH_ID;
-      return Long.parseLong(new String(ZooReaderWriter.getRetryingInstance().getData(zTablePath, null)));
+      return Long.parseLong(new String(CuratorReaderWriter.getInstance().getData(zTablePath, null)));
     } catch (InterruptedException e) {
       throw new RuntimeException(e);
     } catch (NumberFormatException nfe) {
@@ -2337,7 +2336,7 @@ public class Tablet {
         + Constants.ZTABLE_COMPACT_CANCEL_ID;
     
     try {
-      return Long.parseLong(new String(ZooReaderWriter.getRetryingInstance().getData(zTablePath, null)));
+      return Long.parseLong(new String(CuratorReaderWriter.getInstance().getData(zTablePath, null)));
     } catch (KeeperException e) {
       throw new RuntimeException(e);
     } catch (InterruptedException e) {
@@ -2350,7 +2349,7 @@ public class Tablet {
       String zTablePath = Constants.ZROOT + "/" + HdfsZooInstance.getInstance().getInstanceID() + Constants.ZTABLES + "/" + extent.getTableId()
           + Constants.ZTABLE_COMPACT_ID;
       
-      String[] tokens = new String(ZooReaderWriter.getRetryingInstance().getData(zTablePath, null)).split(",");
+      String[] tokens = new String(CuratorReaderWriter.getInstance().getData(zTablePath, null)).split(",");
       long compactID = Long.parseLong(tokens[0]);
       
       CompactionIterators iters = new CompactionIterators();

@@ -36,7 +36,7 @@ import org.apache.accumulo.core.util.ServerServices.Service;
 import org.apache.accumulo.core.util.ThriftUtil;
 import org.apache.accumulo.core.util.UtilWaitThread;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.ZooCache;
+import org.apache.accumulo.fate.curator.CuratorCaches;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 import org.apache.thrift.transport.TTransport;
@@ -44,12 +44,12 @@ import org.apache.thrift.transport.TTransportException;
 
 public class ServerClient {
   private static final Logger log = Logger.getLogger(ServerClient.class);
-  private static final Map<String,ZooCache> zooCaches = new HashMap<String,ZooCache>();
+  private static final Map<String,CuratorCaches> zooCaches = new HashMap<String,CuratorCaches>();
   
-  private synchronized static ZooCache getZooCache(Instance instance) {
-    ZooCache result = zooCaches.get(instance.getZooKeepers());
+  private synchronized static CuratorCaches getZooCache(Instance instance) {
+    CuratorCaches result = zooCaches.get(instance.getZooKeepers());
     if (result == null) {
-      result = new ZooCache(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
+      result = new CuratorCaches(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
       zooCaches.put(instance.getZooKeepers(), result);
     }
     return result;
@@ -135,7 +135,7 @@ public class ServerClient {
     ArrayList<ThriftTransportKey> servers = new ArrayList<ThriftTransportKey>();
     
     // add tservers
-    ZooCache zc = getZooCache(instance);
+    CuratorCaches zc = getZooCache(instance);
     for (ChildData tserver : zc.getChildren(ZooUtil.getRoot(instance) + Constants.ZTSERVERS)) {
       String path = tserver.getPath();
       byte[] data = ZooUtil.getLockData(zc, path);

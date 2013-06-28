@@ -16,8 +16,8 @@
  */
 package org.apache.accumulo.fate.zookeeper;
 
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.NoNodeException;
@@ -26,7 +26,7 @@ import org.apache.zookeeper.data.Stat;
 
 public class ZooReservation {
   
-  public static boolean attempt(IZooReaderWriter zk, String path, String reservationID, String debugInfo) throws KeeperException, InterruptedException {
+  public static boolean attempt(CuratorReaderWriter zk, String path, String reservationID, String debugInfo) throws KeeperException, InterruptedException {
     if (reservationID.contains(":"))
       throw new IllegalArgumentException();
     
@@ -51,7 +51,7 @@ public class ZooReservation {
     
   }
   
-  public static void release(IZooReaderWriter zk, String path, String reservationID) throws KeeperException, InterruptedException {
+  public static void release(CuratorReaderWriter zk, String path, String reservationID) throws KeeperException, InterruptedException {
     Stat stat = new Stat();
     byte[] zooData;
     
@@ -69,7 +69,7 @@ public class ZooReservation {
       throw new IllegalStateException("Tried to release reservation " + path + " with data mismatch " + new String(reservationID) + " " + new String(zooData));
     }
     
-    zk.recursiveDelete(path, stat.getVersion(), NodeMissingPolicy.SKIP);
+    zk.recursiveDelete(path, stat.getVersion());
   }
   
 }

@@ -20,8 +20,7 @@ import java.io.PrintStream;
 import java.io.UnsupportedEncodingException;
 
 import org.apache.accumulo.core.cli.Help;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
@@ -32,7 +31,7 @@ import com.beust.jcommander.Parameter;
 
 public class DumpZookeeper {
   
-  static IZooReaderWriter zk = null;
+  static CuratorReaderWriter zk = null;
   
   private static final Logger log = Logger.getLogger(DumpZookeeper.class);
   
@@ -65,7 +64,7 @@ public class DumpZookeeper {
     if (args.length > 0)
       opts.root = args[0];
     try {
-      zk = ZooReaderWriter.getInstance();
+      zk = CuratorReaderWriter.getInstance();
       
       write(out, 0, "<dump root='%s'>", opts.root);
       for (String child : zk.getChildren(opts.root, null))

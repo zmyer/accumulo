@@ -25,13 +25,11 @@ import java.util.UUID;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.util.CachedConfiguration;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooReader;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorReader;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.cli.ClientOpts;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.zookeeper.ZooDefs.Ids;
@@ -70,10 +68,10 @@ public class ChangeSecret {
   }
   
   interface Visitor {
-    void visit(ZooReader zoo, String path) throws Exception;
+    void visit(CuratorReader zoo, String path) throws Exception;
   }
   
-  private static void recurse(ZooReader zoo, String root, Visitor v) {
+  private static void recurse(CuratorReader zoo, String root, Visitor v) {
     try {
       v.visit(zoo, root);
       for (String child : zoo.getChildren(root)) {
@@ -85,11 +83,11 @@ public class ChangeSecret {
   }
   
   private static boolean verifyAccumuloIsDown(Instance inst, String oldPassword) {
-    ZooReader zooReader = new ZooReaderWriter(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut(), oldPassword);
+    CuratorReader zooReader = CuratorReaderWriter.getInstance(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut(), oldPassword);
     String root = ZooUtil.getRoot(inst);
     final List<String> ephemerals = new ArrayList<String>();
     recurse(zooReader, root, new Visitor() {
-      public void visit(ZooReader zoo, String path) throws Exception {
+      public void visit(CuratorReader zoo, String path) throws Exception {
         Stat stat = zoo.getStatus(path);
         if (stat.getEphemeralOwner() != 0)
           ephemerals.add(path);
@@ -107,15 +105,15 @@ public class ChangeSecret {
   }
   
   private static String rewriteZooKeeperInstance(final Instance inst, String oldPass, String newPass) throws Exception {
-    final ZooReaderWriter orig = new ZooReaderWriter(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut(), oldPass);
-    final IZooReaderWriter new_ = new ZooReaderWriter(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut(), newPass);
+    final CuratorReaderWriter orig = CuratorReaderWriter.getInstance(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut(), oldPass);
+    final CuratorReaderWriter new_ = CuratorReaderWriter.getInstance(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut(), newPass);
     final String newInstanceId = UUID.randomUUID().toString();
     String root = ZooUtil.getRoot(inst);
     recurse(orig, root, new Visitor() {
-      public void visit(ZooReader zoo, String path) throws Exception {
+      public void visit(CuratorReader zoo, String path) throws Exception {
         String newPath = path.replace(inst.getInstanceID(), newInstanceId);
         byte[] data = zoo.getData(path, null);
-        List<ACL> acls = orig.getZooKeeper().getACL(path, new Stat());
+        List<ACL> acls = orig.getACL(path);
         if (acls.containsAll(Ids.READ_ACL_UNSAFE)) {
           new_.putPersistentData(newPath, data, NodeExistsPolicy.FAIL);
         } else {
@@ -136,7 +134,7 @@ public class ChangeSecret {
       }
     });
     String path = "/accumulo/instances/" + inst.getInstanceName();
-    orig.recursiveDelete(path, NodeMissingPolicy.SKIP);
+    orig.recursiveDelete(path);
     new_.putPersistentData(path, newInstanceId.getBytes(), NodeExistsPolicy.OVERWRITE);
     return newInstanceId;
   }
@@ -148,7 +146,7 @@ public class ChangeSecret {
   }
   
   private static void deleteInstance(Instance origInstance, String oldPass) throws Exception {
-    IZooReaderWriter orig = new ZooReaderWriter(origInstance.getZooKeepers(), origInstance.getZooKeepersSessionTimeOut(), oldPass);
-    orig.recursiveDelete("/accumulo/" + origInstance.getInstanceID(), NodeMissingPolicy.SKIP);
+    CuratorReaderWriter orig = CuratorReaderWriter.getInstance(origInstance.getZooKeepers(), origInstance.getZooKeepersSessionTimeOut(), oldPass);
+    orig.recursiveDelete("/accumulo/" + origInstance.getInstanceID());
   }
 }

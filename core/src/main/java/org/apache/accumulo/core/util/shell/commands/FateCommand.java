@@ -33,8 +33,7 @@ import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.AdminUtil;
 import org.apache.accumulo.fate.TStore.TStatus;
 import org.apache.accumulo.fate.ZooStore;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooReaderWriter;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
@@ -69,7 +68,7 @@ public class FateCommand extends Command {
     
     String path = ZooUtil.getRoot(instance) + Constants.ZFATE;
     String masterPath = ZooUtil.getRoot(instance) + Constants.ZMASTER_LOCK;
-    IZooReaderWriter zk = getZooReaderWriter(shellState.getInstance(), cl.getOptionValue(secretOption.getOpt()));
+    CuratorReaderWriter zk = getZooReaderWriter(shellState.getInstance(), cl.getOptionValue(secretOption.getOpt()));
     ZooStore<FateCommand> zs = new ZooStore<FateCommand>(path, zk);
     
     if ("fail".equals(cmd)) {
@@ -138,14 +137,14 @@ public class FateCommand extends Command {
   }
   
   @SuppressWarnings("deprecation")
-  protected synchronized IZooReaderWriter getZooReaderWriter(Instance instance, String secret) {
+  protected synchronized CuratorReaderWriter getZooReaderWriter(Instance instance, String secret) {
 
     if (secret == null) {
       AccumuloConfiguration conf = AccumuloConfiguration.getSiteConfiguration();
       secret = conf.get(Property.INSTANCE_SECRET);
     }
     
-    return new ZooReaderWriter(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut(), SCHEME,
+    return CuratorReaderWriter.getInstance(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut(), SCHEME,
         (USER + ":" + secret).getBytes());
   }
   

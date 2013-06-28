@@ -25,10 +25,9 @@ import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.AdminUtil;
 import org.apache.accumulo.fate.ZooStore;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.master.Master;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
@@ -73,7 +72,7 @@ public class Admin {
     Instance instance = HdfsZooInstance.getInstance();
     String path = ZooUtil.getRoot(instance) + Constants.ZFATE;
     String masterPath = ZooUtil.getRoot(instance) + Constants.ZMASTER_LOCK;
-    IZooReaderWriter zk = ZooReaderWriter.getRetryingInstance();
+    CuratorReaderWriter zk = CuratorReaderWriter.getInstance();
     ZooStore<Master> zs = new ZooStore<Master>(path, zk);
     
     if (jc.getParsedCommand().equals("fail")) {

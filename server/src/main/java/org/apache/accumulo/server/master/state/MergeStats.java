@@ -33,8 +33,8 @@ import org.apache.accumulo.core.util.MetadataTable;
 import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.server.cli.ClientOpts;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.master.state.TabletLocationState.BadLocationStateException;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.hadoop.io.DataInputBuffer;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Logger;
@@ -244,8 +244,8 @@ public class MergeStats {
       String tableId = tableIdMap.get(table);
       String path = ZooUtil.getRoot(conn.getInstance().getInstanceID()) + Constants.ZTABLES + "/" + tableId.toString() + "/merge";
       MergeInfo info = new MergeInfo();
-      if (ZooReaderWriter.getInstance().exists(path)) {
-        byte[] data = ZooReaderWriter.getInstance().getData(path, new Stat());
+      if (CuratorReaderWriter.getInstance().exists(path)) {
+        byte[] data = CuratorReaderWriter.getInstance().getData(path, new Stat());
         DataInputBuffer in = new DataInputBuffer();
         in.reset(data, data.length);
         info.readFields(in);

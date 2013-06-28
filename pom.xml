@@ -109,7 +109,7 @@
     <!-- used for filtering the java source with the current version -->
     <accumulo.release.version>${project.version}</accumulo.release.version>
     <!-- ZooKeeper 3.4.x works also, but we're not using new features yet; this ensures 3.3.x compatibility. -->
-    <curator.version>2.0.1-incubating</curator.version>
+    <curator.version>2.1.0-incubating</curator.version>
     <!-- the maven-release-plugin makes this recommendation, due to plugin bugs -->
     <maven.min-version>3.0.4</maven.min-version>
     <powermock.version>1.5</powermock.version>

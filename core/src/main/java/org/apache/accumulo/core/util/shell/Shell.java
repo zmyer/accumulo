@@ -140,7 +140,7 @@ import org.apache.accumulo.core.util.shell.commands.UserCommand;
 import org.apache.accumulo.core.util.shell.commands.UserPermissionsCommand;
 import org.apache.accumulo.core.util.shell.commands.UsersCommand;
 import org.apache.accumulo.core.util.shell.commands.WhoAmICommand;
-import org.apache.accumulo.fate.zookeeper.ZooReader;
+import org.apache.accumulo.fate.curator.CuratorReader;
 import org.apache.commons.cli.BasicParser;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.HelpFormatter;
@@ -286,7 +286,7 @@ public class Shell extends ShellOptions {
       }
       
       if (!options.isFake()) {
-        ZooReader zr = new ZooReader(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
+        CuratorReader zr = new CuratorReader(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
         DistributedTrace.enable(instance, zr, "shell", InetAddress.getLocalHost().getHostName());
       }
       

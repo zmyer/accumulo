@@ -40,12 +40,12 @@ import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.util.ColumnFQ;
 import org.apache.accumulo.core.util.MetadataTable.DataFileValue;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.fate.zookeeper.ZooLock.LockLossReason;
 import org.apache.accumulo.fate.zookeeper.ZooLock.LockWatcher;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.fs.FileRef;
 import org.apache.accumulo.server.master.state.Assignment;
 import org.apache.accumulo.server.master.state.TServerInstance;
@@ -56,7 +56,6 @@ import org.apache.accumulo.server.util.FileUtil;
 import org.apache.accumulo.server.util.MetadataTable;
 import org.apache.accumulo.server.zookeeper.TransactionWatcher;
 import org.apache.accumulo.server.zookeeper.ZooLock;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.hadoop.io.Text;
 
 public class SplitRecoveryTest extends FunctionalTest {
@@ -83,7 +82,7 @@ public class SplitRecoveryTest extends FunctionalTest {
   @Override
   public void run() throws Exception {
     String zPath = ZooUtil.getRoot(HdfsZooInstance.getInstance()) + "/testLock";
-    IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     zoo.putPersistentData(zPath, "".getBytes(), NodeExistsPolicy.OVERWRITE);
     ZooLock zl = new ZooLock(zPath);
     boolean gotLock = zl.tryLock(new LockWatcher() {

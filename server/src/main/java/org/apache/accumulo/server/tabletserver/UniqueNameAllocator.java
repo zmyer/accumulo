@@ -20,9 +20,8 @@ import java.util.Random;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.util.FastFormat;
-import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.server.client.HdfsZooInstance;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 
 /**
  * Allocates unique names for an accumulo instance. The names are unique for the lifetime of the instance.
@@ -48,7 +47,7 @@ public class UniqueNameAllocator {
       final int allocate = 100 + rand.nextInt(100);
       
       try {
-        byte[] max = ZooReaderWriter.getRetryingInstance().mutate(nextNamePath, null, ZooUtil.PRIVATE, new ZooReaderWriter.Mutator() {
+        byte[] max = CuratorReaderWriter.getInstance().mutate(nextNamePath, null, true, new CuratorReaderWriter.Mutator() {
           public byte[] mutate(byte[] currentValue) throws Exception {
             long l = Long.parseLong(new String(currentValue), Character.MAX_RADIX);
             l += allocate;

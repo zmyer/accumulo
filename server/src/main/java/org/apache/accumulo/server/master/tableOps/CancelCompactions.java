@@ -19,11 +19,10 @@ package org.apache.accumulo.server.master.tableOps;
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.impl.thrift.TableOperation;
 import org.apache.accumulo.fate.Repo;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooReaderWriter.Mutator;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.Mutator;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.master.Master;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 
 class FinishCancelCompaction extends MasterRepo {
   private static final long serialVersionUID = 1L;
@@ -68,7 +67,7 @@ public class CancelCompactions extends MasterRepo {
     String zCancelID = Constants.ZROOT + "/" + HdfsZooInstance.getInstance().getInstanceID() + Constants.ZTABLES + "/" + tableId
         + Constants.ZTABLE_COMPACT_CANCEL_ID;
     
-    IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     
     byte[] currentValue = zoo.getData(zCompactID, null);
     
@@ -76,7 +75,7 @@ public class CancelCompactions extends MasterRepo {
     String[] tokens = cvs.split(",");
     final long flushID = Long.parseLong(new String(tokens[0]));
     
-    zoo.mutate(zCancelID, null, null, new Mutator() {
+    zoo.mutate(zCancelID, null, false, new Mutator() {
       @Override
       public byte[] mutate(byte[] currentValue) throws Exception {
         long cid = Long.parseLong(new String(currentValue));

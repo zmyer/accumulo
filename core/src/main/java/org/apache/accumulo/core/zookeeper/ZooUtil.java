@@ -19,7 +19,7 @@ package org.apache.accumulo.core.zookeeper;
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.Instance;
 
-public class ZooUtil extends org.apache.accumulo.fate.zookeeper.ZooUtil {
+public class ZooUtil extends org.apache.accumulo.fate.curator.CuratorUtil {
   public static String getRoot(final Instance instance) {
     return getRoot(instance.getInstanceID());
   }

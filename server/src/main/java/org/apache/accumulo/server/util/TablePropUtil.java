@@ -19,10 +19,9 @@ package org.apache.accumulo.server.util;
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.server.client.HdfsZooInstance;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.zookeeper.KeeperException;
 
 public class TablePropUtil {
@@ -32,11 +31,11 @@ public class TablePropUtil {
     
     // create the zk node for per-table properties for this table if it doesn't already exist
     String zkTablePath = getTablePath(tableId);
-    ZooReaderWriter.getInstance().putPersistentData(zkTablePath, new byte[0], NodeExistsPolicy.SKIP);
+    CuratorReaderWriter.getInstance().putPersistentData(zkTablePath, new byte[0], NodeExistsPolicy.SKIP);
     
     // create the zk node for this property and set it's data to the specified value
     String zPath = zkTablePath + "/" + property;
-    ZooReaderWriter.getInstance().putPersistentData(zPath, value.getBytes(), NodeExistsPolicy.OVERWRITE);
+    CuratorReaderWriter.getInstance().putPersistentData(zPath, value.getBytes(), NodeExistsPolicy.OVERWRITE);
     
     return true;
   }
@@ -51,7 +50,7 @@ public class TablePropUtil {
   
   public static void removeTableProperty(String tableId, String property) throws InterruptedException, KeeperException {
     String zPath = getTablePath(tableId) + "/" + property;
-    ZooReaderWriter.getInstance().recursiveDelete(zPath, NodeMissingPolicy.SKIP);
+    CuratorReaderWriter.getInstance().recursiveDelete(zPath);
   }
   
   private static String getTablePath(String tablename) {

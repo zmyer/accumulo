@@ -41,8 +41,8 @@ import org.apache.accumulo.core.util.AddressUtil;
 import org.apache.accumulo.core.util.ArgumentChecker;
 import org.apache.accumulo.core.util.ThriftUtil;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorCaches;
 import org.apache.accumulo.fate.curator.CuratorUtil;
-import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.accumulo.trace.instrument.Tracer;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.thrift.TException;
@@ -112,7 +112,7 @@ public class InstanceOperationsImpl implements InstanceOperations {
   
   @Override
   public List<String> getTabletServers() {
-    ZooCache cache = ZooCache.getInstance(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
+    CuratorCaches cache = CuratorCaches.getInstance(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
     String path = ZooUtil.getRoot(instance) + Constants.ZTSERVERS;
     List<String> results = new ArrayList<String>();
     for (ChildData candidate : cache.getChildren(path)) {

@@ -63,18 +63,16 @@ import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.util.StringUtil;
 import org.apache.accumulo.core.util.UtilWaitThread;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.fs.FileRef;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.security.SecurityConstants;
 import org.apache.accumulo.server.zookeeper.ZooLock;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DataInputBuffer;
@@ -154,7 +152,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
       Set<FileRef> filesInUseByScans, String address, ZooLock zooLock, Set<String> unusedWalLogs, TServerInstance lastLocation, long flushId) {
     if (extent.equals(RootTable.EXTENT)) {
       if (unusedWalLogs != null) {
-        IZooReaderWriter zk = ZooReaderWriter.getInstance();
+        CuratorReaderWriter zk = CuratorReaderWriter.getInstance();
         // unusedWalLogs will contain the location/name of each log in a log set
         // the log set is stored under one of the log names, but not both
         // find the entry under one of the names and delete it.
@@ -166,7 +164,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
           while (true) {
             try {
               if (zk.exists(zpath)) {
-                zk.recursiveDelete(zpath, NodeMissingPolicy.SKIP);
+                zk.recursiveDelete(zpath);
                 foundEntry = true;
               }
               break;
@@ -738,7 +736,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
       String root = getZookeeperLogLocation();
       while (true) {
         try {
-          IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+          CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
           if (zoo.isLockHeld(zooLock.getLockID())) {
             String[] parts = entry.filename.split("/");
             String uniqueId = parts[parts.length - 1];
@@ -856,7 +854,7 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
   }
   
   private static void getRootLogEntries(ArrayList<LogEntry> result) throws KeeperException, InterruptedException, IOException {
-    IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     String root = getZookeeperLogLocation();
     // there's a little race between getting the children and fetching
     // the data. The log can be removed in between.
@@ -937,9 +935,9 @@ public class MetadataTable extends org.apache.accumulo.core.util.MetadataTable {
         String root = getZookeeperLogLocation();
         while (true) {
           try {
-            IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+            CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
             if (zoo.isLockHeld(zooLock.getLockID()))
-              zoo.recursiveDelete(root + "/" + entry.filename, NodeMissingPolicy.SKIP);
+              zoo.recursiveDelete(root + "/" + entry.filename);
             break;
           } catch (Exception e) {
             log.error(e, e);

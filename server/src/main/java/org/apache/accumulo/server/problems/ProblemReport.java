@@ -31,12 +31,11 @@ import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.util.Encoding;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.security.SecurityConstants;
 import org.apache.accumulo.server.util.MetadataTable;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.hadoop.io.Text;
 
 public class ProblemReport {
@@ -136,11 +135,11 @@ public class ProblemReport {
   
   void removeFromZooKeeper() throws Exception {
     String zpath = getZPath();
-    ZooReaderWriter.getInstance().recursiveDelete(zpath, NodeMissingPolicy.SKIP);
+    CuratorReaderWriter.getInstance().recursiveDelete(zpath);
   }
   
   void saveToZooKeeper() throws Exception {
-    ZooReaderWriter.getInstance().putPersistentData(getZPath(), encode(), NodeExistsPolicy.OVERWRITE);
+    CuratorReaderWriter.getInstance().putPersistentData(getZPath(), encode(), NodeExistsPolicy.OVERWRITE);
   }
   
   private String getZPath() throws IOException {
@@ -167,7 +166,7 @@ public class ProblemReport {
     String resource = dis.readUTF();
     
     String zpath = ZooUtil.getRoot(HdfsZooInstance.getInstance()) + Constants.ZPROBLEMS + "/" + node;
-    byte[] enc = ZooReaderWriter.getInstance().getData(zpath, null);
+    byte[] enc = CuratorReaderWriter.getInstance().getData(zpath, null);
     
     return new ProblemReport(tableName, ProblemType.valueOf(problemType), resource, enc);
     

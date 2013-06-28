@@ -18,11 +18,11 @@ package org.apache.accumulo.server.zookeeper;
 
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.Property;
-import org.apache.accumulo.server.curator.CuratorUtil;
+import org.apache.accumulo.server.conf.ServerConfiguration;
 
-public class ZooCache extends org.apache.accumulo.fate.zookeeper.ZooCache {
+public class ZooCache extends org.apache.accumulo.fate.curator.CuratorCaches {
   public ZooCache() {
-    super(CuratorUtil.getInstance());
+    this(ServerConfiguration.getSiteConfiguration());
   }
   
   public ZooCache(AccumuloConfiguration conf) {

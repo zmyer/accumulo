@@ -31,7 +31,7 @@ import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.trace.DistributedTrace;
-import org.apache.accumulo.fate.zookeeper.ZooReader;
+import org.apache.accumulo.fate.curator.CuratorReader;
 import org.apache.accumulo.trace.instrument.Trace;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Logger;
@@ -63,7 +63,7 @@ public class VerifyIngest {
     try {
       if (opts.trace) {
         String name = VerifyIngest.class.getSimpleName();
-        DistributedTrace.enable(instance, new ZooReader(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut()), name, null);
+        DistributedTrace.enable(instance, new CuratorReader(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut()), name, null);
         Trace.on(name);
         Trace.currentTrace().data("cmdLine", Arrays.asList(args).toString());
       }

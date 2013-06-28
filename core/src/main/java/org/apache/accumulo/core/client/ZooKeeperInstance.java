@@ -39,8 +39,8 @@ import org.apache.accumulo.core.util.OpTimer;
 import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.util.TextUtil;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorCaches;
 import org.apache.accumulo.fate.curator.CuratorUtil;
-import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -70,7 +70,7 @@ public class ZooKeeperInstance implements Instance {
   private String instanceId = null;
   private String instanceName = null;
   
-  private final ZooCache zooCache;
+  private final CuratorCaches zooCache;
   
   private final String zooKeepers;
   
@@ -103,7 +103,7 @@ public class ZooKeeperInstance implements Instance {
     this.instanceName = instanceName;
     this.zooKeepers = zooKeepers;
     this.zooKeepersSessionTimeOut = sessionTimeout;
-    zooCache = ZooCache.getInstance(zooKeepers, sessionTimeout);
+    zooCache = CuratorCaches.getInstance(zooKeepers, sessionTimeout);
     getInstanceID();
   }
   
@@ -134,7 +134,7 @@ public class ZooKeeperInstance implements Instance {
     this.instanceId = instanceId.toString();
     this.zooKeepers = zooKeepers;
     this.zooKeepersSessionTimeOut = sessionTimeout;
-    zooCache = ZooCache.getInstance(zooKeepers, sessionTimeout);
+    zooCache = CuratorCaches.getInstance(zooKeepers, sessionTimeout);
   }
   
   @Override
@@ -257,7 +257,7 @@ public class ZooKeeperInstance implements Instance {
    * @param instanceId
    * @return the instance name
    */
-  public static String lookupInstanceName(ZooCache zooCache, UUID instanceId) {
+  public static String lookupInstanceName(CuratorCaches zooCache, UUID instanceId) {
     ArgumentChecker.notNull(zooCache, instanceId);
     String path = Constants.ZROOT + Constants.ZINSTANCES;
     for (ChildData name : zooCache.getChildren(path)) {

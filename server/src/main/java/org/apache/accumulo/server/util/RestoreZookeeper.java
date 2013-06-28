@@ -24,9 +24,8 @@ import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
 import org.apache.accumulo.core.cli.Help;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
@@ -40,11 +39,11 @@ import com.beust.jcommander.Parameter;
 public class RestoreZookeeper {
   
   private static class Restore extends DefaultHandler {
-    IZooReaderWriter zk = null;
+    CuratorReaderWriter zk = null;
     Stack<String> cwd = new Stack<String>();
     boolean overwrite = false;
     
-    Restore(IZooReaderWriter zk, boolean overwrite) {
+    Restore(CuratorReaderWriter zk, boolean overwrite) {
       this.zk = zk;
       this.overwrite = overwrite;
     }
@@ -117,7 +116,7 @@ public class RestoreZookeeper {
     
     SAXParserFactory factory = SAXParserFactory.newInstance();
     SAXParser parser = factory.newSAXParser();
-    parser.parse(in, new Restore(ZooReaderWriter.getInstance(), opts.overwrite));
+    parser.parse(in, new Restore(CuratorReaderWriter.getInstance(), opts.overwrite));
     in.close();
   }
 }

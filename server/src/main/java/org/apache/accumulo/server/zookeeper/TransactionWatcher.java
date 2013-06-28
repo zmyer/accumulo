@@ -18,18 +18,17 @@ package org.apache.accumulo.server.zookeeper;
 
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooReader;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorReader;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.zookeeper.KeeperException;
 
 public class TransactionWatcher extends org.apache.accumulo.fate.zookeeper.TransactionWatcher {
   public static class ZooArbitrator implements Arbitrator {
     
     Instance instance = HdfsZooInstance.getInstance();
-    ZooReader rdr = new ZooReader(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
+    CuratorReader rdr = new CuratorReader(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
     
     @Override
     public boolean transactionAlive(String type, long tid) throws Exception {
@@ -40,7 +39,7 @@ public class TransactionWatcher extends org.apache.accumulo.fate.zookeeper.Trans
     
     public static void start(String type, long tid) throws KeeperException, InterruptedException {
       Instance instance = HdfsZooInstance.getInstance();
-      IZooReaderWriter writer = ZooReaderWriter.getInstance();
+      CuratorReaderWriter writer = CuratorReaderWriter.getInstance();
       writer.putPersistentData(ZooUtil.getRoot(instance) + "/" + type, new byte[] {}, NodeExistsPolicy.OVERWRITE);
       writer.putPersistentData(ZooUtil.getRoot(instance) + "/" + type + "/" + tid, new byte[] {}, NodeExistsPolicy.OVERWRITE);
       writer.putPersistentData(ZooUtil.getRoot(instance) + "/" + type + "/" + tid + "-running", new byte[] {}, NodeExistsPolicy.OVERWRITE);
@@ -48,15 +47,15 @@ public class TransactionWatcher extends org.apache.accumulo.fate.zookeeper.Trans
     
     public static void stop(String type, long tid) throws KeeperException, InterruptedException {
       Instance instance = HdfsZooInstance.getInstance();
-      IZooReaderWriter writer = ZooReaderWriter.getInstance();
-      writer.recursiveDelete(ZooUtil.getRoot(instance) + "/" + type + "/" + tid, NodeMissingPolicy.SKIP);
+      CuratorReaderWriter writer = CuratorReaderWriter.getInstance();
+      writer.recursiveDelete(ZooUtil.getRoot(instance) + "/" + type + "/" + tid);
     }
     
     public static void cleanup(String type, long tid) throws KeeperException, InterruptedException {
       Instance instance = HdfsZooInstance.getInstance();
-      IZooReaderWriter writer = ZooReaderWriter.getInstance();
-      writer.recursiveDelete(ZooUtil.getRoot(instance) + "/" + type + "/" + tid, NodeMissingPolicy.SKIP);
-      writer.recursiveDelete(ZooUtil.getRoot(instance) + "/" + type + "/" + tid + "-running", NodeMissingPolicy.SKIP);
+      CuratorReaderWriter writer = CuratorReaderWriter.getInstance();
+      writer.recursiveDelete(ZooUtil.getRoot(instance) + "/" + type + "/" + tid);
+      writer.recursiveDelete(ZooUtil.getRoot(instance) + "/" + type + "/" + tid + "-running");
     }
 
     @Override

@@ -32,9 +32,9 @@ import org.apache.accumulo.core.util.UtilWaitThread;
 import org.apache.accumulo.core.util.Version;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.util.time.SimpleTimer;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.log4j.Logger;
@@ -74,7 +74,7 @@ public class Accumulo {
   
   public static void enableTracing(String address, String application) {
     try {
-      DistributedTrace.enable(HdfsZooInstance.getInstance(), ZooReaderWriter.getInstance(), application, address);
+      DistributedTrace.enable(HdfsZooInstance.getInstance(), CuratorReaderWriter.getInstance(), application, address);
     } catch (Exception ex) {
       log.error("creating remote sink for trace spans", ex);
     }
@@ -185,7 +185,7 @@ public class Accumulo {
     log.info("Attempting to talk to zookeeper");
     while (true) {
       try {
-        ZooReaderWriter.getInstance().getChildren(Constants.ZROOT);
+        CuratorReaderWriter.getInstance().getChildren(Constants.ZROOT);
         break;
       } catch (InterruptedException e) {
         // ignored

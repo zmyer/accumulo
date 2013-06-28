@@ -26,7 +26,7 @@ import java.util.Set;
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.ZooReader;
+import org.apache.accumulo.fate.curator.CuratorReader;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.util.AddressUtil;
 import org.apache.accumulo.test.randomwalk.State;
@@ -38,7 +38,7 @@ public class StopTabletServer extends Test {
   
   Set<TServerInstance> getTServers(Instance instance) throws KeeperException, InterruptedException {
     Set<TServerInstance> result = new HashSet<TServerInstance>();
-    ZooReader rdr = new ZooReader(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
+    CuratorReader rdr = new CuratorReader(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
     String base = ZooUtil.getRoot(instance) + Constants.ZTSERVERS;
     for (String child : rdr.getChildren(base)) {
       try {

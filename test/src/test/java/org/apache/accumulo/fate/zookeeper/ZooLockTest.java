@@ -20,6 +20,7 @@ import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.List;
 
+import org.apache.accumulo.fate.curator.CuratorReaderWriter;
 import org.apache.accumulo.fate.zookeeper.ZooLock.AsyncLockWatcher;
 import org.apache.accumulo.fate.zookeeper.ZooLock.LockLossReason;
 import org.apache.accumulo.minicluster.MiniAccumuloCluster;
@@ -109,7 +110,7 @@ public class ZooLockTest {
     
     Assert.assertFalse(zl.isLocked());
     
-    ZooReaderWriter zk = ZooReaderWriter.getInstance(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
+    CuratorReaderWriter zk = CuratorReaderWriter.getInstance(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
     
     // intentionally created parent after lock
     zk.mkdirs(parent);
@@ -160,7 +161,7 @@ public class ZooLockTest {
     
     String parent = "/zltest-" + this.hashCode() + "-l" + pdCount++;
     
-    ZooReaderWriter zk = ZooReaderWriter.getInstance(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
+    CuratorReaderWriter zk = CuratorReaderWriter.getInstance(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
     zk.mkdirs(parent);
     
     ZooLock zl = new ZooLock(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes(), parent);
@@ -193,7 +194,7 @@ public class ZooLockTest {
     
     String parent = "/zltest-" + this.hashCode() + "-l" + pdCount++;
     
-    ZooReaderWriter zk = ZooReaderWriter.getInstance(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
+    CuratorReaderWriter zk = CuratorReaderWriter.getInstance(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
     zk.mkdirs(parent);
     
     ZooLock zl = new ZooLock(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes(), parent);

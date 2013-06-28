@@ -20,10 +20,8 @@ import java.util.List;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.server.cli.ClientOpts;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.zookeeper.ZooLock;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
@@ -62,7 +60,7 @@ public class ZooZap {
     }
     
     String iid = opts.getInstance().getInstanceID();
-    IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     
     if (opts.zapMaster) {
       String masterLockPath = Constants.ZROOT + "/" + iid + Constants.ZMASTER_LOCK;
@@ -78,7 +76,7 @@ public class ZooZap {
           message("Deleting " + tserversPath + "/" + child + " from zookeeper");
           
           if (opts.zapMaster)
-            ZooReaderWriter.getInstance().recursiveDelete(tserversPath + "/" + child, NodeMissingPolicy.SKIP);
+            CuratorReaderWriter.getInstance().recursiveDelete(tserversPath + "/" + child);
           else {
             String path = tserversPath + "/" + child;
             if (zoo.getChildren(path).size() > 0) {
@@ -100,12 +98,12 @@ public class ZooZap {
     
   }
   
-  private static void zapDirectory(IZooReaderWriter zoo, String path) {
+  private static void zapDirectory(CuratorReaderWriter zoo, String path) {
     try {
       List<String> children = zoo.getChildren(path);
       for (String child : children) {
         message("Deleting " + path + "/" + child + " from zookeeper");
-        zoo.recursiveDelete(path + "/" + child, NodeMissingPolicy.SKIP);
+        zoo.recursiveDelete(path + "/" + child);
       }
     } catch (Exception e) {
       e.printStackTrace();

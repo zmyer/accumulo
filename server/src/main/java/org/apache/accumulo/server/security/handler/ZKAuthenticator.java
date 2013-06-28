@@ -27,11 +27,9 @@ import org.apache.accumulo.core.client.impl.thrift.SecurityErrorCode;
 import org.apache.accumulo.core.client.security.tokens.AuthenticationToken;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
 import org.apache.accumulo.core.security.thrift.TCredentials;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.zookeeper.ZooCache;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
@@ -62,11 +60,11 @@ public final class ZKAuthenticator implements Authenticator {
   public void initializeSecurity(TCredentials credentials, String principal, byte[] token) throws AccumuloSecurityException {
     try {
       // remove old settings from zookeeper first, if any
-      IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+      CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
       synchronized (zooCache) {
         zooCache.clear();
         if (zoo.exists(ZKUserPath)) {
-          zoo.recursiveDelete(ZKUserPath, NodeMissingPolicy.SKIP);
+          zoo.recursiveDelete(ZKUserPath);
           log.info("Removed " + ZKUserPath + "/" + " from zookeeper");
         }
         
@@ -93,7 +91,7 @@ public final class ZKAuthenticator implements Authenticator {
   private void constructUser(String user, byte[] pass) throws KeeperException, InterruptedException {
     synchronized (zooCache) {
       zooCache.clear();
-      IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+      CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
       zoo.putPrivatePersistentData(ZKUserPath + "/" + user, pass, NodeExistsPolicy.FAIL);
     }
   }
@@ -131,7 +129,7 @@ public final class ZKAuthenticator implements Authenticator {
     try {
       synchronized (zooCache) {
         zooCache.clear();
-        ZooReaderWriter.getRetryingInstance().recursiveDelete(ZKUserPath + "/" + user, NodeMissingPolicy.FAIL);
+        CuratorReaderWriter.getInstance().recursiveDelete(ZKUserPath + "/" + user);
       }
     } catch (InterruptedException e) {
       log.error(e, e);
@@ -153,7 +151,7 @@ public final class ZKAuthenticator implements Authenticator {
       try {
         synchronized (zooCache) {
           zooCache.clear(ZKUserPath + "/" + principal);
-          ZooReaderWriter.getRetryingInstance().putPrivatePersistentData(ZKUserPath + "/" + principal, ZKSecurityTool.createPass(pt.getPassword()),
+          CuratorReaderWriter.getInstance().putPrivatePersistentData(ZKUserPath + "/" + principal, ZKSecurityTool.createPass(pt.getPassword()),
               NodeExistsPolicy.OVERWRITE);
         }
       } catch (KeeperException e) {

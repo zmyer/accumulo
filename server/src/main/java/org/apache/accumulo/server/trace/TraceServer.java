@@ -43,14 +43,13 @@ import org.apache.accumulo.core.trace.TraceFormatter;
 import org.apache.accumulo.core.util.AddressUtil;
 import org.apache.accumulo.core.util.UtilWaitThread;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
 import org.apache.accumulo.server.Accumulo;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.accumulo.server.util.time.SimpleTimer;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.accumulo.start.classloader.AccumuloClassLoader;
 import org.apache.accumulo.trace.instrument.Span;
 import org.apache.accumulo.trace.thrift.RemoteSpan;
@@ -249,7 +248,7 @@ public class TraceServer implements Watcher {
   
   private void registerInZooKeeper(String name) throws Exception {
     String root = ZooUtil.getRoot(serverConfiguration.getInstance()) + Constants.ZTRACERS;
-    IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     String path = zoo.putEphemeralSequential(root + "/trace-", name.getBytes());
     zoo.exists(path, this);
   }
@@ -279,7 +278,7 @@ public class TraceServer implements Watcher {
     }
     if (event.getPath() != null) {
       try {
-        if (ZooReaderWriter.getInstance().exists(event.getPath(), this))
+        if (CuratorReaderWriter.getInstance().exists(event.getPath(), this))
           return;
       } catch (Exception ex) {
         log.error(ex, ex);

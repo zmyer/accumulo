@@ -20,12 +20,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 
 import org.apache.accumulo.fate.zookeeper.DistributedReadWriteLock;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.zookeeper.KeeperException;
 
 public class ZooQueueLock extends org.apache.accumulo.fate.zookeeper.ZooQueueLock {
   
   public ZooQueueLock(String path, boolean ephemeral) throws KeeperException, InterruptedException {
-    super(ZooReaderWriter.getRetryingInstance(), path, ephemeral);
+    super(CuratorReaderWriter.getInstance(), path, ephemeral);
   }
   
   public static void main(String args[]) throws InterruptedException, KeeperException {

@@ -18,8 +18,8 @@ package org.apache.accumulo.server.master.recovery;
 
 import java.io.IOException;
 
-import org.apache.accumulo.server.master.Master;
 import org.apache.accumulo.server.fs.VolumeManager;
+import org.apache.accumulo.server.master.Master;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;

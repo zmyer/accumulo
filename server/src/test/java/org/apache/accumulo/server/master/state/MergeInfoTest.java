@@ -17,8 +17,6 @@
 package org.apache.accumulo.server.master.state;
 
 import org.apache.accumulo.core.data.KeyExtent;
-import org.apache.accumulo.server.master.state.MergeInfo;
-import org.apache.accumulo.server.master.state.MergeState;
 import org.apache.hadoop.io.DataInputBuffer;
 import org.apache.hadoop.io.DataOutputBuffer;
 import org.apache.hadoop.io.Text;

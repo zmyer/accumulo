@@ -20,9 +20,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import org.apache.accumulo.fate.curator.CuratorCaches;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter;
 import org.apache.accumulo.fate.curator.CuratorUtil;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.LockID;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorUtil.LockID;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
@@ -62,7 +63,7 @@ public class ZooLock implements Watcher {
   
   private boolean lockWasAcquired;
   final private String path;
-  protected final IZooReaderWriter zooKeeper;
+  protected final CuratorReaderWriter zooKeeper;
   private String lock;
   private LockWatcher lockWatcher;
   private boolean watchingParent = false;
@@ -73,10 +74,10 @@ public class ZooLock implements Watcher {
   }
   
   public ZooLock(String zookeepers, int timeInMillis, String scheme, byte[] auth, String path) {
-    this(new ZooCache(zookeepers, timeInMillis), ZooReaderWriter.getInstance(zookeepers, timeInMillis, scheme, auth), path);
+    this(new CuratorCaches(zookeepers, timeInMillis), CuratorReaderWriter.getInstance(zookeepers, timeInMillis, scheme, auth), path);
   }
   
-  protected ZooLock(ZooCache zc, IZooReaderWriter zrw, String path) {
+  protected ZooLock(CuratorCaches zc, CuratorReaderWriter zrw, String path) {
     getLockDataZooCache = zc;
     this.path = path;
     zooKeeper = zrw;
@@ -129,7 +130,7 @@ public class ZooLock implements Watcher {
     }
     
     if (asyncLock != null) {
-      zooKeeper.recursiveDelete(path + "/" + asyncLock, NodeMissingPolicy.SKIP);
+      zooKeeper.recursiveDelete(path + "/" + asyncLock);
       asyncLock = null;
     }
     
@@ -281,7 +282,7 @@ public class ZooLock implements Watcher {
     boolean del = false;
     
     if (asyncLock != null) {
-      zooKeeper.recursiveDelete(path + "/" + asyncLock, NodeMissingPolicy.SKIP);
+      zooKeeper.recursiveDelete(path + "/" + asyncLock);
       del = true;
     }
     
@@ -304,7 +305,7 @@ public class ZooLock implements Watcher {
     lock = null;
     lockWatcher = null;
     
-    zooKeeper.recursiveDelete(path + "/" + localLock, NodeMissingPolicy.SKIP);
+    zooKeeper.recursiveDelete(path + "/" + localLock);
     
     localLw.lostLock(LockLossReason.LOCK_DELETED);
   }
@@ -324,7 +325,11 @@ public class ZooLock implements Watcher {
     if (lock == null) {
       throw new IllegalStateException("Lock not held");
     }
-    return new LockID(path, lock, zooKeeper.getZooKeeper().getSessionId());
+    try {
+      return new LockID(path, lock, zooKeeper.getCurator().getZookeeperClient().getZooKeeper().getSessionId());
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
   }
   
   /**
@@ -384,7 +389,7 @@ public class ZooLock implements Watcher {
     return stat != null && stat.getEphemeralOwner() == lid.eid;
   }
   
-  public static boolean isLockHeld(ZooCache zc, LockID lid) {
+  public static boolean isLockHeld(CuratorCaches zc, LockID lid) {
     
     List<ChildData> children = zc.getChildren(lid.path);
     
@@ -416,7 +421,7 @@ public class ZooLock implements Watcher {
     return zk.getData(path + "/" + lockNode, false, null);
   }
   
-  public static ChildData getLockData(org.apache.accumulo.fate.zookeeper.ZooCache zc, String path) {
+  public static ChildData getLockData(org.apache.accumulo.fate.curator.CuratorCaches zc, String path) {
     
     List<ChildData> children = zc.getChildren(path);
     
@@ -436,13 +441,13 @@ public class ZooLock implements Watcher {
     return children.get(0);
   }
   
-  private static ZooCache getLockDataZooCache;
+  private static CuratorCaches getLockDataZooCache;
   
   public static ChildData getLockData(String path) {
     return getLockData(getLockDataZooCache, path);
   }
   
-  public static long getSessionId(ZooCache zc, String path) throws KeeperException, InterruptedException {
+  public static long getSessionId(CuratorCaches zc, String path) throws KeeperException, InterruptedException {
     List<ChildData> children = zc.getChildren(path);
     
     if (children == null || children.size() == 0) {
@@ -459,7 +464,7 @@ public class ZooLock implements Watcher {
     return getSessionId(getLockDataZooCache, path);
   }
   
-  public static void deleteLock(IZooReaderWriter zk, String path) throws InterruptedException, KeeperException {
+  public static void deleteLock(CuratorReaderWriter zk, String path) throws InterruptedException, KeeperException {
     List<String> children;
     
     children = zk.getChildren(path);
@@ -476,11 +481,11 @@ public class ZooLock implements Watcher {
       throw new RuntimeException("Node " + lockNode + " at " + path + " is not a lock node");
     }
     
-    zk.recursiveDelete(path + "/" + lockNode, NodeMissingPolicy.SKIP);
+    zk.recursiveDelete(path + "/" + lockNode);
     
   }
   
-  public static boolean deleteLock(IZooReaderWriter zk, String path, String lockData) throws InterruptedException, KeeperException {
+  public static boolean deleteLock(CuratorReaderWriter zk, String path, String lockData) throws InterruptedException, KeeperException {
     List<String> children;
     
     children = zk.getChildren(path);
@@ -501,7 +506,7 @@ public class ZooLock implements Watcher {
     byte[] data = zk.getData(path + "/" + lockNode, stat);
     
     if (lockData.equals(new String(data))) {
-      zk.recursiveDelete(path + "/" + lockNode, stat.getVersion(), NodeMissingPolicy.FAIL);
+      zk.recursiveDelete(path + "/" + lockNode, stat.getVersion());
       return true;
     }
     

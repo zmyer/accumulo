@@ -16,10 +16,9 @@
  */
 package org.apache.accumulo.server.util.time;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
-import org.apache.accumulo.server.util.time.BaseRelativeTime;
-import org.apache.accumulo.server.util.time.ProvidesTime;
 import org.junit.Test;
 
 public class BaseRelativeTimeTest {

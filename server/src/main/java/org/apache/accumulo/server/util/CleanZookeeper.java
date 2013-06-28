@@ -20,10 +20,8 @@ import java.io.IOException;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.cli.Help;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
 import org.apache.accumulo.server.client.HdfsZooInstance;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 
@@ -34,9 +32,9 @@ public class CleanZookeeper {
   private static final Logger log = Logger.getLogger(CleanZookeeper.class);
   
   static class Opts extends Help {
-    @Parameter(names={"-z", "--keepers"}, description="comma separated list of zookeeper hosts")
+    @Parameter(names = {"-z", "--keepers"}, description = "comma separated list of zookeeper hosts")
     String keepers = "localhost:2181";
-    @Parameter(names={"--password"}, description="the system secret", password=true)
+    @Parameter(names = {"--password"}, description = "the system secret", password = true)
     String auth;
   }
   
@@ -51,10 +49,11 @@ public class CleanZookeeper {
     opts.parseArgs(CleanZookeeper.class.getName(), args);
     
     String root = Constants.ZROOT;
-    IZooReaderWriter zk = ZooReaderWriter.getInstance();
-    if (opts.auth != null) {
-      zk.getZooKeeper().addAuthInfo("digest", ("accumulo:"+opts.auth).getBytes());
-    }
+    CuratorReaderWriter zk;
+    if (opts.auth == null)
+      zk = CuratorReaderWriter.getInstance();
+    else
+      zk = CuratorReaderWriter.getInstance(opts.auth);
     
     try {
       for (String child : zk.getChildren(root)) {
@@ -64,7 +63,7 @@ public class CleanZookeeper {
             byte[] id = zk.getData(instanceNamePath, null);
             if (id != null && !new String(id).equals(HdfsZooInstance.getInstance().getInstanceID())) {
               try {
-                zk.recursiveDelete(instanceNamePath, NodeMissingPolicy.SKIP);
+                zk.recursiveDelete(instanceNamePath);
               } catch (KeeperException.NoAuthException ex) {
                 log.warn("Unable to delete " + instanceNamePath);
               }
@@ -73,7 +72,7 @@ public class CleanZookeeper {
         } else if (!child.equals(HdfsZooInstance.getInstance().getInstanceID())) {
           String path = root + "/" + child;
           try {
-            zk.recursiveDelete(path, NodeMissingPolicy.SKIP);
+            zk.recursiveDelete(path);
           } catch (KeeperException.NoAuthException ex) {
             log.warn("Unable to delete " + path);
           }

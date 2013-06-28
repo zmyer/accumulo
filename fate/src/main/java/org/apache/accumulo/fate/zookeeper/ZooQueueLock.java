@@ -21,9 +21,9 @@ import java.util.List;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
+import org.apache.accumulo.fate.curator.CuratorReaderWriter;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.fate.zookeeper.DistributedReadWriteLock.QueueLock;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.NoNodeException;
 import org.apache.zookeeper.KeeperException.NotEmptyException;
@@ -34,16 +34,16 @@ public class ZooQueueLock implements QueueLock {
   
   // private static final Logger log = Logger.getLogger(ZooQueueLock.class);
   
-  private IZooReaderWriter zoo;
+  private CuratorReaderWriter zoo;
   private String path;
   private boolean ephemeral;
   
   public ZooQueueLock(String zookeepers, int timeInMillis, String scheme, byte[] auth, String path, boolean ephemeral) throws KeeperException,
       InterruptedException {
-    this(ZooReaderWriter.getRetryingInstance(zookeepers, timeInMillis, scheme, auth), path, ephemeral);
+    this(CuratorReaderWriter.getInstance(zookeepers, timeInMillis, scheme, auth), path, ephemeral);
   }
   
-  protected ZooQueueLock(IZooReaderWriter zrw, String path, boolean ephemeral) {
+  protected ZooQueueLock(CuratorReaderWriter zrw, String path, boolean ephemeral) {
     this.zoo = zrw;
     this.path = path;
     this.ephemeral = ephemeral;
@@ -104,7 +104,7 @@ public class ZooQueueLock implements QueueLock {
   @Override
   public void removeEntry(long entry) {
     try {
-      zoo.recursiveDelete(path + String.format("/%s%010d", PREFIX, entry), NodeMissingPolicy.SKIP);
+      zoo.recursiveDelete(path + String.format("/%s%010d", PREFIX, entry));
       try {
         // try to delete the parent if it has no children
         zoo.delete(path, -1);

@@ -27,10 +27,9 @@ import java.util.UUID;
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.cli.Help;
 import org.apache.accumulo.core.conf.Property;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
 import org.apache.accumulo.server.conf.ServerConfiguration;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.zookeeper.ZooLock;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.log4j.Logger;
 
 import com.beust.jcommander.Parameter;
@@ -153,7 +152,7 @@ public class ListInstances {
   
   private static TreeMap<String,UUID> getInstanceNames() {
     
-    IZooReaderWriter zk = ZooReaderWriter.getInstance();
+    CuratorReaderWriter zk = CuratorReaderWriter.getInstance();
     String instancesPath = Constants.ZROOT + Constants.ZINSTANCES;
     
     TreeMap<String,UUID> tm = new TreeMap<String,UUID>();
@@ -184,7 +183,7 @@ public class ListInstances {
   private static TreeSet<UUID> getInstanceIDs() {
     TreeSet<UUID> ts = new TreeSet<UUID>();
     
-    IZooReaderWriter zk = ZooReaderWriter.getInstance();
+    CuratorReaderWriter zk = CuratorReaderWriter.getInstance();
     
     try {
       List<String> children = zk.getChildren(Constants.ZROOT);

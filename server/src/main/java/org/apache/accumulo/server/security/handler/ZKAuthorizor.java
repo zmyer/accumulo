@@ -29,11 +29,9 @@ import org.apache.accumulo.core.security.SystemPermission;
 import org.apache.accumulo.core.security.TablePermission;
 import org.apache.accumulo.core.security.thrift.TCredentials;
 import org.apache.accumulo.core.util.MetadataTable;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.zookeeper.ZooCache;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 
@@ -74,7 +72,7 @@ public class ZKAuthorizor implements Authorizor {
   
   @Override
   public void initializeSecurity(TCredentials itw, String rootuser) throws AccumuloSecurityException {
-    IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     
     // create the root user with all system privileges, no table privileges, and no record-level authorizations
     Set<SystemPermission> rootPerms = new TreeSet<SystemPermission>();
@@ -105,7 +103,7 @@ public class ZKAuthorizor implements Authorizor {
    * @throws AccumuloSecurityException
    */
   public void initUser(String user) throws AccumuloSecurityException {
-    IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     try {
       zoo.putPersistentData(ZKUserPath + "/" + user, new byte[0], NodeExistsPolicy.SKIP);
     } catch (KeeperException e) {
@@ -121,8 +119,8 @@ public class ZKAuthorizor implements Authorizor {
   public void dropUser(String user) throws AccumuloSecurityException {
     try {
       synchronized (zooCache) {
-        IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
-        zoo.recursiveDelete(ZKUserPath + "/" + user + ZKUserAuths, NodeMissingPolicy.SKIP);
+        CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
+        zoo.recursiveDelete(ZKUserPath + "/" + user + ZKUserAuths);
         zooCache.clear(ZKUserPath + "/" + user);
       }
     } catch (InterruptedException e) {
@@ -142,7 +140,7 @@ public class ZKAuthorizor implements Authorizor {
     try {
       synchronized (zooCache) {
         zooCache.clear();
-        ZooReaderWriter.getRetryingInstance().putPersistentData(ZKUserPath + "/" + user + ZKUserAuths, ZKSecurityTool.convertAuthorizations(authorizations),
+        CuratorReaderWriter.getInstance().putPersistentData(ZKUserPath + "/" + user + ZKUserAuths, ZKSecurityTool.convertAuthorizations(authorizations),
             NodeExistsPolicy.OVERWRITE);
       }
     } catch (KeeperException e) {

@@ -16,7 +16,6 @@
  */
 package org.apache.accumulo.server.master;
 
-import static org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy.SKIP;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -42,6 +41,7 @@ import org.apache.accumulo.core.util.ServerServices;
 import org.apache.accumulo.core.util.ThriftUtil;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.curator.CuratorUtil;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.security.SecurityConstants;
 import org.apache.accumulo.server.util.AddressUtil;
@@ -49,7 +49,6 @@ import org.apache.accumulo.server.util.Halt;
 import org.apache.accumulo.server.util.time.SimpleTimer;
 import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.accumulo.server.zookeeper.ZooLock;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.accumulo.trace.instrument.Tracer;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.cache.ChildData;
@@ -395,7 +394,7 @@ public class LiveTServerSet {
     log.info("Removing zookeeper lock for " + server);
     String zpath = ZooUtil.getRoot(instance) + Constants.ZTSERVERS + "/" + server.hostPort();
     try {
-      ZooReaderWriter.getRetryingInstance().recursiveDelete(zpath, SKIP);
+      CuratorReaderWriter.getInstance().recursiveDelete(zpath);
     } catch (Exception e) {
       String msg = "error removing tablet server lock";
       log.fatal(msg, e);

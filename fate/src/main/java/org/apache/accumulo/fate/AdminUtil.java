@@ -27,9 +27,8 @@ import java.util.Map.Entry;
 import java.util.Set;
 
 import org.apache.accumulo.fate.TStore.TStatus;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter;
 import org.apache.accumulo.fate.zookeeper.ZooLock;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
 import org.apache.zookeeper.KeeperException;
 
 /**
@@ -57,11 +56,11 @@ public class AdminUtil<T> {
     this.exitOnError = exitOnError;
   }
   
-  public void print(ZooStore<T> zs, IZooReaderWriter zk, String lockPath) throws KeeperException, InterruptedException {
+  public void print(ZooStore<T> zs, CuratorReaderWriter zk, String lockPath) throws KeeperException, InterruptedException {
     print(zs, zk, lockPath, new Formatter(System.out), null, null);
   }
   
-  public void print(ZooStore<T> zs, IZooReaderWriter zk, String lockPath, Formatter fmt, Set<Long> filterTxid, EnumSet<TStatus> filterStatus)
+  public void print(ZooStore<T> zs, CuratorReaderWriter zk, String lockPath, Formatter fmt, Set<Long> filterTxid, EnumSet<TStatus> filterStatus)
       throws KeeperException, InterruptedException {
     Map<Long,List<String>> heldLocks = new HashMap<Long,List<String>>();
     Map<Long,List<String>> waitingLocks = new HashMap<Long,List<String>>();
@@ -162,7 +161,7 @@ public class AdminUtil<T> {
     }
   }
   
-  public boolean prepDelete(ZooStore<T> zs, IZooReaderWriter zk, String path, String txidStr) {
+  public boolean prepDelete(ZooStore<T> zs, CuratorReaderWriter zk, String path, String txidStr) {
     if (!checkGlobalLock(zk, path)) {
       return false;
     }
@@ -197,7 +196,7 @@ public class AdminUtil<T> {
     return state;
   }
   
-  public boolean prepFail(ZooStore<T> zs, IZooReaderWriter zk, String path, String txidStr) {
+  public boolean prepFail(ZooStore<T> zs, CuratorReaderWriter zk, String path, String txidStr) {
     if (!checkGlobalLock(zk, path)) {
       return false;
     }
@@ -239,7 +238,7 @@ public class AdminUtil<T> {
     return state;
   }
   
-  public void deleteLocks(ZooStore<T> zs, IZooReaderWriter zk, String path, String txidStr) throws KeeperException, InterruptedException {
+  public void deleteLocks(ZooStore<T> zs, CuratorReaderWriter zk, String path, String txidStr) throws KeeperException, InterruptedException {
     // delete any locks assoc w/ fate operation
     List<String> lockedIds = zk.getChildren(path);
     
@@ -250,14 +249,14 @@ public class AdminUtil<T> {
         byte[] data = zk.getData(path + "/" + id + "/" + node, null);
         String lda[] = new String(data).split(":");
         if (lda[1].equals(txidStr))
-          zk.recursiveDelete(lockPath, NodeMissingPolicy.SKIP);
+          zk.recursiveDelete(lockPath);
       }
     }
   }
   
-  public boolean checkGlobalLock(IZooReaderWriter zk, String path) {
+  public boolean checkGlobalLock(CuratorReaderWriter zk, String path) {
     try {
-      if (ZooLock.getLockData(zk.getZooKeeper(), path) != null) {
+      if (ZooLock.getLockData(zk.getCurator().getZookeeperClient().getZooKeeper(), path) != null) {
         System.err.println("ERROR: Master lock is held, not running");
         if (this.exitOnError)
           System.exit(1);
@@ -276,6 +275,8 @@ public class AdminUtil<T> {
         System.exit(1);
       else
         return false;
+    } catch (Exception e) {
+      throw new RuntimeException(e);
     }
     return true;
   }

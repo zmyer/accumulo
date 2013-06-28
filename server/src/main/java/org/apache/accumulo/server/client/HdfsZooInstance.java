@@ -40,7 +40,7 @@ import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.core.util.StringUtil;
 import org.apache.accumulo.core.util.TextUtil;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.ZooCache;
+import org.apache.accumulo.fate.curator.CuratorCaches;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.conf.ServerConfiguration;
 import org.apache.accumulo.server.zookeeper.ZooLock;
@@ -65,7 +65,7 @@ public class HdfsZooInstance implements Instance {
   
   private HdfsZooInstance() {
     AccumuloConfiguration acuConf = ServerConfiguration.getSiteConfiguration();
-    zooCache = new ZooCache(acuConf.get(Property.INSTANCE_ZK_HOST), (int) acuConf.getTimeInMillis(Property.INSTANCE_ZK_TIMEOUT));
+    zooCache = new CuratorCaches(acuConf.get(Property.INSTANCE_ZK_HOST), (int) acuConf.getTimeInMillis(Property.INSTANCE_ZK_TIMEOUT));
   }
   
   private static HdfsZooInstance cachedHdfsZooInstance = null;
@@ -76,7 +76,7 @@ public class HdfsZooInstance implements Instance {
     return cachedHdfsZooInstance;
   }
   
-  private static ZooCache zooCache;
+  private static CuratorCaches zooCache;
   private static String instanceId = null;
   private static final Logger log = Logger.getLogger(HdfsZooInstance.class);
   

@@ -23,7 +23,6 @@ import java.util.TreeMap;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import org.apache.accumulo.trace.thrift.RemoteSpan;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Range;
@@ -34,6 +33,7 @@ import org.apache.accumulo.server.monitor.util.Table;
 import org.apache.accumulo.server.monitor.util.celltypes.DurationType;
 import org.apache.accumulo.server.monitor.util.celltypes.NumberType;
 import org.apache.accumulo.server.monitor.util.celltypes.StringType;
+import org.apache.accumulo.trace.thrift.RemoteSpan;
 import org.apache.hadoop.io.Text;
 
 

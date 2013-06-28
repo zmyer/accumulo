@@ -27,23 +27,23 @@ import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.TableNotFoundException;
 import org.apache.accumulo.core.master.state.tables.TableState;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.curator.CuratorCaches;
 import org.apache.accumulo.fate.curator.CuratorUtil;
-import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.curator.framework.recipes.cache.ChildData;
 
 public class Tables {
   private static SecurityPermission TABLES_PERMISSION = new SecurityPermission("tablesPermission");
   
-  private static ZooCache getZooCache(Instance instance) {
+  private static CuratorCaches getZooCache(Instance instance) {
     SecurityManager sm = System.getSecurityManager();
     if (sm != null) {
       sm.checkPermission(TABLES_PERMISSION);
     }
-    return ZooCache.getInstance(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
+    return CuratorCaches.getInstance(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
   }
   
   private static SortedMap<String,String> getMap(Instance instance, boolean nameAsKey) {
-    ZooCache zc = getZooCache(instance);
+    CuratorCaches zc = getZooCache(instance);
     
     List<ChildData> tableIds = zc.getChildren(ZooUtil.getRoot(instance) + Constants.ZTABLES);
     
@@ -85,7 +85,7 @@ public class Tables {
   }
   
   public static boolean exists(Instance instance, String tableId) {
-    ZooCache zc = getZooCache(instance);
+    CuratorCaches zc = getZooCache(instance);
     ChildData table = zc.get(ZooUtil.getRoot(instance) + Constants.ZTABLES + '/' + tableId);
     return table != null;
   }
@@ -126,7 +126,7 @@ public class Tables {
   
   public static TableState getTableState(Instance instance, String tableId) {
     String statePath = ZooUtil.getRoot(instance) + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_STATE;
-    ZooCache zc = getZooCache(instance);
+    CuratorCaches zc = getZooCache(instance);
     byte[] state = zc.get(statePath).getData();
     if (state == null)
       return TableState.UNKNOWN;

@@ -20,8 +20,8 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 
 import org.apache.accumulo.core.conf.Property;
-import org.apache.accumulo.server.master.Master;
 import org.apache.accumulo.server.fs.VolumeManager;
+import org.apache.accumulo.server.master.Master;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;

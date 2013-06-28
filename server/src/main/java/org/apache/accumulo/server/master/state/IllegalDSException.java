@@ -16,7 +16,6 @@
  */
 package org.apache.accumulo.server.master.state;
 
-import org.apache.accumulo.server.master.state.DistributedStoreException;
 
 public class IllegalDSException extends DistributedStoreException {
 

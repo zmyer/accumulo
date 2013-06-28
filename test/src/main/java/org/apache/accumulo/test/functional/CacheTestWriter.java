@@ -27,17 +27,15 @@ import java.util.TreeMap;
 import java.util.UUID;
 
 import org.apache.accumulo.core.util.UtilWaitThread;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 
 public class CacheTestWriter {
   
   static final int NUM_DATA = 3;
   
   public static void main(String[] args) throws Exception {
-    IZooReaderWriter zk = ZooReaderWriter.getInstance();
+    CuratorReaderWriter zk = CuratorReaderWriter.getInstance();
     
     String rootDir = args[0];
     File reportDir = new File(args[1]);
@@ -74,7 +72,7 @@ public class CacheTestWriter {
         } else if (children.size() > 0) {
           int index = r.nextInt(children.size());
           String child = children.remove(index);
-          zk.recursiveDelete(rootDir + "/dir/" + child, NodeMissingPolicy.FAIL);
+          zk.recursiveDelete(rootDir + "/dir/" + child);
         }
         
         for (String child : children) {
@@ -104,7 +102,7 @@ public class CacheTestWriter {
           
         } else {
           if (dataSExists) {
-            zk.recursiveDelete(rootDir + "/dataS", NodeMissingPolicy.FAIL);
+            zk.recursiveDelete(rootDir + "/dataS");
             dataSExists = false;
           }
         }

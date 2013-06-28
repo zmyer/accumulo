@@ -24,8 +24,8 @@ import java.util.Set;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.util.time.SimpleTimer;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
@@ -45,7 +45,7 @@ public class DistributedWorkQueue {
   private static final Logger log = Logger.getLogger(DistributedWorkQueue.class);
   
   private ThreadPoolExecutor threadPool;
-  private ZooReaderWriter zoo = ZooReaderWriter.getInstance();
+  private CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
   private String path;
 
   private AtomicInteger numTask = new AtomicInteger(0);
@@ -80,13 +80,13 @@ public class DistributedWorkQueue {
         
         // check to see if another node processed it already
         if (!zoo.exists(childPath)) {
-          zoo.recursiveDelete(lockPath, NodeMissingPolicy.SKIP);
+          zoo.recursiveDelete(lockPath);
           continue;
         }
 
         // Great... we got the lock, but maybe we're too busy
         if (numTask.get() >= threadPool.getCorePoolSize()) {
-          zoo.recursiveDelete(lockPath, NodeMissingPolicy.SKIP);
+          zoo.recursiveDelete(lockPath);
           break;
         }
         
@@ -102,7 +102,7 @@ public class DistributedWorkQueue {
                 
                 // if the task fails, then its entry in the Q is not deleted... so it will be retried
                 try {
-                  zoo.recursiveDelete(childPath, NodeMissingPolicy.SKIP);
+                  zoo.recursiveDelete(childPath);
                 } catch (Exception e) {
                   log.error("Error received when trying to delete entry in zookeeper " + childPath, e);
                 }
@@ -112,7 +112,7 @@ public class DistributedWorkQueue {
               }
               
               try {
-                zoo.recursiveDelete(lockPath, NodeMissingPolicy.SKIP);
+                zoo.recursiveDelete(lockPath);
               } catch (Exception e) {
                 log.error("Error received when trying to delete entry in zookeeper " + childPath, e);
               }

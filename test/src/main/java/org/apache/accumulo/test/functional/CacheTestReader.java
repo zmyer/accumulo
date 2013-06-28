@@ -25,7 +25,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 
 import org.apache.accumulo.core.util.UtilWaitThread;
-import org.apache.accumulo.fate.zookeeper.ZooCache;
+import org.apache.accumulo.fate.curator.CuratorCaches;
 
 public class CacheTestReader {
   public static void main(String[] args) throws Exception {
@@ -37,7 +37,7 @@ public class CacheTestReader {
     File myfile = new File(reportDir + "/" + UUID.randomUUID());
     myfile.deleteOnExit();
     
-    ZooCache zc = new ZooCache(keepers, 30000);
+    CuratorCaches zc = new CuratorCaches(keepers, 30000);
     
     while (true) {
       if (myfile.exists())

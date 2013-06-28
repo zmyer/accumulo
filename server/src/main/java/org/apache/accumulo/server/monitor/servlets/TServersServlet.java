@@ -27,7 +27,6 @@ import java.util.Map.Entry;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import org.apache.accumulo.trace.instrument.Tracer;
 import org.apache.accumulo.core.data.KeyExtent;
 import org.apache.accumulo.core.master.thrift.DeadServer;
 import org.apache.accumulo.core.master.thrift.MasterMonitorInfo;
@@ -53,6 +52,7 @@ import org.apache.accumulo.server.monitor.util.celltypes.TServerLinkType;
 import org.apache.accumulo.server.monitor.util.celltypes.TableLinkType;
 import org.apache.accumulo.server.security.SecurityConstants;
 import org.apache.accumulo.server.tabletserver.TabletStatsKeeper;
+import org.apache.accumulo.trace.instrument.Tracer;
 import org.apache.commons.codec.binary.Base64;
 
 public class TServersServlet extends BasicServlet {

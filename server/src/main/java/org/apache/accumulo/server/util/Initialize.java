@@ -47,14 +47,12 @@ import org.apache.accumulo.core.security.SecurityUtil;
 import org.apache.accumulo.core.util.CachedConfiguration;
 import org.apache.accumulo.core.util.MetadataTable;
 import org.apache.accumulo.core.util.RootTable;
-import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
 import org.apache.accumulo.server.constraints.MetadataConstraints;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.accumulo.server.iterators.MetadataBulkLoadFilter;
@@ -62,7 +60,6 @@ import org.apache.accumulo.server.master.state.tables.TableManager;
 import org.apache.accumulo.server.security.AuditedSecurityOperation;
 import org.apache.accumulo.server.security.SecurityConstants;
 import org.apache.accumulo.server.tabletserver.TabletTime;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -192,7 +189,7 @@ public class Initialize {
   }
   
   private static boolean zookeeperAvailable() {
-    IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     try {
       return zoo.exists("/");
     } catch (KeeperException e) {
@@ -345,13 +342,13 @@ public class Initialize {
   
   private static void initZooKeeper(Opts opts, String uuid, String instanceNamePath) throws KeeperException, InterruptedException {
     // setup basic data in zookeeper
-    IZooReaderWriter zoo = ZooReaderWriter.getInstance();
-    ZooUtil.putPersistentData(zoo.getZooKeeper(), Constants.ZROOT, new byte[0], -1, NodeExistsPolicy.SKIP, Ids.OPEN_ACL_UNSAFE);
-    ZooUtil.putPersistentData(zoo.getZooKeeper(), Constants.ZROOT + Constants.ZINSTANCES, new byte[0], -1, NodeExistsPolicy.SKIP, Ids.OPEN_ACL_UNSAFE);
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
+    zoo.putPersistentDataWithACL(Constants.ZROOT, new byte[0], NodeExistsPolicy.SKIP, Ids.OPEN_ACL_UNSAFE);
+    zoo.putPersistentDataWithACL(Constants.ZROOT + Constants.ZINSTANCES, new byte[0], NodeExistsPolicy.SKIP, Ids.OPEN_ACL_UNSAFE);
     
     // setup instance name
     if (opts.clearInstanceName)
-      zoo.recursiveDelete(instanceNamePath, NodeMissingPolicy.SKIP);
+      zoo.recursiveDelete(instanceNamePath);
     zoo.putPersistentData(instanceNamePath, uuid.getBytes(), NodeExistsPolicy.FAIL);
     
     // setup the instance
@@ -396,7 +393,7 @@ public class Initialize {
       if (opts.clearInstanceName) {
         exists = false;
         break;
-      } else if (exists = ZooReaderWriter.getInstance().exists(instanceNamePath)) {
+      } else if (exists = CuratorReaderWriter.getInstance().exists(instanceNamePath)) {
         String decision = getConsoleReader().readLine("Instance name \"" + instanceName + "\" exists. Delete existing entry from zookeeper? [Y/N] : ");
         if (decision == null)
           System.exit(0);

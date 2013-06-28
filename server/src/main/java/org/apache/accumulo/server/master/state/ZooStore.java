@@ -20,12 +20,10 @@ import java.io.IOException;
 import java.util.List;
 
 import org.apache.accumulo.core.zookeeper.ZooUtil;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeExistsPolicy;
-import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.zookeeper.ZooCache;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 
@@ -76,7 +74,7 @@ public class ZooStore implements DistributedStore {
   public void put(String path, byte[] bs) throws DistributedStoreException {
     try {
       path = relative(path);
-      ZooReaderWriter.getInstance().putPersistentData(path, bs, NodeExistsPolicy.OVERWRITE);
+      CuratorReaderWriter.getInstance().putPersistentData(path, bs, NodeExistsPolicy.OVERWRITE);
       cache.clear();
       log.debug("Wrote " + new String(bs) + " to " + path);
     } catch (Exception ex) {
@@ -89,9 +87,9 @@ public class ZooStore implements DistributedStore {
     try {
       log.debug("Removing " + path);
       path = relative(path);
-      IZooReaderWriter zoo = ZooReaderWriter.getInstance();
+      CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
       if (zoo.exists(path))
-        zoo.recursiveDelete(path, NodeMissingPolicy.SKIP);
+        zoo.recursiveDelete(path);
       cache.clear();
     } catch (Exception ex) {
       throw new DistributedStoreException(ex);

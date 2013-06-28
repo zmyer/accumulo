@@ -19,14 +19,13 @@ package org.apache.accumulo.server.security.handler;
 import java.util.Set;
 import java.util.TreeSet;
 
+import junit.framework.TestCase;
+
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.security.SystemPermission;
 import org.apache.accumulo.core.security.TablePermission;
 import org.apache.accumulo.core.util.ByteArraySet;
-import org.apache.accumulo.server.security.handler.ZKSecurityTool;
-
-import junit.framework.TestCase;
 
 public class ZKAuthenticatorTest extends TestCase {
   public void testPermissionIdConversions() {

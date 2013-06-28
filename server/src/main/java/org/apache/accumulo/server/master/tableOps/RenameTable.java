@@ -24,10 +24,9 @@ import org.apache.accumulo.core.client.impl.thrift.TableOperationExceptionType;
 import org.apache.accumulo.core.client.impl.thrift.ThriftTableOperationException;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.Repo;
-import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
-import org.apache.accumulo.fate.zookeeper.ZooReaderWriter.Mutator;
+import org.apache.accumulo.fate.curator.CuratorReaderWriter.Mutator;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.master.Master;
-import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.log4j.Logger;
 
 public class RenameTable extends MasterRepo {
@@ -53,14 +52,14 @@ public class RenameTable extends MasterRepo {
     
     Instance instance = master.getInstance();
     
-    IZooReaderWriter zoo = ZooReaderWriter.getRetryingInstance();
+    CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     Utils.tableNameLock.lock();
     try {
       Utils.checkTableDoesNotExist(instance, newTableName, tableId, TableOperation.RENAME);
       
       final String tap = ZooUtil.getRoot(instance) + Constants.ZTABLES + "/" + tableId + Constants.ZTABLE_NAME;
       
-      zoo.mutate(tap, null, null, new Mutator() {
+      zoo.mutate(tap, null, false, new Mutator() {
         public byte[] mutate(byte[] current) throws Exception {
           final String currentName = new String(current);
           if (currentName.equals(newTableName))
