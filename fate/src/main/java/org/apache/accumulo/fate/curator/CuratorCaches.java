@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.accumulo.fate.zookeeper;
+package org.apache.accumulo.fate.curator;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -23,7 +23,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.curator.framework.recipes.cache.NodeCache;
@@ -38,19 +37,19 @@ import org.apache.log4j.Logger;
  * Caches values stored in zookeeper and keeps them up to date as they change in zookeeper.
  * 
  */
-public class ZooCache {
-  private static final Logger log = Logger.getLogger(ZooCache.class);
+public class CuratorCaches {
+  private static final Logger log = Logger.getLogger(CuratorCaches.class);
   
   private HashMap<String,NodeCache> nodeCache;
   private HashMap<String,PathChildrenCache> childrenCache;
   
   private CuratorFramework curator;
   
-  public ZooCache(String zooKeepers, int sessionTimeout) {
-    this(CuratorUtil.constructCurator(zooKeepers, sessionTimeout, null));
+  public CuratorCaches(String zooKeepers, int sessionTimeout) {
+    this(CuratorSession.getSession(zooKeepers, sessionTimeout));
   }
   
-  public ZooCache(CuratorFramework curator) {
+  public CuratorCaches(CuratorFramework curator) {
     this.curator = curator;
     this.nodeCache = new HashMap<String,NodeCache>();
     this.childrenCache = new HashMap<String,PathChildrenCache>();
@@ -204,13 +203,13 @@ public class ZooCache {
       remove(path);
   }
   
-  private static Map<String,ZooCache> instances = new HashMap<String,ZooCache>();
+  private static Map<String,CuratorCaches> instances = new HashMap<String,CuratorCaches>();
   
-  public static synchronized ZooCache getInstance(String zooKeepers, int sessionTimeout) {
+  public static synchronized CuratorCaches getInstance(String zooKeepers, int sessionTimeout) {
     String key = zooKeepers + ":" + sessionTimeout;
-    ZooCache zc = instances.get(key);
+    CuratorCaches zc = instances.get(key);
     if (zc == null) {
-      zc = new ZooCache(zooKeepers, sessionTimeout);
+      zc = new CuratorCaches(zooKeepers, sessionTimeout);
       instances.put(key, zc);
     }
     
