@@ -19,34 +19,31 @@ package org.apache.accumulo.server.curator;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.server.conf.ServerConfiguration;
-import org.apache.log4j.Logger;
 
-public class CuratorReaderWriter extends org.apache.accumulo.fate.curator.CuratorReaderWriter {
-  protected static final String SCHEME = "digest";
-  protected static final String USER = "accumulo";
-  private static CuratorReaderWriter instance = null;
-  
-  private CuratorReaderWriter(String string, int timeInMillis, String secret) {
-    super(string, timeInMillis, SCHEME, (USER + ":" + secret).getBytes());
+public class CuratorCaches extends org.apache.accumulo.fate.curator.CuratorCaches {
+  private static CuratorCaches instance = null;
+
+  private CuratorCaches(String string, int timeInMillis, String secret) {
+    super(string, timeInMillis, CuratorReaderWriter.SCHEME, (CuratorReaderWriter.USER + ":" + secret).getBytes());
   }
   
-  public static CuratorReaderWriter getInstance() {
+  public static CuratorCaches getInstance() {
     AccumuloConfiguration conf = ServerConfiguration.getSiteConfiguration();
     return getInstance(conf.get(Property.INSTANCE_ZK_HOST), (int) conf.getTimeInMillis(Property.INSTANCE_ZK_TIMEOUT), conf.get(Property.INSTANCE_SECRET));
   }
   
-  public static CuratorReaderWriter getInstance(String secret) {
+  public static CuratorCaches getInstance(String secret) {
     AccumuloConfiguration conf = ServerConfiguration.getSiteConfiguration();
     return getInstance(conf.get(Property.INSTANCE_ZK_HOST), (int) conf.getTimeInMillis(Property.INSTANCE_ZK_TIMEOUT), secret);
   }
   
-  // This probably doesn't need to be singletons since the CuratorFrameworks are already treated as such. CuratorReaderWriter is pretty lightweight.
-  public static synchronized CuratorReaderWriter getInstance(String zkHosts, int timeout, String secret) {
+  // This should be a singleton since the caches are here.
+  public static synchronized CuratorCaches getInstance(String zkHosts, int timeout, String secret) {
     if (instance == null) {
-      instance = new CuratorReaderWriter(zkHosts, timeout, secret);
-    } else {
-      Logger.getLogger(CuratorReaderWriter.class).error("Returning caches curator against " + instance.getCurator().getZookeeperClient().getCurrentConnectionString(), new RuntimeException());
-    }
+      instance = new CuratorCaches(zkHosts, timeout, secret);
+    } 
+
     return instance;
   }
+
 }

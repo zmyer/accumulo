@@ -78,7 +78,6 @@ public class ClientServiceHandler implements ClientService.Iface {
     String tableId = Tables.getNameToIdMap(instance).get(tableName);
     if (tableId == null) {
       // maybe the table exist, but the cache was not updated yet... so try to clear the cache and check again
-      Tables.clearCache(instance);
       tableId = Tables.getNameToIdMap(instance).get(tableName);
       if (tableId == null)
         throw new ThriftTableOperationException(null, tableName, operation, TableOperationExceptionType.NOTFOUND, null);

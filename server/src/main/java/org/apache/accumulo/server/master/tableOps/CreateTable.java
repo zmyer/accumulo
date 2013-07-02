@@ -23,7 +23,6 @@ import java.util.Map.Entry;
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.admin.TimeType;
-import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.impl.thrift.TableOperation;
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.data.KeyExtent;
@@ -153,7 +152,7 @@ class CreateDir extends MasterRepo {
   @Override
   public void undo(long tid, Master master) throws Exception {
     VolumeManager fs = master.getFileSystem();
-    for(String dir : ServerConstants.getTablesDirs()) {
+    for (String dir : ServerConstants.getTablesDirs()) {
       fs.deleteRecursively(new Path(dir + "/" + tableInfo.tableId));
     }
     
@@ -191,7 +190,6 @@ class PopulateZookeeper extends MasterRepo {
       for (Entry<String,String> entry : tableInfo.props.entrySet())
         TablePropUtil.setTableProperty(tableInfo.tableId, entry.getKey(), entry.getValue());
       
-      Tables.clearCache(instance);
       return new CreateDir(tableInfo);
     } finally {
       Utils.tableNameLock.unlock();
@@ -201,10 +199,8 @@ class PopulateZookeeper extends MasterRepo {
   
   @Override
   public void undo(long tid, Master master) throws Exception {
-    Instance instance = master.getInstance();
     TableManager.getInstance().removeTable(tableInfo.tableId);
     Utils.unreserveTable(tableInfo.tableId, tid, true);
-    Tables.clearCache(instance);
   }
   
 }
@@ -232,9 +228,7 @@ class SetupPermissions extends MasterRepo {
       }
     }
     
-    // setup permissions in zookeeper before table info in zookeeper
-    // this way concurrent users will not get a spurious permission denied
-    // error
+    // setup permissions in zookeeper before table info in zookeeper this way concurrent users will not get a spurious permission denied error
     return new PopulateZookeeper(tableInfo);
   }
   

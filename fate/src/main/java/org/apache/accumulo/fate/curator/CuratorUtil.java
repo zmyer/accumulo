@@ -16,7 +16,6 @@
  */
 package org.apache.accumulo.fate.curator;
 
-import java.io.File;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -27,7 +26,9 @@ import java.util.List;
 import org.apache.accumulo.fate.util.UtilWaitThread;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.cache.ChildData;
+import org.apache.curator.utils.ZKPaths;
 import org.apache.zookeeper.KeeperException;
+import org.apache.zookeeper.KeeperException.Code;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.common.PathUtils;
 import org.apache.zookeeper.data.Stat;
@@ -37,20 +38,24 @@ public class CuratorUtil {
     SKIP, CREATE, FAIL
   }
   
+  @Deprecated
   public static String getNodeName(ChildData node) {
     return getNodeName(node.getPath());
   }
   
+  @Deprecated
   public static String getNodeName(String nodePath) {
-    return new File(nodePath).getName();
+    return ZKPaths.getNodeFromPath(nodePath);
   }
   
+  @Deprecated
   public static String getNodeParent(ChildData node) {
     return getNodeParent(node.getPath());
   }
   
+  @Deprecated
   public static String getNodeParent(String nodePath) {
-    return new File(nodePath).getParent();
+    return ZKPaths.getPathAndNode(nodePath).getPath();
   }
   
   public static void recursiveDelete(CuratorFramework curator, final String pathRoot, int version) throws KeeperException, InterruptedException {
@@ -62,6 +67,11 @@ public class CuratorUtil {
       try {
         curator.delete().withVersion(version).forPath(tree.get(i));
       } catch (Exception e) {
+        if (e instanceof KeeperException) {
+          KeeperException ke = (KeeperException) e;
+          if (ke.code().equals(Code.NONODE))
+            continue;
+        }
         throw CuratorUtil.manageException(e);
       } // Delete all versions of the node
     }
@@ -81,6 +91,11 @@ public class CuratorUtil {
       try {
         children = curator.getChildren().forPath(node);
       } catch (Exception e) {
+        if (e instanceof KeeperException) {
+          KeeperException ke = (KeeperException) e;
+          if (ke.code().equals(Code.NONODE))
+            continue;
+        }
         throw CuratorUtil.manageException(e);
       }
       for (final String child : children) {

@@ -21,7 +21,6 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.accumulo.core.client.Instance;
-import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.impl.thrift.TableOperation;
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.master.state.tables.TableState;
@@ -146,7 +145,6 @@ class CloneZookeeper extends MasterRepo {
       
       TableManager.getInstance().cloneTable(cloneInfo.srcTableId, cloneInfo.tableId, cloneInfo.tableName, cloneInfo.propertiesToSet,
           cloneInfo.propertiesToExclude, NodeExistsPolicy.OVERWRITE);
-      Tables.clearCache(instance);
       return new CloneMetadata(cloneInfo);
     } finally {
       Utils.tableNameLock.unlock();
@@ -155,10 +153,8 @@ class CloneZookeeper extends MasterRepo {
   
   @Override
   public void undo(long tid, Master environment) throws Exception {
-    Instance instance = HdfsZooInstance.getInstance();
     TableManager.getInstance().removeTable(cloneInfo.tableId);
     Utils.unreserveTable(cloneInfo.tableId, tid, true);
-    Tables.clearCache(instance);
   }
   
 }

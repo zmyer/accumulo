@@ -2317,7 +2317,8 @@ public class Tablet {
     try {
       String zTablePath = Constants.ZROOT + "/" + HdfsZooInstance.getInstance().getInstanceID() + Constants.ZTABLES + "/" + extent.getTableId()
           + Constants.ZTABLE_FLUSH_ID;
-      return Long.parseLong(new String(CuratorReaderWriter.getInstance().getData(zTablePath, null)));
+      byte[] flushId = CuratorReaderWriter.getInstance().getData(zTablePath);
+      return Long.parseLong(new String(flushId));
     } catch (InterruptedException e) {
       throw new RuntimeException(e);
     } catch (NumberFormatException nfe) {
@@ -2336,7 +2337,7 @@ public class Tablet {
         + Constants.ZTABLE_COMPACT_CANCEL_ID;
     
     try {
-      return Long.parseLong(new String(CuratorReaderWriter.getInstance().getData(zTablePath, null)));
+      return Long.parseLong(new String(CuratorReaderWriter.getInstance().getData(zTablePath)));
     } catch (KeeperException e) {
       throw new RuntimeException(e);
     } catch (InterruptedException e) {
@@ -2349,7 +2350,7 @@ public class Tablet {
       String zTablePath = Constants.ZROOT + "/" + HdfsZooInstance.getInstance().getInstanceID() + Constants.ZTABLES + "/" + extent.getTableId()
           + Constants.ZTABLE_COMPACT_ID;
       
-      String[] tokens = new String(CuratorReaderWriter.getInstance().getData(zTablePath, null)).split(",");
+      String[] tokens = new String(CuratorReaderWriter.getInstance().getData(zTablePath)).split(",");
       long compactID = Long.parseLong(tokens[0]);
       
       CompactionIterators iters = new CompactionIterators();

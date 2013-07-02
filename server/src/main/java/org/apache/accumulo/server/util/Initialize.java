@@ -235,7 +235,7 @@ public class Initialize {
     fs.mkdirs(ServerConstants.getInstanceIdLocation());
     fs.createNewFile(new Path(ServerConstants.getInstanceIdLocation(), uuid.toString()));
     
-    // initialize initial metadata config in zookeeper
+    // initialize initial metadata config
     initMetadataConfig();
     
     // create metadata table

@@ -28,8 +28,8 @@ import org.apache.accumulo.core.client.security.tokens.AuthenticationToken;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
 import org.apache.accumulo.core.security.thrift.TCredentials;
 import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
+import org.apache.accumulo.server.curator.CuratorCaches;
 import org.apache.accumulo.server.curator.CuratorReaderWriter;
-import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
@@ -40,7 +40,7 @@ public final class ZKAuthenticator implements Authenticator {
   private static Authenticator zkAuthenticatorInstance = null;
   
   private String ZKUserPath;
-  private final ZooCache zooCache;
+  private final CuratorCaches zooCache;
   
   public static synchronized Authenticator getInstance() {
     if (zkAuthenticatorInstance == null)
@@ -49,7 +49,7 @@ public final class ZKAuthenticator implements Authenticator {
   }
   
   public ZKAuthenticator() {
-    zooCache = new ZooCache();
+    zooCache = CuratorCaches.getInstance();
   }
   
   public void initialize(String instanceId, boolean initialize) {
@@ -150,7 +150,6 @@ public final class ZKAuthenticator implements Authenticator {
     if (userExists(principal)) {
       try {
         synchronized (zooCache) {
-          zooCache.clear(ZKUserPath + "/" + principal);
           CuratorReaderWriter.getInstance().putPrivatePersistentData(ZKUserPath + "/" + principal, ZKSecurityTool.createPass(pt.getPassword()),
               NodeExistsPolicy.OVERWRITE);
         }

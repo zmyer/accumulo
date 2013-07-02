@@ -31,15 +31,14 @@ import org.apache.accumulo.core.conf.ConfigurationObserver;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.curator.CuratorUtil;
-import org.apache.accumulo.server.client.HdfsZooInstance;
-import org.apache.accumulo.server.zookeeper.ZooCache;
+import org.apache.accumulo.server.curator.CuratorCaches;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 
 public class TableConfiguration extends AccumuloConfiguration {
   private static final Logger log = Logger.getLogger(TableConfiguration.class);
   
-  private static ZooCache tablePropCache = null;
+  private static CuratorCaches tablePropCache = null;
   private final String instanceId;
   private final AccumuloConfiguration parent;
   
@@ -55,7 +54,7 @@ public class TableConfiguration extends AccumuloConfiguration {
     if (tablePropCache == null)
       synchronized (TableConfiguration.class) {
         if (tablePropCache == null)
-          tablePropCache = new ZooCache(HdfsZooInstance.getInstance().getConfiguration());
+          tablePropCache = CuratorCaches.getInstance();
       }
     String confPath = ZooUtil.getRoot(instanceId) + Constants.ZTABLES + '/' + table + Constants.ZTABLE_CONF;
     tablePropCache.getChildren(confPath, new TableConfWatcher(this));

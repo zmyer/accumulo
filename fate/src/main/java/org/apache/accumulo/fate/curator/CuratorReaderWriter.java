@@ -18,9 +18,12 @@ package org.apache.accumulo.fate.curator;
 
 import java.security.SecurityPermission;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.curator.framework.CuratorFramework;
+import org.apache.curator.utils.EnsurePath;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
@@ -31,17 +34,10 @@ import org.apache.zookeeper.data.Stat;
 
 public class CuratorReaderWriter extends CuratorReader {
   private static SecurityPermission ZOOWRITER_PERMISSION = new SecurityPermission("zookeeperWriterPermission");
+  private static Logger log = Logger.getLogger(CuratorReaderWriter.class);
   
-  protected CuratorReaderWriter(String zooKeepers, int sessionTimeout, String scheme, byte[] auth) {
+  public CuratorReaderWriter(String zooKeepers, int sessionTimeout, String scheme, byte[] auth) {
     super(constructCurator(zooKeepers, sessionTimeout, scheme, auth));
-  }
-  
-  private static CuratorReaderWriter instance = null;
-  
-  public static synchronized CuratorReaderWriter getInstance(String zookeepers, int timeInMillis, String scheme, byte[] auth) {
-    if (instance == null)
-      instance = new CuratorReaderWriter(zookeepers, timeInMillis, scheme, auth);
-    return instance;
   }
   
   private static CuratorFramework constructCurator(String zooKeepers, int sessionTimeout, String scheme, byte[] auth) {
@@ -83,12 +79,11 @@ public class CuratorReaderWriter extends CuratorReader {
     CuratorFramework curator = getCurator();
     try {
       boolean exists = curator.checkExists().forPath(zPath) != null;
-
-      
-      if (!exists || policy.equals(NodeExistsPolicy.SEQUENTIAL)) {
+      // TODO this should probably be tweaked by to a try catch based implementation
+      // Needs to be made (caseless), needs to make the sequential node (Sequential), or needs to fail (FAIL)
+      if (!exists || policy.equals(NodeExistsPolicy.SEQUENTIAL) || policy.equals(NodeExistsPolicy.FAIL)) {
         return curator.create().withMode(mode).withACL(acls).forPath(zPath, data);
-      }
-      else if (policy.equals(NodeExistsPolicy.OVERWRITE)) {
+      } else if (policy.equals(NodeExistsPolicy.OVERWRITE)) {
         curator.setData().withVersion(version).forPath(zPath, data);
         return zPath;
       }
@@ -107,8 +102,7 @@ public class CuratorReaderWriter extends CuratorReader {
     return putPersistentData(zPath, data, -1, policy);
   }
   
-  public boolean putPersistentDataWithACL(String zPath, byte[] data, NodeExistsPolicy policy, List<ACL> acls)
-      throws KeeperException, InterruptedException {
+  public boolean putPersistentDataWithACL(String zPath, byte[] data, NodeExistsPolicy policy, List<ACL> acls) throws KeeperException, InterruptedException {
     return putData(zPath, data, CreateMode.PERSISTENT, -1, policy, acls) != null;
   }
   
@@ -191,9 +185,9 @@ public class CuratorReaderWriter extends CuratorReader {
     if (data == null)
       return data;
     if (privateACL)
-      putPrivatePersistentData(zPath, createValue, NodeExistsPolicy.OVERWRITE);
+      putPrivatePersistentData(zPath, data, NodeExistsPolicy.OVERWRITE);
     else
-      putPersistentData(zPath, createValue, NodeExistsPolicy.OVERWRITE);
+      putPersistentData(zPath, data, NodeExistsPolicy.OVERWRITE);
     return data;
   }
   
@@ -205,6 +199,23 @@ public class CuratorReaderWriter extends CuratorReader {
     }
   }
   
+  Map<String,EnsurePath> ensurePaths = new HashMap<String,EnsurePath>();
+  
+  public void ensurePath(String path) throws KeeperException, InterruptedException {
+    EnsurePath ep = ensurePaths.get(path);
+    if (ep == null) {
+      ep = getCurator().newNamespaceAwareEnsurePath(path);
+      ensurePaths.put(path, ep);
+    }
+    try {
+      ep.ensure(getCurator().getZookeeperClient());
+    } catch (Exception e) {
+      throw CuratorUtil.manageException(e);
+    }
+  }
+  
+  // Should probably be using ensurePath
+  @Deprecated
   public void mkdirs(String path) throws KeeperException, InterruptedException {
     try {
       getCurator().create().creatingParentsIfNeeded().forPath(path);

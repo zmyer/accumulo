@@ -77,6 +77,7 @@ import org.apache.accumulo.server.Accumulo;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
+import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.accumulo.server.master.state.tables.TableManager;
@@ -160,6 +161,8 @@ public class SimpleGarbageCollector implements Iface {
     gc.init(fs, instance, SecurityConstants.getSystemCredentials(), serverConf.getConfiguration().getBoolean(Property.GC_TRASH_IGNORE));
     Accumulo.enableTracing(address, "gc");
     gc.run();
+    
+    CuratorReaderWriter.getInstance().getCurator().close();
   }
   
   public SimpleGarbageCollector() {}
@@ -349,7 +352,6 @@ public class SimpleGarbageCollector implements Iface {
       }
     }
     
-    Tables.clearCache(instance);
     Set<String> tableIdsInZookeeper = Tables.getIdToNameMap(instance).keySet();
     
     tableIdsWithDeletes.removeAll(tableIdsInZookeeper);

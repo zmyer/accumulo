@@ -42,7 +42,6 @@ public class UniqueNameAllocator {
   }
   
   public synchronized String getNextName() {
-    
     while (next >= maxAllocated) {
       final int allocate = 100 + rand.nextInt(100);
       

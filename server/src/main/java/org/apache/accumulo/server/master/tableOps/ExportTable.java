@@ -77,7 +77,6 @@ class WriteExportFiles extends MasterRepo {
   
   private void checkOffline(Connector conn) throws Exception {
     if (Tables.getTableState(conn.getInstance(), tableInfo.tableID) != TableState.OFFLINE) {
-      Tables.clearCache(conn.getInstance());
       if (Tables.getTableState(conn.getInstance(), tableInfo.tableID) != TableState.OFFLINE) {
         throw new ThriftTableOperationException(tableInfo.tableID, tableInfo.tableName, TableOperation.EXPORT, TableOperationExceptionType.OTHER,
             "Table is not offline");

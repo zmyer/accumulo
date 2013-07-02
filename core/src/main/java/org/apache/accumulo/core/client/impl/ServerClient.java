@@ -49,7 +49,7 @@ public class ServerClient {
   private synchronized static CuratorCaches getZooCache(Instance instance) {
     CuratorCaches result = zooCaches.get(instance.getZooKeepers());
     if (result == null) {
-      result = new CuratorCaches(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
+      result = CuratorCaches.getInstance(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut());
       zooCaches.put(instance.getZooKeepers(), result);
     }
     return result;

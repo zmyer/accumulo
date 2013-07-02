@@ -32,7 +32,7 @@ public class CuratorReader {
   private CuratorFramework curator;
   
   public CuratorReader(String zooKeepers, int sessionTimeout) {
-    this(CuratorSession.getSession(zooKeepers, sessionTimeout));
+    this(CuratorSession.getSession(zooKeepers, sessionTimeout, null, null));
   }
   
   public CuratorReader(String zooKeepers, int sessionTimeout, String scheme, byte[] auth) {
@@ -52,7 +52,11 @@ public class CuratorReader {
     try {
       return getCurator().getData().forPath(zPath);
     } catch (Exception e) {
-      throw CuratorUtil.manageException(e);
+      try {
+        throw CuratorUtil.manageException(e);
+      } catch (KeeperException.NoNodeException nne) {
+        return null;
+      }
     }
   }
   
@@ -60,7 +64,11 @@ public class CuratorReader {
     try {
       return getCurator().getData().storingStatIn(stat).forPath(zPath);
     } catch (Exception e) {
-      throw CuratorUtil.manageException(e);
+      try {
+        throw CuratorUtil.manageException(e);
+      } catch (KeeperException.NoNodeException nne) {
+        return null;
+      }
     }
   }
   

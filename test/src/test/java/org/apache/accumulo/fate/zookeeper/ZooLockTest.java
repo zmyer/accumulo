@@ -35,9 +35,6 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-/**
- * 
- */
 public class ZooLockTest {
   
   public static TemporaryFolder folder = new TemporaryFolder();
@@ -100,6 +97,7 @@ public class ZooLockTest {
   
   private static int pdCount = 0;
   
+  @Deprecated
   @Test(timeout = 10000)
   public void testDeleteParent() throws Exception {
     accumulo.getConfig().getZooKeepers();
@@ -110,7 +108,7 @@ public class ZooLockTest {
     
     Assert.assertFalse(zl.isLocked());
     
-    CuratorReaderWriter zk = CuratorReaderWriter.getInstance(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
+    CuratorReaderWriter zk = new CuratorReaderWriter(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
     
     // intentionally created parent after lock
     zk.mkdirs(parent);
@@ -155,13 +153,14 @@ public class ZooLockTest {
     Assert.assertNull(lw.reason);
   }
   
+  @Deprecated
   @Test(timeout = 10000)
   public void testDeleteLock() throws Exception {
     accumulo.getConfig().getZooKeepers();
     
     String parent = "/zltest-" + this.hashCode() + "-l" + pdCount++;
     
-    CuratorReaderWriter zk = CuratorReaderWriter.getInstance(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
+    CuratorReaderWriter zk = new CuratorReaderWriter(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
     zk.mkdirs(parent);
     
     ZooLock zl = new ZooLock(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes(), parent);
@@ -194,7 +193,8 @@ public class ZooLockTest {
     
     String parent = "/zltest-" + this.hashCode() + "-l" + pdCount++;
     
-    CuratorReaderWriter zk = CuratorReaderWriter.getInstance(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
+    // TODO
+    CuratorReaderWriter zk = new CuratorReaderWriter(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes());
     zk.mkdirs(parent);
     
     ZooLock zl = new ZooLock(accumulo.getConfig().getZooKeepers(), 30000, "digest", "secret".getBytes(), parent);

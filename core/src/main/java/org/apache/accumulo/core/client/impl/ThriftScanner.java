@@ -68,7 +68,6 @@ import org.apache.thrift.TApplicationException;
 import org.apache.thrift.TException;
 import org.apache.thrift.TServiceClient;
 
-
 public class ThriftScanner {
   private static final Logger log = Logger.getLogger(ThriftScanner.class);
   
@@ -122,7 +121,7 @@ public class ThriftScanner {
       throw new AccumuloSecurityException(e.user, e.code, e);
     } catch (TException e) {
       log.debug("Error getting transport to " + server + " : " + e);
-    } 
+    }
     
     throw new AccumuloException("getBatchFromServer: failed");
   }
@@ -214,7 +213,7 @@ public class ThriftScanner {
           Span locateSpan = Trace.start("scan:locateTablet");
           try {
             loc = TabletLocator.getInstance(instance, scanState.tableId).locateTablet(scanState.startRow, scanState.skipStartRow, false, credentials);
-
+            
             if (loc == null) {
               if (!Tables.exists(instance, scanState.tableId.toString()))
                 throw new TableDeletedException(scanState.tableId.toString());
@@ -266,7 +265,6 @@ public class ThriftScanner {
         try {
           results = scan(loc, scanState, conf);
         } catch (AccumuloSecurityException e) {
-          Tables.clearCache(instance);
           if (!Tables.exists(instance, scanState.tableId.toString()))
             throw new TableDeletedException(scanState.tableId.toString());
           e.setTableInfo(Tables.getPrintableTableInfoFromId(instance, scanState.tableId.toString()));

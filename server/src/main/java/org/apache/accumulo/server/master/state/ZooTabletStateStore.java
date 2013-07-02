@@ -89,7 +89,6 @@ public class ZooTabletStateStore extends TabletStateStore {
             }
           }
           TabletLocationState result = new TabletLocationState(RootTable.EXTENT, futureSession, currentSession, lastSession, logs, false);
-          log.debug("Returning root tablet state: " + result);
           return result;
         } catch (Exception ex) {
           throw new RuntimeException(ex);

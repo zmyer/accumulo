@@ -43,6 +43,7 @@ import org.apache.accumulo.core.util.MetadataTable;
 import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
+import org.apache.accumulo.server.curator.CuratorCaches;
 import org.apache.accumulo.server.master.Master;
 import org.apache.accumulo.server.security.handler.Authenticator;
 import org.apache.accumulo.server.security.handler.Authorizor;
@@ -50,7 +51,6 @@ import org.apache.accumulo.server.security.handler.PermissionHandler;
 import org.apache.accumulo.server.security.handler.ZKAuthenticator;
 import org.apache.accumulo.server.security.handler.ZKAuthorizor;
 import org.apache.accumulo.server.security.handler.ZKPermHandler;
-import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Logger;
 
@@ -64,7 +64,7 @@ public class SecurityOperation {
   protected Authenticator authenticator;
   protected PermissionHandler permHandle;
   private static String rootUserName = null;
-  private final ZooCache zooCache;
+  private final CuratorCaches zooCache;
   private final String ZKUserPath;
   
   protected static SecurityOperation instance;
@@ -110,7 +110,7 @@ public class SecurityOperation {
   @Deprecated
   public SecurityOperation(String instanceId) {
     ZKUserPath = Constants.ZROOT + "/" + instanceId + "/users";
-    zooCache = new ZooCache();
+    zooCache = CuratorCaches.getInstance();
   }
   
   public SecurityOperation(Authorizor author, Authenticator authent, PermissionHandler pm, String instanceId) {

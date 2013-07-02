@@ -22,8 +22,8 @@ import java.util.List;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorCaches;
 import org.apache.accumulo.server.curator.CuratorReaderWriter;
-import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.log4j.Logger;
 
@@ -33,8 +33,9 @@ public class ZooStore implements DistributedStore {
   
   String basePath;
   
-  ZooCache cache = new ZooCache();
+  CuratorCaches cache = CuratorCaches.getInstance();
   
+  // TODO I think this needs attention
   public ZooStore(String basePath) throws IOException {
     if (basePath.endsWith("/"))
       basePath = basePath.substring(0, basePath.length() - 1);
@@ -75,7 +76,6 @@ public class ZooStore implements DistributedStore {
     try {
       path = relative(path);
       CuratorReaderWriter.getInstance().putPersistentData(path, bs, NodeExistsPolicy.OVERWRITE);
-      cache.clear();
       log.debug("Wrote " + new String(bs) + " to " + path);
     } catch (Exception ex) {
       throw new DistributedStoreException(ex);

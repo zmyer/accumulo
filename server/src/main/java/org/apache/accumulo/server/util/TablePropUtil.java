@@ -24,20 +24,17 @@ import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.zookeeper.KeeperException;
 
-public class TablePropUtil {
+public class TablePropUtil { 
   public static boolean setTableProperty(String tableId, String property, String value) throws KeeperException, InterruptedException {
     if (!isPropertyValid(property, value))
       return false;
     
-    // create the zk node for per-table properties for this table if it doesn't already exist
     String zkTablePath = getTablePath(tableId);
-    CuratorReaderWriter.getInstance().putPersistentData(zkTablePath, new byte[0], NodeExistsPolicy.SKIP);
-    
+    CuratorReaderWriter.getInstance().ensurePath(zkTablePath);
+
     // create the zk node for this property and set it's data to the specified value
     String zPath = zkTablePath + "/" + property;
-    CuratorReaderWriter.getInstance().putPersistentData(zPath, value.getBytes(), NodeExistsPolicy.OVERWRITE);
-    
-    return true;
+    return CuratorReaderWriter.getInstance().putPersistentData(zPath, value.getBytes(), NodeExistsPolicy.OVERWRITE);
   }
   
   public static boolean isPropertyValid(String property, String value) {

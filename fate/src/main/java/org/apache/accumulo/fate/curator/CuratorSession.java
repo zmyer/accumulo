@@ -39,20 +39,16 @@ class CuratorSession {
   }
   
   private static CuratorFramework constructCurator(String zookeeperConnectString, int sessionTimeoutMs, String namespace, String scheme, byte[] bytes) {
-    CuratorFrameworkFactory.Builder builder = CuratorFrameworkFactory.builder().canBeReadOnly(true).sessionTimeoutMs(sessionTimeoutMs).retryPolicy(retry)
+    CuratorFrameworkFactory.Builder builder = CuratorFrameworkFactory.builder().sessionTimeoutMs(sessionTimeoutMs).retryPolicy(retry)
         .connectString(zookeeperConnectString);
     if (scheme != null && bytes != null)
       builder = builder.authorization(scheme, bytes);
     if (namespace != null)
       builder = builder.namespace(namespace);
     
-    CuratorFramework toRet = builder.build();
+    final CuratorFramework toRet = builder.build();
     toRet.start();
     return toRet;
-  }
-  
-  public static synchronized CuratorFramework getSession(String zooKeepers, int timeout) {
-    return getSession(zooKeepers, timeout, null, null);
   }
   
   public static synchronized CuratorFramework getSession(String zooKeepers, int timeout, String scheme, byte[] auth) {
@@ -75,7 +71,8 @@ class CuratorSession {
       sessions.put(sessionKey, curator);
       if (auth != null && !sessions.containsKey(readOnlySessionKey))
         sessions.put(readOnlySessionKey, curator);
-    }
+    } 
+    
     return curator;
   }
 }

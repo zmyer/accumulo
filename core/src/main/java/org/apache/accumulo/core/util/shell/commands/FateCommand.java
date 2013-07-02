@@ -42,12 +42,13 @@ import org.apache.zookeeper.KeeperException;
 
 /**
  * Manage FATE transactions
- * 
  */
 public class FateCommand extends Command {
   
+  // Move to constants
+  @Deprecated
   private static final String SCHEME = "digest";
-  
+  @Deprecated
   private static final String USER = "accumulo";
   
   private Option secretOption;
@@ -144,7 +145,7 @@ public class FateCommand extends Command {
       secret = conf.get(Property.INSTANCE_SECRET);
     }
     
-    return CuratorReaderWriter.getInstance(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut(), SCHEME,
+    return new CuratorReaderWriter(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut(), SCHEME,
         (USER + ":" + secret).getBytes());
   }
   

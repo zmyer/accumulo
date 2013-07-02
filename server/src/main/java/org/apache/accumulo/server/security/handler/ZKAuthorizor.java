@@ -30,8 +30,8 @@ import org.apache.accumulo.core.security.TablePermission;
 import org.apache.accumulo.core.security.thrift.TCredentials;
 import org.apache.accumulo.core.util.MetadataTable;
 import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
+import org.apache.accumulo.server.curator.CuratorCaches;
 import org.apache.accumulo.server.curator.CuratorReaderWriter;
-import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
 
@@ -42,7 +42,7 @@ public class ZKAuthorizor implements Authorizor {
   private final String ZKUserAuths = "/Authorizations";
   
   private String ZKUserPath;
-  private final ZooCache zooCache;
+  private final CuratorCaches zooCache;
   
   public static synchronized Authorizor getInstance() {
     if (zkAuthorizorInstance == null)
@@ -51,7 +51,7 @@ public class ZKAuthorizor implements Authorizor {
   }
   
   public ZKAuthorizor() {
-    zooCache = new ZooCache();
+    zooCache = CuratorCaches.getInstance();
   }
   
   public void initialize(String instanceId, boolean initialize) {

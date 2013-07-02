@@ -382,7 +382,6 @@ public class TabletServerBatchReaderIterator implements Iterator<Entry<Key,Value
         e.setTableInfo(getTableInfo());
         log.debug(e.getMessage(), e);
         
-        Tables.clearCache(instance);
         if (!Tables.exists(instance, table))
           fatalException = new TableDeletedException(table);
         else

@@ -74,7 +74,7 @@ public class ZooLock implements Watcher {
   }
   
   public ZooLock(String zookeepers, int timeInMillis, String scheme, byte[] auth, String path) {
-    this(new CuratorCaches(zookeepers, timeInMillis), CuratorReaderWriter.getInstance(zookeepers, timeInMillis, scheme, auth), path);
+    this(CuratorCaches.getInstance(zookeepers, timeInMillis), new CuratorReaderWriter(zookeepers, timeInMillis, scheme, auth), path);
   }
   
   protected ZooLock(CuratorCaches zc, CuratorReaderWriter zrw, String path) {

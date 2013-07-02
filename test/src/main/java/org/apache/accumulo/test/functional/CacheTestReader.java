@@ -37,7 +37,7 @@ public class CacheTestReader {
     File myfile = new File(reportDir + "/" + UUID.randomUUID());
     myfile.deleteOnExit();
     
-    CuratorCaches zc = new CuratorCaches(keepers, 30000);
+    CuratorCaches zc = CuratorCaches.getInstance(keepers, 30000);
     
     while (true) {
       if (myfile.exists())

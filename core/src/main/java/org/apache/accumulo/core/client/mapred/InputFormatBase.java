@@ -671,10 +671,7 @@ public abstract class InputFormatBase<K,V> implements InputFormat<K,V> {
     String tableId = Tables.getTableId(instance, tableName);
     
     if (Tables.getTableState(instance, tableId) != TableState.OFFLINE) {
-      Tables.clearCache(instance);
-      if (Tables.getTableState(instance, tableId) != TableState.OFFLINE) {
-        throw new AccumuloException("Table is online " + tableName + "(" + tableId + ") cannot scan table in offline mode ");
-      }
+      throw new AccumuloException("Table is online " + tableName + "(" + tableId + ") cannot scan table in offline mode ");
     }
     
     for (Range range : ranges) {

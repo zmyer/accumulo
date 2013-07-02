@@ -398,7 +398,6 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
   }
   
   public void mustBeOnline(final String tableId) throws ThriftTableOperationException {
-    Tables.clearCache(instance);
     if (!Tables.getTableState(instance, tableId).equals(TableState.ONLINE))
       throw new ThriftTableOperationException(tableId, null, TableOperation.MERGE, TableOperationExceptionType.OFFLINE, "table is not online");
   }
@@ -480,7 +479,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
           public byte[] mutate(byte[] currentValue) throws Exception {
             long flushID = Long.parseLong(new String(currentValue));
             flushID++;
-            return ("" + flushID).getBytes();
+            return (Long.toString(flushID)).getBytes();
           }
         });
       } catch (NoNodeException nne) {
@@ -1529,6 +1528,7 @@ public class Master implements LiveTServerSet.Listener, TableObserver, CurrentSt
     for (TabletGroupWatcher watcher : watchers) {
       watcher.join(remaining(deadline));
     }
+    
     log.info("exiting");
   }
   

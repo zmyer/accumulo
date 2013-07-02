@@ -35,9 +35,9 @@ import org.apache.accumulo.core.data.KeyExtent;
 import org.apache.accumulo.core.util.NamingThreadFactory;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.server.ServerConstants;
+import org.apache.accumulo.server.curator.CuratorCaches;
 import org.apache.accumulo.server.master.Master;
 import org.apache.accumulo.server.zookeeper.DistributedWorkQueue;
-import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.hadoop.fs.Path;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
@@ -51,12 +51,12 @@ public class RecoveryManager {
   private Set<String> sortsQueued = new HashSet<String>();
   private ScheduledExecutorService executor;
   private Master master;
-  private ZooCache zooCache;
+  private CuratorCaches zooCache;
   
   public RecoveryManager(Master master) {
     this.master = master;
     executor = Executors.newScheduledThreadPool(4, new NamingThreadFactory("Walog sort starter "));
-    zooCache = new ZooCache();
+    zooCache = CuratorCaches.getInstance();
     try {
       List<String> workIDs = new DistributedWorkQueue(ZooUtil.getRoot(master.getInstance()) + Constants.ZRECOVERY).getWorkQueued();
       sortsQueued.addAll(workIDs);
@@ -107,7 +107,7 @@ public class RecoveryManager {
   }
   
   private void initiateSort(String sortId, String source, final String destination) throws KeeperException, InterruptedException, IOException {
-    String work =  source + "|" + destination; 
+    String work = source + "|" + destination;
     new DistributedWorkQueue(ZooUtil.getRoot(master.getInstance()) + Constants.ZRECOVERY).addWork(sortId, work.getBytes());
     
     synchronized (this) {
@@ -141,7 +141,7 @@ public class RecoveryManager {
             sortsQueued.remove(sortId);
           }
         }
-
+        
         if (master.getFileSystem().exists(new Path(dest, "finished"))) {
           synchronized (this) {
             closeTasksQueued.remove(sortId);

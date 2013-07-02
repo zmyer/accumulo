@@ -139,6 +139,7 @@ import org.apache.accumulo.server.client.ClientServiceHandler;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
 import org.apache.accumulo.server.conf.TableConfiguration;
+import org.apache.accumulo.server.curator.CuratorCaches;
 import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.data.ServerMutation;
 import org.apache.accumulo.server.fs.FileRef;
@@ -192,7 +193,6 @@ import org.apache.accumulo.server.util.time.RelativeTime;
 import org.apache.accumulo.server.util.time.SimpleTimer;
 import org.apache.accumulo.server.zookeeper.DistributedWorkQueue;
 import org.apache.accumulo.server.zookeeper.TransactionWatcher;
-import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.accumulo.server.zookeeper.ZooLock;
 import org.apache.accumulo.start.Platform;
 import org.apache.accumulo.start.classloader.vfs.AccumuloVFSClassLoader;
@@ -1110,16 +1110,11 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
       
       KeyExtent extent = new KeyExtent(textent);
       
-      // wait for any writes that are in flight.. this done to ensure
-      // consistency across client restarts... assume a client writes
-      // to accumulo and dies while waiting for a confirmation from
-      // accumulo... the client process restarts and tries to read
-      // data from accumulo making the assumption that it will get
-      // any writes previously made... however if the server side thread
-      // processing the write from the dead client is still in progress,
-      // the restarted client may not see the write unless we wait here.
-      // this behavior is very important when the client is reading the
-      // !METADATA table
+      // wait for any writes that are in flight.. this done to ensure consistency across client restarts... assume a client writes to accumulo and dies while
+      // waiting for a confirmation from accumulo... the client process restarts and tries to read data from accumulo making the assumption that it will get any
+      // writes previously made... however if the server side thread processing the write from the dead client is still in progress, the restarted client may
+      // not see the write unless we wait here. this behavior is very important when the client is reading the !METADATA table
+      
       if (waitForWrites)
         writeTracker.waitForWrites(TabletType.type(extent));
       
@@ -1749,7 +1744,7 @@ public class TabletServer extends AbstractMetricsImpl implements org.apache.accu
       return result;
     }
     
-    private ZooCache masterLockCache = new ZooCache();
+    private CuratorCaches masterLockCache = CuratorCaches.getInstance();
     
     private void checkPermission(TCredentials credentials, String lock, boolean requiresSystemPermission, final String request) throws ThriftSecurityException {
       if (requiresSystemPermission) {

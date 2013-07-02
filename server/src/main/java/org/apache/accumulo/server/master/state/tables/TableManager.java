@@ -32,13 +32,12 @@ import org.apache.accumulo.fate.curator.CuratorReaderWriter.Mutator;
 import org.apache.accumulo.fate.curator.CuratorReaderWriter.NodeExistsPolicy;
 import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorCaches;
 import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.util.TablePropUtil;
-import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
-import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent.Type;
 import org.apache.curator.framework.recipes.cache.PathChildrenCacheListener;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.KeeperException;
@@ -53,7 +52,7 @@ public class TableManager {
   private static TableManager tableManager = null;
   
   private final Instance instance;
-  private ZooCache zooStateCache;
+  private CuratorCaches zooStateCache;
   
   public static void prepareNewTableState(String instanceId, String tableId, String tableName, TableState state, NodeExistsPolicy existsPolicy)
       throws KeeperException, InterruptedException {
@@ -81,7 +80,7 @@ public class TableManager {
   
   private TableManager() {
     instance = HdfsZooInstance.getInstance();
-    zooStateCache = new ZooCache();
+    zooStateCache = CuratorCaches.getInstance();
     setupListeners();
     updateTableStateCache();
   }
@@ -168,7 +167,6 @@ public class TableManager {
         String sState = new String(data);
         try {
           tState = TableState.valueOf(sState);
-          log.debug("updateTableStateCache reporting " + tableId + " with state " + tState + " based on " + new String(data));
         } catch (IllegalArgumentException e) {
           log.error("Unrecognized state for table with tableId=" + tableId + ": " + sState);
         }
@@ -234,10 +232,15 @@ public class TableManager {
   private class AllTablesListener implements PathChildrenCacheListener {
     @Override
     public void childEvent(CuratorFramework client, PathChildrenCacheEvent event) throws Exception {
-      if (event.getType().equals(Type.CHILD_ADDED)) {
-        zooStateCache.getChildren(event.getData().getPath(), new TableListener());
-      } else if (event.getType().equals(Type.CHILD_REMOVED)) {
-        zooStateCache.clear(event.getData().getPath());
+      switch (event.getType()) {
+        case CHILD_ADDED:
+        case INITIALIZED:
+          zooStateCache.getChildren(event.getData().getPath(), new TableListener());
+          break;
+        case CHILD_REMOVED:
+          zooStateCache.clear(event.getData().getPath());
+        default:
+          break;
       }
     }
   }

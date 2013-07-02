@@ -52,7 +52,7 @@ public class ZooConfiguration extends AccumuloConfiguration {
   
   synchronized public static ZooConfiguration getInstance(Instance inst, AccumuloConfiguration parent) {
     if (instance == null) {
-      propCache = new CuratorCaches(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut());
+      propCache = CuratorCaches.getInstance(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut());
       instance = new ZooConfiguration(parent);
       instanceId = inst.getInstanceID();
       // Sets up a child cache listener for all properties
@@ -63,7 +63,7 @@ public class ZooConfiguration extends AccumuloConfiguration {
   
   synchronized public static ZooConfiguration getInstance(AccumuloConfiguration parent) {
     if (instance == null) {
-      propCache = new CuratorCaches(parent.get(Property.INSTANCE_ZK_HOST), (int) parent.getTimeInMillis(Property.INSTANCE_ZK_TIMEOUT));
+      propCache = CuratorCaches.getInstance(parent.get(Property.INSTANCE_ZK_HOST), (int) parent.getTimeInMillis(Property.INSTANCE_ZK_TIMEOUT));
       instance = new ZooConfiguration(parent);
       @SuppressWarnings("deprecation")
       String deprecatedInstanceIdFromHdfs = ZooKeeperInstance.getInstanceIDFromHdfs(ServerConstants.getInstanceIdLocation());

@@ -35,15 +35,15 @@ import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.curator.CuratorUtil;
 import org.apache.accumulo.fate.zookeeper.TransactionWatcher.Arbitrator;
 import org.apache.accumulo.server.client.HdfsZooInstance;
+import org.apache.accumulo.server.curator.CuratorCaches;
 import org.apache.accumulo.server.zookeeper.TransactionWatcher.ZooArbitrator;
-import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.accumulo.server.zookeeper.ZooLock;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Logger;
 
 public class MetadataConstraints implements Constraint {
   
-  private ZooCache zooCache = null;
+  private CuratorCaches zooCache = null;
   private String zooRoot = null;
   
   private static final Logger log = Logger.getLogger(MetadataConstraints.class);
@@ -237,7 +237,7 @@ public class MetadataConstraints implements Constraint {
           }
         } else if (new ColumnFQ(columnUpdate).equals(MetadataTable.LOCK_COLUMN)) {
           if (zooCache == null) {
-            zooCache = new ZooCache();
+            zooCache = CuratorCaches.getInstance();
           }
           
           if (zooRoot == null) {

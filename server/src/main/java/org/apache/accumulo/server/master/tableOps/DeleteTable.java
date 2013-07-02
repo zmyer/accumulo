@@ -24,7 +24,6 @@ import org.apache.accumulo.core.client.BatchScanner;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.IteratorSetting;
 import org.apache.accumulo.core.client.Scanner;
-import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.impl.thrift.TableOperation;
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.data.Key;
@@ -179,7 +178,6 @@ class CleanUp extends MasterRepo {
     // remove table from zookeeper
     try {
       TableManager.getInstance().removeTable(tableId);
-      Tables.clearCache(master.getInstance());
     } catch (Exception e) {
       log.error("Failed to find table id in zookeeper", e);
     }

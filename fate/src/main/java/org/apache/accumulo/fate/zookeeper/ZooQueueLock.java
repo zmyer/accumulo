@@ -40,7 +40,7 @@ public class ZooQueueLock implements QueueLock {
   
   public ZooQueueLock(String zookeepers, int timeInMillis, String scheme, byte[] auth, String path, boolean ephemeral) throws KeeperException,
       InterruptedException {
-    this(CuratorReaderWriter.getInstance(zookeepers, timeInMillis, scheme, auth), path, ephemeral);
+    this(new CuratorReaderWriter(zookeepers, timeInMillis, scheme, auth), path, ephemeral);
   }
   
   protected ZooQueueLock(CuratorReaderWriter zrw, String path, boolean ephemeral) {

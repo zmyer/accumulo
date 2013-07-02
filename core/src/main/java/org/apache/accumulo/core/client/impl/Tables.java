@@ -34,6 +34,8 @@ import org.apache.curator.framework.recipes.cache.ChildData;
 public class Tables {
   private static SecurityPermission TABLES_PERMISSION = new SecurityPermission("tablesPermission");
   
+  //TODO fix code base for removed Table.clearCache method
+  
   private static CuratorCaches getZooCache(Instance instance) {
     SecurityManager sm = System.getSecurityManager();
     if (sm != null) {
@@ -88,10 +90,6 @@ public class Tables {
     CuratorCaches zc = getZooCache(instance);
     ChildData table = zc.get(ZooUtil.getRoot(instance) + Constants.ZTABLES + '/' + tableId);
     return table != null;
-  }
-  
-  public static void clearCache(Instance instance) {
-    getZooCache(instance).clear(ZooUtil.getRoot(instance) + Constants.ZTABLES);
   }
   
   public static String getPrintableTableNameFromId(Map<String,String> tidToNameMap, String tableId) {

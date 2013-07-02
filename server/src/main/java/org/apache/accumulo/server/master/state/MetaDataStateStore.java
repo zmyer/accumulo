@@ -33,9 +33,10 @@ import org.apache.accumulo.core.util.RootTable;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.security.SecurityConstants;
 import org.apache.hadoop.io.Text;
+import org.apache.log4j.Logger;
 
 public class MetaDataStateStore extends TabletStateStore {
-  // private static final Logger log = Logger.getLogger(MetaDataStateStore.class);
+  private static final Logger log = Logger.getLogger(MetaDataStateStore.class);
   
   private static final int THREADS = 4;
   private static final int LATENCY = 1000;

@@ -35,7 +35,6 @@ import org.apache.accumulo.core.client.BatchWriter;
 import org.apache.accumulo.core.client.BatchWriterConfig;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.admin.TableOperationsImpl;
-import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.impl.thrift.TableOperation;
 import org.apache.accumulo.core.client.impl.thrift.TableOperationExceptionType;
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
@@ -315,7 +314,7 @@ class MapImportFileNames extends MasterRepo {
       VolumeManager fs = environment.getFileSystem();
       
       fs.mkdirs(new Path(tableInfo.importDir));
-
+      
       FileStatus[] files = fs.listStatus(new Path(tableInfo.exportDir));
       
       UniqueNameAllocator namer = UniqueNameAllocator.getInstance();
@@ -436,8 +435,6 @@ class ImportPopulateZookeeper extends MasterRepo {
       Utils.checkTableDoesNotExist(instance, tableInfo.tableName, tableInfo.tableId, TableOperation.CREATE);
       
       TableManager.getInstance().addTable(tableInfo.tableId, tableInfo.tableName, NodeExistsPolicy.OVERWRITE);
-      
-      Tables.clearCache(instance);
     } finally {
       Utils.tableNameLock.unlock();
     }
@@ -453,10 +450,8 @@ class ImportPopulateZookeeper extends MasterRepo {
   
   @Override
   public void undo(long tid, Master env) throws Exception {
-    Instance instance = HdfsZooInstance.getInstance();
     TableManager.getInstance().removeTable(tableInfo.tableId);
     Utils.unreserveTable(tableInfo.tableId, tid, true);
-    Tables.clearCache(instance);
   }
 }
 

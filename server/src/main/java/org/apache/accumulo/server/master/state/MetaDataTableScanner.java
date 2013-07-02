@@ -120,7 +120,8 @@ public class MetaDataTableScanner implements Iterator<TabletLocationState> {
   @Override
   public TabletLocationState next() {
     try {
-      return fetch();
+      TabletLocationState toRet = fetch();
+      return toRet;
     } catch (RuntimeException ex) {
       // something is wrong with the records in the !METADATA table, just skip over it
       log.error(ex, ex);

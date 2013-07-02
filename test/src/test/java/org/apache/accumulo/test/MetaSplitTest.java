@@ -69,6 +69,7 @@ public class MetaSplitTest {
     Instance instance = new ZooKeeperInstance(cluster.getConfig().getInstanceName(), cluster.getConfig().getZooKeepers());
     Connector connector = instance.getConnector("root", new PasswordToken(secret));
     TableOperations opts = connector.tableOperations();
+    
     for (int i = 1; i <= 10; i++) {
       opts.create("" + i);
     }

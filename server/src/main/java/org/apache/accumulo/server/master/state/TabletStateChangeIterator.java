@@ -46,7 +46,7 @@ public class TabletStateChangeIterator extends SkippingIterator {
   private static final String SERVERS_OPTION = "servers";
   private static final String TABLES_OPTION = "tables";
   private static final String MERGES_OPTION = "merges";
-  // private static final Logger log = Logger.getLogger(TabletStateChangeIterator.class);
+//  private static final Logger log = Logger.getLogger(TabletStateChangeIterator.class);
   
   Set<TServerInstance> current;
   Set<String> onlineTables;

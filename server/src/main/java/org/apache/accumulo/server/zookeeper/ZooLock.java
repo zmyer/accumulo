@@ -16,13 +16,14 @@
  */
 package org.apache.accumulo.server.zookeeper;
 
+import org.apache.accumulo.server.curator.CuratorCaches;
 import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.zookeeper.KeeperException;
 
 public class ZooLock extends org.apache.accumulo.fate.zookeeper.ZooLock {
   
   public ZooLock(String path) {
-    super(new ZooCache(), CuratorReaderWriter.getInstance(), path);
+    super(CuratorCaches.getInstance(), CuratorReaderWriter.getInstance(), path);
   }
   
   public static void deleteLock(String path) throws InterruptedException, KeeperException {

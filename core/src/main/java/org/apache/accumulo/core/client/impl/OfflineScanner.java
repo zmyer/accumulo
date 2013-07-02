@@ -211,10 +211,7 @@ class OfflineIterator implements Iterator<Entry<Key,Value>> {
     
     while (eloc.getSecond() != null) {
       if (Tables.getTableState(instance, tableId) != TableState.OFFLINE) {
-        Tables.clearCache(instance);
-        if (Tables.getTableState(instance, tableId) != TableState.OFFLINE) {
-          throw new AccumuloException("Table is online " + tableId + " cannot scan tablet in offline mode " + eloc.getFirst());
-        }
+        throw new AccumuloException("Table is online " + tableId + " cannot scan tablet in offline mode " + eloc.getFirst());
       }
       
       UtilWaitThread.sleep(250);
@@ -230,7 +227,7 @@ class OfflineIterator implements Iterator<Entry<Key,Value>> {
     
     if (currentExtent != null && !extent.isPreviousExtent(currentExtent))
       throw new AccumuloException(" " + currentExtent + " is not previous extent " + extent);
-
+    
     String tablesDir = instance.getConfiguration().get(Property.INSTANCE_DFS_DIR) + "/tables";
     String[] volumes = instance.getConfiguration().get(Property.INSTANCE_VOLUMES).split(",");
     if (volumes.length > 1) {

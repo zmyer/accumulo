@@ -28,8 +28,8 @@ import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.curator.framework.recipes.cache.NodeCache;
 import org.apache.curator.framework.recipes.cache.PathChildrenCache;
 import org.apache.curator.framework.recipes.cache.PathChildrenCache.StartMode;
-import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent.Type;
 import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent.Type;
 import org.apache.curator.framework.recipes.cache.PathChildrenCacheListener;
 import org.apache.log4j.Logger;
 
@@ -45,11 +45,11 @@ public class CuratorCaches {
   
   private CuratorFramework curator;
   
-  public CuratorCaches(String zooKeepers, int sessionTimeout) {
-    this(CuratorSession.getSession(zooKeepers, sessionTimeout));
+  protected CuratorCaches(String zooKeepers, int sessionTimeout, String scheme, byte[] auths) {
+    this(CuratorSession.getSession(zooKeepers, sessionTimeout, scheme, auths));
   }
   
-  public CuratorCaches(CuratorFramework curator) {
+  private CuratorCaches(CuratorFramework curator) {
     this.curator = curator;
     this.nodeCache = new HashMap<String,NodeCache>();
     this.childrenCache = new HashMap<String,PathChildrenCache>();
@@ -67,7 +67,8 @@ public class CuratorCaches {
         cache.getListenable().addListener(listener);
       }
       try {
-        log.debug("Starting cache against " + zPath + (listener!=null? " using listener " + listener:""));
+        // TODO- spotted master listening to table configuration, possibly due to balancer?
+        log.debug("Starting cache against " + zPath + (listener != null ? " using listener " + listener : ""), new RuntimeException());
         cache.start(StartMode.BUILD_INITIAL_CACHE);
         // I'll do it myself!
         if (listener != null)
@@ -83,6 +84,8 @@ public class CuratorCaches {
             log.debug("Removing cache " + childCache.getCurrentData().getPath() + " because parent cache was added");
             childCache.close();
             nodeCache.remove(child.getPath());
+          } else if (childCache != null) {
+            log.debug("Not removing cache because it has a listener. This is a potential optimization point.");
           }
         }
       } catch (Exception e) {
@@ -137,8 +140,7 @@ public class CuratorCaches {
   }
   
   private synchronized void remove(String zPath) {
-    if (log.isTraceEnabled())
-      log.trace("removing " + zPath + " from cache");
+    log.debug("removing " + zPath + " from cache");
     NodeCache nc = nodeCache.get(zPath);
     if (nc != null) {
       try {
@@ -162,6 +164,7 @@ public class CuratorCaches {
   }
   
   public synchronized void clear() {
+    log.debug("Clearing cache", new RuntimeException());
     for (NodeCache nc : nodeCache.values()) {
       try {
         nc.close();
@@ -181,6 +184,7 @@ public class CuratorCaches {
     childrenCache.clear();
   }
   
+  @Deprecated
   public CuratorFramework getCurator() {
     return curator;
   }
@@ -205,14 +209,27 @@ public class CuratorCaches {
   
   private static Map<String,CuratorCaches> instances = new HashMap<String,CuratorCaches>();
   
-  public static synchronized CuratorCaches getInstance(String zooKeepers, int sessionTimeout) {
-    String key = zooKeepers + ":" + sessionTimeout;
-    CuratorCaches zc = instances.get(key);
-    if (zc == null) {
-      zc = new CuratorCaches(zooKeepers, sessionTimeout);
-      instances.put(key, zc);
+  // Multiton to handle cases of multiple zookeepers
+  public static synchronized CuratorCaches getInstance(String zooKeepers, int sessionTimeout, String scheme, byte[] auths) {
+    CuratorCaches instance = instances.get(zooKeepers);
+    if (instance == null) {
+      instance = new CuratorCaches(zooKeepers, sessionTimeout, scheme, auths);
+      instances.put(zooKeepers, instance);
     }
-    
-    return zc;
+    return instance;
+  }
+  
+  public static synchronized CuratorCaches getInstance(String zooKeepers, int sessionTimeout) {
+    return getInstance(zooKeepers, sessionTimeout, null, null);
+  }
+  
+  public static synchronized CuratorCaches getInstance(CuratorFramework curator) {
+    String zooKeepers = curator.getZookeeperClient().getCurrentConnectionString();
+    CuratorCaches instance = instances.get(zooKeepers);
+    if (instance == null) {
+      instance = new CuratorCaches(curator);
+      instances.put(zooKeepers, instance);
+    }
+    return instance;
   }
 }

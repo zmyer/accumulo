@@ -155,8 +155,7 @@ public class DistributedWorkQueue {
     
     threadPool = (ThreadPoolExecutor) executorService;
 
-    zoo.mkdirs(path);
-    zoo.mkdirs(path + "/" + LOCKS_NODE);
+    zoo.ensurePath(path + "/" + LOCKS_NODE);
 
     List<String> children = zoo.getChildren(path, new Watcher() {
       @Override
@@ -207,7 +206,7 @@ public class DistributedWorkQueue {
     if (workId.equalsIgnoreCase(LOCKS_NODE))
       throw new IllegalArgumentException("locks is reserved work id");
 
-    zoo.mkdirs(path);
+    zoo.ensurePath(path);
     zoo.putPersistentData(path + "/" + workId, data, NodeExistsPolicy.SKIP);
   }
   

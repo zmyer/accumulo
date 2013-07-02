@@ -33,7 +33,7 @@ public class DeadServerList {
     this.path = path;
     CuratorReaderWriter zoo = CuratorReaderWriter.getInstance();
     try {
-      zoo.mkdirs(path);
+      zoo.ensurePath(path);
     } catch (Exception ex) {
       log.error("Unable to make parent directories of " + path, ex);
     }

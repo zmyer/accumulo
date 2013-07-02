@@ -41,13 +41,13 @@ import org.apache.accumulo.core.util.ServerServices;
 import org.apache.accumulo.core.util.ThriftUtil;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.curator.CuratorUtil;
+import org.apache.accumulo.server.curator.CuratorCaches;
 import org.apache.accumulo.server.curator.CuratorReaderWriter;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.security.SecurityConstants;
 import org.apache.accumulo.server.util.AddressUtil;
 import org.apache.accumulo.server.util.Halt;
 import org.apache.accumulo.server.util.time.SimpleTimer;
-import org.apache.accumulo.server.zookeeper.ZooCache;
 import org.apache.accumulo.server.zookeeper.ZooLock;
 import org.apache.accumulo.trace.instrument.Tracer;
 import org.apache.curator.framework.CuratorFramework;
@@ -72,7 +72,7 @@ public class LiveTServerSet {
   private final Listener cback;
   private final Instance instance;
   private final AccumuloConfiguration conf;
-  private ZooCache zooCache;
+  private CuratorCaches zooCache;
   
   public class TServerConnection {
     private final InetSocketAddress address;
@@ -217,9 +217,9 @@ public class LiveTServerSet {
     
   }
   
-  public synchronized ZooCache getZooCache() {
+  public synchronized CuratorCaches getZooCache() {
     if (zooCache == null)
-      zooCache = new ZooCache();
+      zooCache = CuratorCaches.getInstance();
     return zooCache;
   }
   
@@ -243,7 +243,6 @@ public class LiveTServerSet {
     }, 0, 5000);
     
     Collection<ChildData> result = getZooCache().getChildren(ZooUtil.getRoot(instance) + Constants.ZTSERVERS, serversListener);
-    log.debug("Attaching SERVERSLISTENER to " + (ZooUtil.getRoot(instance) + Constants.ZTSERVERS) + " - received " + result);
   }
   
   private void deleteServerNode(String server) {
@@ -272,7 +271,6 @@ public class LiveTServerSet {
     @Override
     public void childEvent(CuratorFramework curator, PathChildrenCacheEvent event) throws Exception {
       final Set<TServerInstance> doomed = new HashSet<TServerInstance>();
-      log.debug("SERVERSLISTENER - Received event " + event.getType() + " for node " + event.getData().getPath());
 
       String server = CuratorUtil.getNodeName(event.getData());
       TServerInfo info = current.get(server);
@@ -309,8 +307,7 @@ public class LiveTServerSet {
     public void childEvent(CuratorFramework curator, PathChildrenCacheEvent event) throws Exception {
       final Set<TServerInstance> updates = new HashSet<TServerInstance>();
       final Set<TServerInstance> doomed = new HashSet<TServerInstance>();
-      log.debug("LOCKLISTENER - Received event " + event.getType() + " for node " + event.getData().getPath());
-
+      
       String server = CuratorUtil.getNodeName(CuratorUtil.getNodeParent(event.getData()));
       TServerInfo info = current.get(server);
       
@@ -368,7 +365,6 @@ public class LiveTServerSet {
     for (TServerInfo c : current.values()) {
       result.add(c.instance);
     }
-    log.debug("Returning " + result + " for current tservers");
     return result;
   }
   

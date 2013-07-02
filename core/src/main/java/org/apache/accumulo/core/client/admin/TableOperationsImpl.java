@@ -296,7 +296,6 @@ public class TableOperationsImpl extends TableOperationsHelper {
         return null;
       }
       String ret = waitForTableOperation(opid);
-      Tables.clearCache(instance);
       return ret;
     } catch (ThriftSecurityException e) {
       String tableName = ByteBufferUtil.toString(args.get(0));
@@ -483,7 +482,6 @@ public class TableOperationsImpl extends TableOperationsHelper {
           tabLocator.invalidateCache(tl.tablet_location);
           continue;
         } catch (ThriftSecurityException e) {
-          Tables.clearCache(instance);
           if (!Tables.exists(instance, tableId))
             throw new TableNotFoundException(tableId, tableName, null);
           throw new AccumuloSecurityException(e.user, e.code, e);

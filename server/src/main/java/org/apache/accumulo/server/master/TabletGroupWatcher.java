@@ -73,7 +73,6 @@ import org.apache.hadoop.io.Text;
 import org.apache.thrift.TException;
 
 class TabletGroupWatcher extends Daemon {
-  
   private final Master master;
   final TabletStateStore store;
   final TabletGroupWatcher dependentWatcher;
@@ -135,6 +134,7 @@ class TabletGroupWatcher extends Daemon {
           if (tls == null) {
             continue;
           }
+          
           // ignore entries for tables that do not exist in zookeeper
           if (TableManager.getInstance().getTableState(tls.extent.getTableId().toString()) == null)
             continue;

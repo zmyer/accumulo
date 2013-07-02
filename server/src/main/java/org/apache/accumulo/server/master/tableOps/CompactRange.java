@@ -144,7 +144,6 @@ class CompactionDriver extends MasterRepo {
     long scanTime = System.currentTimeMillis() - t1;
     
     Instance instance = master.getInstance();
-    Tables.clearCache(instance);
     if (tabletCount == 0 && !Tables.exists(instance, tableId))
       throw new ThriftTableOperationException(tableId, null, TableOperation.COMPACT, TableOperationExceptionType.NOTFOUND, null);
     

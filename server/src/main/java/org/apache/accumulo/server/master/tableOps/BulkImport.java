@@ -127,7 +127,6 @@ public class BulkImport extends MasterRepo {
       return 100;
     
     Instance instance = HdfsZooInstance.getInstance();
-    Tables.clearCache(instance);
     if (Tables.getTableState(instance, tableId) == TableState.ONLINE) {
       long reserve1, reserve2;
       reserve1 = reserve2 = Utils.reserveHdfsDirectory(sourceDir, tid);

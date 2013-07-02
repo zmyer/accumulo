@@ -408,6 +408,8 @@ public class ZooStore<T> implements TStore<T> {
     
     try {
       byte[] data = curator.getData(getTXPath(tid) + "/prop_" + prop, null);
+      if (data == null)
+        return null;
       
       if (data[0] == 'O') {
         byte[] sera = new byte[data.length - 2];

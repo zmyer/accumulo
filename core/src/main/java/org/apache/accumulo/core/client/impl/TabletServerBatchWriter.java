@@ -477,8 +477,7 @@ public class TabletServerBatchWriter {
       HashSet<String> tableIds = new HashSet<String>();
       for (KeyExtent ke : authorizationFailures.keySet())
         tableIds.add(ke.getTableId().toString());
-      
-      Tables.clearCache(instance);
+
       for (String tableId : tableIds)
         if (!Tables.exists(instance, tableId))
           throw new TableDeletedException(tableId);
