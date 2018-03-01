@@ -22,7 +22,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.ConfigurationTypeHelper;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.data.impl.KeyExtent;
 import org.apache.accumulo.core.metadata.schema.DataFileValue;
 import org.apache.accumulo.server.fs.FileRef;
@@ -44,7 +47,7 @@ public class TwoTierCompactionStrategyTest {
 
     HashMap<FileRef,DataFileValue> ret = new HashMap<>();
     for (int i = 0; i < sa.length; i += 2) {
-      ret.put(new FileRef("hdfs://nn1/accumulo/tables/5/t-0001/" + sa[i]), new DataFileValue(AccumuloConfiguration.getMemoryInBytes(sa[i + 1]), 1));
+      ret.put(new FileRef("hdfs://nn1/accumulo/tables/5/t-0001/" + sa[i]), new DataFileValue(ConfigurationTypeHelper.getFixedMemoryAsBytes(sa[i + 1]), 1));
     }
 
     return ret;
@@ -60,9 +63,9 @@ public class TwoTierCompactionStrategyTest {
   @Test
   public void testDefaultCompaction() throws IOException {
     ttcs.init(opts);
-    conf = AccumuloConfiguration.getDefaultConfiguration();
-    KeyExtent ke = new KeyExtent("0", null, null);
-    mcr = new MajorCompactionRequest(ke, MajorCompactionReason.NORMAL, null, conf);
+    conf = DefaultConfiguration.getInstance();
+    KeyExtent ke = new KeyExtent(Table.ID.of("0"), null, null);
+    mcr = new MajorCompactionRequest(ke, MajorCompactionReason.NORMAL, conf);
     Map<FileRef,DataFileValue> fileMap = createFileMap("f1", "10M", "f2", "10M", "f3", "10M", "f4", "10M", "f5", "100M", "f6", "100M", "f7", "100M", "f8",
         "100M");
     mcr.setFiles(fileMap);
@@ -79,9 +82,9 @@ public class TwoTierCompactionStrategyTest {
   @Test
   public void testLargeCompaction() throws IOException {
     ttcs.init(opts);
-    conf = AccumuloConfiguration.getDefaultConfiguration();
-    KeyExtent ke = new KeyExtent("0", null, null);
-    mcr = new MajorCompactionRequest(ke, MajorCompactionReason.NORMAL, null, conf);
+    conf = DefaultConfiguration.getInstance();
+    KeyExtent ke = new KeyExtent(Table.ID.of("0"), null, null);
+    mcr = new MajorCompactionRequest(ke, MajorCompactionReason.NORMAL, conf);
     Map<FileRef,DataFileValue> fileMap = createFileMap("f1", "2G", "f2", "2G", "f3", "2G", "f4", "2G");
     mcr.setFiles(fileMap);
 
@@ -108,9 +111,9 @@ public class TwoTierCompactionStrategyTest {
   @Test
   public void testFileSubsetCompaction() throws IOException {
     ttcs.init(opts);
-    conf = AccumuloConfiguration.getDefaultConfiguration();
-    KeyExtent ke = new KeyExtent("0", null, null);
-    mcr = new MajorCompactionRequest(ke, MajorCompactionReason.NORMAL, null, conf);
+    conf = DefaultConfiguration.getInstance();
+    KeyExtent ke = new KeyExtent(Table.ID.of("0"), null, null);
+    mcr = new MajorCompactionRequest(ke, MajorCompactionReason.NORMAL, conf);
     Map<FileRef,DataFileValue> fileMap = createFileMap("f1", "1G", "f2", "10M", "f3", "10M", "f4", "10M", "f5", "10M", "f6", "10M", "f7", "10M");
     Map<FileRef,DataFileValue> filesToCompactMap = createFileMap("f2", "10M", "f3", "10M", "f4", "10M", "f5", "10M", "f6", "10M", "f7", "10M");
     mcr.setFiles(fileMap);

@@ -28,8 +28,9 @@ import java.util.HashSet;
 import java.util.Properties;
 import java.util.Set;
 
-import org.apache.accumulo.core.client.impl.Namespaces;
+import org.apache.accumulo.core.client.impl.Namespace;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.proxy.Proxy;
 import org.apache.accumulo.proxy.thrift.AccumuloException;
 import org.apache.accumulo.proxy.thrift.IteratorScope;
@@ -43,8 +44,6 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
-
-import com.google.common.net.HostAndPort;
 
 public class TestProxyNamespaceOperations {
 
@@ -103,8 +102,8 @@ public class TestProxyNamespaceOperations {
 
   @Test
   public void systemDefault() throws TException {
-    assertEquals(tpc.proxy().systemNamespace(), Namespaces.ACCUMULO_NAMESPACE);
-    assertEquals(tpc.proxy().defaultNamespace(), Namespaces.DEFAULT_NAMESPACE);
+    assertEquals(tpc.proxy().systemNamespace(), Namespace.ACCUMULO);
+    assertEquals(tpc.proxy().defaultNamespace(), Namespace.DEFAULT);
   }
 
   @Test
@@ -124,7 +123,7 @@ public class TestProxyNamespaceOperations {
 
   @Test
   public void namespaceIterators() throws TException {
-    IteratorSetting setting = new IteratorSetting(40, "DebugTheThings", "org.apache.accumulo.core.iterators.DebugIterator", new HashMap<String,String>());
+    IteratorSetting setting = new IteratorSetting(40, "DebugTheThings", "org.apache.accumulo.core.iterators.DebugIterator", new HashMap<>());
     Set<IteratorScope> scopes = new HashSet<>();
     scopes.add(IteratorScope.SCAN);
     tpc.proxy().attachNamespaceIterator(userpass, testnamespace, setting, scopes);
@@ -139,7 +138,7 @@ public class TestProxyNamespaceOperations {
 
   @Test(expected = AccumuloException.class)
   public void namespaceIteratorConflict() throws TException {
-    IteratorSetting setting = new IteratorSetting(40, "DebugTheThings", "org.apache.accumulo.core.iterators.DebugIterator", new HashMap<String,String>());
+    IteratorSetting setting = new IteratorSetting(40, "DebugTheThings", "org.apache.accumulo.core.iterators.DebugIterator", new HashMap<>());
     Set<IteratorScope> scopes = new HashSet<>();
     scopes.add(IteratorScope.SCAN);
     tpc.proxy().attachNamespaceIterator(userpass, testnamespace, setting, scopes);
@@ -148,12 +147,11 @@ public class TestProxyNamespaceOperations {
 
   @Test
   public void namespaceConstraints() throws TException {
-    int constraintId = tpc.proxy().addNamespaceConstraint(userpass, testnamespace, "org.apache.accumulo.examples.simple.constraints.MaxMutationSize");
-    assertTrue(tpc.proxy().listNamespaceConstraints(userpass, testnamespace).containsKey("org.apache.accumulo.examples.simple.constraints.MaxMutationSize"));
-    assertEquals(constraintId,
-        (int) tpc.proxy().listNamespaceConstraints(userpass, testnamespace).get("org.apache.accumulo.examples.simple.constraints.MaxMutationSize"));
+    int constraintId = tpc.proxy().addNamespaceConstraint(userpass, testnamespace, "org.apache.accumulo.test.constraints.MaxMutationSize");
+    assertTrue(tpc.proxy().listNamespaceConstraints(userpass, testnamespace).containsKey("org.apache.accumulo.test.constraints.MaxMutationSize"));
+    assertEquals(constraintId, (int) tpc.proxy().listNamespaceConstraints(userpass, testnamespace).get("org.apache.accumulo.test.constraints.MaxMutationSize"));
     tpc.proxy().removeNamespaceConstraint(userpass, testnamespace, constraintId);
-    assertFalse(tpc.proxy().listNamespaceConstraints(userpass, testnamespace).containsKey("org.apache.accumulo.examples.simple.constraints.MaxMutationSize"));
+    assertFalse(tpc.proxy().listNamespaceConstraints(userpass, testnamespace).containsKey("org.apache.accumulo.test.constraints.MaxMutationSize"));
   }
 
   @Test

@@ -16,6 +16,7 @@
  */
 package org.apache.accumulo.test.functional;
 
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -43,8 +44,6 @@ import org.apache.accumulo.tserver.TabletServer;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.Test;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
-
 public class HalfDeadTServerIT extends ConfigurableMacBase {
 
   @Override
@@ -52,6 +51,7 @@ public class HalfDeadTServerIT extends ConfigurableMacBase {
     cfg.setNumTservers(1);
     cfg.setProperty(Property.INSTANCE_ZK_TIMEOUT, "15s");
     cfg.setProperty(Property.GENERAL_RPC_TIMEOUT, "5s");
+    cfg.setProperty(Property.TSERV_NATIVEMAP_ENABLED, Boolean.FALSE.toString());
     cfg.useMiniDFS(true);
   }
 
@@ -159,7 +159,7 @@ public class HalfDeadTServerIT extends ConfigurableMacBase {
         sleepUninterruptibly(seconds, TimeUnit.SECONDS);
       } finally {
         if (!trickFile.delete()) {
-          log.error("Couldn't delete " + trickFile);
+          log.error("Couldn't delete {}", trickFile);
         }
       }
 

@@ -42,63 +42,36 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
-/**
- *
- */
 public class AccumuloClassLoader {
 
-  public static final String CLASSPATH_PROPERTY_NAME = "general.classpaths";
-
-  /* @formatter:off */
-  public static final String ACCUMULO_CLASSPATH_VALUE =
-      "$ACCUMULO_CONF_DIR,\n" +
-          "$ACCUMULO_HOME/lib/[^.].*.jar,\n" +
-          "$ZOOKEEPER_HOME/zookeeper[^.].*.jar,\n" +
-          "$HADOOP_CONF_DIR,\n" +
-          "$HADOOP_PREFIX/[^.].*.jar,\n" +
-          "$HADOOP_PREFIX/lib/(?!slf4j)[^.].*.jar,\n" +
-          "$HADOOP_PREFIX/share/hadoop/common/[^.].*.jar,\n" +
-          "$HADOOP_PREFIX/share/hadoop/common/lib/(?!slf4j)[^.].*.jar,\n" +
-          "$HADOOP_PREFIX/share/hadoop/hdfs/[^.].*.jar,\n" +
-          "$HADOOP_PREFIX/share/hadoop/mapreduce/[^.].*.jar,\n" +
-          "$HADOOP_PREFIX/share/hadoop/yarn/[^.].*.jar,\n" +
-          "$HADOOP_PREFIX/share/hadoop/yarn/lib/jersey.*.jar,\n" +
-          "/usr/hdp/current/hadoop-client/[^.].*.jar,\n" +
-          "/usr/hdp/current/hadoop-client/lib/(?!slf4j)[^.].*.jar,\n" +
-          "/usr/hdp/current/hadoop-hdfs-client/[^.].*.jar,\n" +
-          "/usr/hdp/current/hadoop-mapreduce-client/[^.].*.jar,\n" +
-          "/usr/hdp/current/hadoop-yarn-client/[^.].*.jar,\n" +
-          "/usr/hdp/current/hadoop-yarn-client/lib/jersey.*.jar,\n" +
-          "/usr/hdp/current/hive-client/lib/hive-accumulo-handler.jar\n" +
-          "/usr/lib/hadoop/[^.].*.jar,\n" +
-          "/usr/lib/hadoop/lib/[^.].*.jar,\n" +
-          "/usr/lib/hadoop-hdfs/[^.].*.jar,\n" +
-          "/usr/lib/hadoop-mapreduce/[^.].*.jar,\n" +
-          "/usr/lib/hadoop-yarn/[^.].*.jar,\n" +
-          "/usr/lib/hadoop-yarn/lib/jersey.*.jar,\n"
-          ;
-  /* @formatter:on */
-
+  public static final String GENERAL_CLASSPATHS = "general.classpaths";
   public static final String MAVEN_PROJECT_BASEDIR_PROPERTY_NAME = "general.maven.project.basedir";
   public static final String DEFAULT_MAVEN_PROJECT_BASEDIR_VALUE = "";
 
-  private static String SITE_CONF;
-
+  private static URL accumuloConfigUrl;
   private static URLClassLoader classloader;
-
   private static final Logger log = LoggerFactory.getLogger(AccumuloClassLoader.class);
 
   static {
-    String configFile = System.getProperty("org.apache.accumulo.config.file", "accumulo-site.xml");
-    if (System.getenv("ACCUMULO_CONF_DIR") != null) {
-      // accumulo conf dir should be set
-      SITE_CONF = System.getenv("ACCUMULO_CONF_DIR") + "/" + configFile;
-    } else if (System.getenv("ACCUMULO_HOME") != null) {
-      // if no accumulo conf dir, try accumulo home default
-      SITE_CONF = System.getenv("ACCUMULO_HOME") + "/conf/" + configFile;
+    String configFile = System.getProperty("accumulo.configuration", "accumulo-site.xml");
+    if (configFile.startsWith("file://")) {
+      try {
+        File f = new File(new URI(configFile));
+        if (f.exists() && !f.isDirectory()) {
+          accumuloConfigUrl = f.toURI().toURL();
+        } else {
+          log.warn("Failed to load Accumulo configuration from " + configFile);
+        }
+      } catch (URISyntaxException | MalformedURLException e) {
+        log.warn("Failed to load Accumulo configuration from " + configFile, e);
+      }
     } else {
-      SITE_CONF = null;
+      accumuloConfigUrl = AccumuloClassLoader.class.getClassLoader().getResource(configFile);
+      if (accumuloConfigUrl == null)
+        log.warn("Failed to load Accumulo configuration '{}' from classpath", configFile);
     }
+    if (accumuloConfigUrl != null)
+      log.debug("Using Accumulo configuration at {}", accumuloConfigUrl.getFile());
   }
 
   /**
@@ -108,7 +81,7 @@ public class AccumuloClassLoader {
    * @param d
    *          XMLDocument to search through
    */
-  private static String getAccumuloClassPathStrings(Document d, String propertyName) {
+  private static String getAccumuloProperty(Document d, String propertyName) {
     NodeList pnodes = d.getElementsByTagName("property");
     for (int i = pnodes.getLength() - 1; i >= 0; i--) {
       Element current_property = (Element) pnodes.item(i);
@@ -133,24 +106,21 @@ public class AccumuloClassLoader {
    *          Value to default to if not found.
    * @return site or default class path String
    */
-
-  public static String getAccumuloString(String propertyName, String defaultValue) {
-
+  public static String getAccumuloProperty(String propertyName, String defaultValue) {
+    if (accumuloConfigUrl == null) {
+      log.warn("Using default value '{}' for '{}' as there is no Accumulo configuration on classpath", defaultValue, propertyName);
+      return defaultValue;
+    }
     try {
       DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
       DocumentBuilder db = dbf.newDocumentBuilder();
-      String site_classpath_string = null;
-      try {
-        Document site_conf = db.parse(SITE_CONF);
-        site_classpath_string = getAccumuloClassPathStrings(site_conf, propertyName);
-      } catch (Exception e) {
-        /* we don't care because this is optional and we can use defaults */
-      }
-      if (site_classpath_string != null)
-        return site_classpath_string;
+      Document siteDoc = db.parse(accumuloConfigUrl.getFile());
+      String value = getAccumuloProperty(siteDoc, propertyName);
+      if (value != null)
+        return value;
       return defaultValue;
     } catch (Exception e) {
-      throw new IllegalStateException("ClassPath Strings Lookup failed", e);
+      throw new IllegalStateException("Failed to look up property " + propertyName + " in " + accumuloConfigUrl.getFile(), e);
     }
   }
 
@@ -209,10 +179,10 @@ public class AccumuloClassLoader {
             for (File jar : extJars)
               urls.add(jar.toURI().toURL());
           } else {
-            log.debug("ignoring classpath entry " + classpath);
+            log.debug("ignoring classpath entry {}", classpath);
           }
         } else {
-          log.debug("ignoring classpath entry " + classpath);
+          log.debug("ignoring classpath entry {}", classpath);
         }
       }
     } else {
@@ -222,9 +192,10 @@ public class AccumuloClassLoader {
   }
 
   private static ArrayList<URL> findAccumuloURLs() throws IOException {
-    String cp = getAccumuloString(AccumuloClassLoader.CLASSPATH_PROPERTY_NAME, AccumuloClassLoader.ACCUMULO_CLASSPATH_VALUE);
+    String cp = getAccumuloProperty(GENERAL_CLASSPATHS, null);
     if (cp == null)
       return new ArrayList<>();
+    log.warn("'{}' is deprecated but was set to '{}' ", GENERAL_CLASSPATHS, cp);
     String[] cps = replaceEnvVars(cp, System.getenv()).split(",");
     ArrayList<URL> urls = new ArrayList<>();
     for (String classpath : getMavenClasspaths())
@@ -238,7 +209,7 @@ public class AccumuloClassLoader {
   }
 
   private static Set<String> getMavenClasspaths() {
-    String baseDirname = AccumuloClassLoader.getAccumuloString(MAVEN_PROJECT_BASEDIR_PROPERTY_NAME, DEFAULT_MAVEN_PROJECT_BASEDIR_VALUE);
+    String baseDirname = AccumuloClassLoader.getAccumuloProperty(MAVEN_PROJECT_BASEDIR_PROPERTY_NAME, DEFAULT_MAVEN_PROJECT_BASEDIR_VALUE);
     if (baseDirname == null || baseDirname.trim().isEmpty())
       return Collections.emptySet();
     Set<String> paths = new TreeSet<>();
@@ -267,7 +238,7 @@ public class AccumuloClassLoader {
 
       ClassLoader parentClassLoader = AccumuloClassLoader.class.getClassLoader();
 
-      log.debug("Create 2nd tier ClassLoader using URLs: " + urls.toString());
+      log.debug("Create 2nd tier ClassLoader using URLs: {}", urls.toString());
       URLClassLoader aClassLoader = new URLClassLoader(urls.toArray(new URL[urls.size()]), parentClassLoader) {
         @Override
         protected synchronized Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {

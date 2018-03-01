@@ -34,6 +34,7 @@ import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.impl.ScannerImpl;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.Writer;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
@@ -59,7 +60,6 @@ import org.apache.accumulo.server.fs.FileRef;
 import org.apache.accumulo.server.master.state.Assignment;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.tablets.TabletTime;
-import org.apache.accumulo.server.util.FileUtil;
 import org.apache.accumulo.server.util.MasterMetadataUtil;
 import org.apache.accumulo.server.util.MetadataTableUtil;
 import org.apache.accumulo.server.zookeeper.TransactionWatcher;
@@ -77,12 +77,12 @@ public class SplitRecoveryIT extends ConfigurableMacBase {
   }
 
   private KeyExtent nke(String table, String endRow, String prevEndRow) {
-    return new KeyExtent(table, endRow == null ? null : new Text(endRow), prevEndRow == null ? null : new Text(prevEndRow));
+    return new KeyExtent(Table.ID.of(table), endRow == null ? null : new Text(endRow), prevEndRow == null ? null : new Text(prevEndRow));
   }
 
   private void run() throws Exception {
     Instance inst = HdfsZooInstance.getInstance();
-    AccumuloServerContext c = new AccumuloServerContext(new ServerConfigurationFactory(inst));
+    AccumuloServerContext c = new AccumuloServerContext(inst, new ServerConfigurationFactory(inst));
     String zPath = ZooUtil.getRoot(inst) + "/testLock";
     IZooReaderWriter zoo = ZooReaderWriter.getInstance();
     zoo.putPersistentData(zPath, new byte[0], NodeExistsPolicy.OVERWRITE);
@@ -166,8 +166,7 @@ public class SplitRecoveryIT extends ConfigurableMacBase {
     SortedMap<FileRef,DataFileValue> highDatafileSizes = new TreeMap<>();
     List<FileRef> highDatafilesToRemove = new ArrayList<>();
 
-    MetadataTableUtil.splitDatafiles(extent.getTableId(), midRow, splitRatio, new HashMap<FileRef,FileUtil.FileInfo>(), mapFiles, lowDatafileSizes,
-        highDatafileSizes, highDatafilesToRemove);
+    MetadataTableUtil.splitDatafiles(midRow, splitRatio, new HashMap<>(), mapFiles, lowDatafileSizes, highDatafileSizes, highDatafilesToRemove);
 
     MetadataTableUtil.splitTablet(high, extent.getPrevEndRow(), splitRatio, context, zl);
     TServerInstance instance = new TServerInstance(location, zl.getSessionId());

@@ -16,7 +16,12 @@
  */
 package org.apache.accumulo.core.conf;
 
+import java.io.File;
 import java.io.IOException;
+import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -29,11 +34,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * An {@link AccumuloConfiguration} which loads properties from an XML file, usually accumulo-site.xml. This implementation supports defaulting undefined
- * property values to a parent configuration's definitions.
+ * An {@link AccumuloConfiguration} which first loads any properties set on the command-line (using the -o option) and then from an XML file, usually
+ * accumulo-site.xml. This implementation supports defaulting undefined property values to a parent configuration's definitions.
  * <p>
- * The system property "org.apache.accumulo.config.file" can be used to specify the location of the XML configuration file on the classpath. If the system
- * property is not defined, it defaults to "accumulo-site.xml".
+ * The system property "accumulo.configuration" can be used to specify the location of the XML configuration file on the classpath or filesystem if the path is
+ * prefixed with 'file://'. If the system property is not defined, it defaults to "accumulo-site.xml" and will look on classpath for file.
  * <p>
  * This class is a singleton.
  * <p>
@@ -42,17 +47,13 @@ import org.slf4j.LoggerFactory;
 public class SiteConfiguration extends AccumuloConfiguration {
   private static final Logger log = LoggerFactory.getLogger(SiteConfiguration.class);
 
-  private AccumuloConfiguration parent = null;
+  private static final AccumuloConfiguration parent = DefaultConfiguration.getInstance();
   private static SiteConfiguration instance = null;
 
   private static Configuration xmlConfig;
   private final Map<String,String> staticConfigs;
 
-  /**
-   * Not for consumers. Call {@link SiteConfiguration#getInstance(AccumuloConfiguration)} instead
-   */
-  SiteConfiguration(AccumuloConfiguration parent) {
-    this.parent = parent;
+  private SiteConfiguration() {
     /*
      * Make a read-only copy of static configs so we can avoid lock contention on the Hadoop Configuration object
      */
@@ -74,42 +75,55 @@ public class SiteConfiguration extends AccumuloConfiguration {
   }
 
   /**
-   * Gets an instance of this class. A new instance is only created on the first call, and so the parent configuration cannot be changed later.
+   * Gets an instance of this class. A new instance is only created on the first call.
    *
-   * @param parent
-   *          parent (default) configuration
    * @throws RuntimeException
    *           if the configuration is invalid
    */
-  synchronized public static SiteConfiguration getInstance(AccumuloConfiguration parent) {
+  synchronized public static SiteConfiguration getInstance() {
     if (instance == null) {
-      instance = new SiteConfiguration(parent);
+      instance = new SiteConfiguration();
       ConfigSanityCheck.validate(instance);
     }
     return instance;
   }
 
-  synchronized public static SiteConfiguration getInstance() {
-    return getInstance(DefaultConfiguration.getInstance());
-  }
-
   synchronized private static Configuration getXmlConfig() {
-    String configFile = System.getProperty("org.apache.accumulo.config.file", "accumulo-site.xml");
     if (xmlConfig == null) {
       xmlConfig = new Configuration(false);
-
-      if (SiteConfiguration.class.getClassLoader().getResource(configFile) == null)
-        log.warn(configFile + " not found on classpath", new Throwable());
-      else
-        xmlConfig.addResource(configFile);
+      String configFile = System.getProperty("accumulo.configuration", "accumulo-site.xml");
+      if (configFile.startsWith("file://")) {
+        try {
+          File f = new File(new URI(configFile));
+          if (f.exists() && !f.isDirectory()) {
+            xmlConfig.addResource(f.toURI().toURL());
+            log.info("Loaded configuration from filesystem at {}", configFile);
+          } else {
+            log.warn("Failed to load Accumulo configuration from " + configFile, new Throwable());
+          }
+        } catch (MalformedURLException | URISyntaxException e) {
+          log.warn("Failed to load Accumulo configuration from " + configFile, e);
+        }
+      } else {
+        URL accumuloConfigUrl = SiteConfiguration.class.getClassLoader().getResource(configFile);
+        if (accumuloConfigUrl == null) {
+          log.warn("Accumulo configuration '" + configFile + "' is not on classpath", new Throwable());
+        } else {
+          xmlConfig.addResource(accumuloConfigUrl);
+          log.info("Loaded configuration from classpath at {}", accumuloConfigUrl.getFile());
+        }
+      }
     }
     return xmlConfig;
   }
 
   @Override
   public String get(Property property) {
-    String key = property.getKey();
+    if (CliConfiguration.get(property) != null) {
+      return CliConfiguration.get(property);
+    }
 
+    String key = property.getKey();
     // If the property is sensitive, see if CredentialProvider was configured.
     if (property.isSensitive()) {
       Configuration hadoopConf = getHadoopConfiguration();
@@ -131,15 +145,22 @@ public class SiteConfiguration extends AccumuloConfiguration {
 
     if (value == null || !property.getType().isValidFormat(value)) {
       if (value != null)
-        log.error("Using default value for " + key + " due to improperly formatted " + property.getType() + ": " + value);
+        log.error("Using default value for {} due to improperly formatted {}: {}", key, property.getType(), value);
       value = parent.get(property);
     }
+
     return value;
   }
 
   @Override
   public void getProperties(Map<String,String> props, Predicate<String> filter) {
-    parent.getProperties(props, filter);
+    getProperties(props, filter, true);
+  }
+
+  public void getProperties(Map<String,String> props, Predicate<String> filter, boolean useDefaults) {
+    if (useDefaults) {
+      parent.getProperties(props, filter);
+    }
 
     for (Entry<String,String> entry : getXmlConfig())
       if (filter.test(entry.getKey()))
@@ -165,6 +186,7 @@ public class SiteConfiguration extends AccumuloConfiguration {
         log.warn("Failed to extract sensitive properties from Hadoop CredentialProvider, falling back to accumulo-site.xml", e);
       }
     }
+    CliConfiguration.getProperties(props, filter);
   }
 
   protected Configuration getHadoopConfiguration() {

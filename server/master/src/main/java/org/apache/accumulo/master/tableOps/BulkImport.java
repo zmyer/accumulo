@@ -16,7 +16,7 @@
  */
 package org.apache.accumulo.master.tableOps;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.impl.AcceptableThriftTableOperationException;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.impl.thrift.TableOperation;
 import org.apache.accumulo.core.client.impl.thrift.TableOperationExceptionType;
@@ -76,12 +77,12 @@ public class BulkImport extends MasterRepo {
 
   private static final Logger log = LoggerFactory.getLogger(BulkImport.class);
 
-  private String tableId;
+  private Table.ID tableId;
   private String sourceDir;
   private String errorDir;
   private boolean setTime;
 
-  public BulkImport(String tableId, String sourceDir, String errorDir, boolean setTime) {
+  public BulkImport(Table.ID tableId, String sourceDir, String errorDir, boolean setTime) {
     this.tableId = tableId;
     this.sourceDir = sourceDir;
     this.errorDir = errorDir;
@@ -101,13 +102,13 @@ public class BulkImport extends MasterRepo {
         reserve2 = Utils.reserveHdfsDirectory(errorDir, tid);
       return reserve2;
     } else {
-      throw new AcceptableThriftTableOperationException(tableId, null, TableOperation.BULK_IMPORT, TableOperationExceptionType.OFFLINE, null);
+      throw new AcceptableThriftTableOperationException(tableId.canonicalID(), null, TableOperation.BULK_IMPORT, TableOperationExceptionType.OFFLINE, null);
     }
   }
 
   @Override
   public Repo<Master> call(long tid, Master master) throws Exception {
-    log.debug(" tid " + tid + " sourceDir " + sourceDir);
+    log.debug(" tid {} sourceDir {}", tid, sourceDir);
 
     Utils.getReadLock(tableId, tid).lock();
 
@@ -122,30 +123,30 @@ public class BulkImport extends MasterRepo {
       // ignored
     }
     if (errorStatus == null)
-      throw new AcceptableThriftTableOperationException(tableId, null, TableOperation.BULK_IMPORT, TableOperationExceptionType.BULK_BAD_ERROR_DIRECTORY,
-          errorDir + " does not exist");
+      throw new AcceptableThriftTableOperationException(tableId.canonicalID(), null, TableOperation.BULK_IMPORT,
+          TableOperationExceptionType.BULK_BAD_ERROR_DIRECTORY, errorDir + " does not exist");
     if (!errorStatus.isDirectory())
-      throw new AcceptableThriftTableOperationException(tableId, null, TableOperation.BULK_IMPORT, TableOperationExceptionType.BULK_BAD_ERROR_DIRECTORY,
-          errorDir + " is not a directory");
+      throw new AcceptableThriftTableOperationException(tableId.canonicalID(), null, TableOperation.BULK_IMPORT,
+          TableOperationExceptionType.BULK_BAD_ERROR_DIRECTORY, errorDir + " is not a directory");
     if (fs.listStatus(errorPath).length != 0)
-      throw new AcceptableThriftTableOperationException(tableId, null, TableOperation.BULK_IMPORT, TableOperationExceptionType.BULK_BAD_ERROR_DIRECTORY,
-          errorDir + " is not empty");
+      throw new AcceptableThriftTableOperationException(tableId.canonicalID(), null, TableOperation.BULK_IMPORT,
+          TableOperationExceptionType.BULK_BAD_ERROR_DIRECTORY, errorDir + " is not empty");
 
     ZooArbitrator.start(Constants.BULK_ARBITRATOR_TYPE, tid);
     master.updateBulkImportStatus(sourceDir, BulkImportState.MOVING);
     // move the files into the directory
     try {
       String bulkDir = prepareBulkImport(master, fs, sourceDir, tableId);
-      log.debug(" tid " + tid + " bulkDir " + bulkDir);
+      log.debug(" tid {} bulkDir {}", tid, bulkDir);
       return new LoadFiles(tableId, sourceDir, bulkDir, errorDir, setTime);
     } catch (IOException ex) {
       log.error("error preparing the bulk import directory", ex);
-      throw new AcceptableThriftTableOperationException(tableId, null, TableOperation.BULK_IMPORT, TableOperationExceptionType.BULK_BAD_INPUT_DIRECTORY,
-          sourceDir + ": " + ex);
+      throw new AcceptableThriftTableOperationException(tableId.canonicalID(), null, TableOperation.BULK_IMPORT,
+          TableOperationExceptionType.BULK_BAD_INPUT_DIRECTORY, sourceDir + ": " + ex);
     }
   }
 
-  private Path createNewBulkDir(VolumeManager fs, String tableId) throws IOException {
+  private Path createNewBulkDir(VolumeManager fs, Table.ID tableId) throws IOException {
     Path tempPath = fs.matchingFileSystem(new Path(sourceDir), ServerConstants.getTablesDirs());
     if (tempPath == null)
       throw new IOException(sourceDir + " is not in a volume configured for Accumulo");
@@ -170,13 +171,13 @@ public class BulkImport extends MasterRepo {
         throw new IOException("Dir exist when it should not " + newBulkDir);
       if (fs.mkdirs(newBulkDir))
         return newBulkDir;
-      log.warn("Failed to create " + newBulkDir + " for unknown reason");
+      log.warn("Failed to create {} for unknown reason", newBulkDir);
 
       sleepUninterruptibly(3, TimeUnit.SECONDS);
     }
   }
 
-  private String prepareBulkImport(Master master, final VolumeManager fs, String dir, String tableId) throws Exception {
+  private String prepareBulkImport(Master master, final VolumeManager fs, String dir, Table.ID tableId) throws Exception {
     final Path bulkDir = createNewBulkDir(fs, tableId);
 
     MetadataTableUtil.addBulkLoadInProgressFlag(master, "/" + bulkDir.getParent().getName() + "/" + bulkDir.getName());
@@ -202,7 +203,7 @@ public class BulkImport extends MasterRepo {
               extension = sa[sa.length - 1];
 
               if (!FileOperations.getValidExtensions().contains(extension)) {
-                log.warn(fileStatus.getPath() + " does not have a valid extension, ignoring");
+                log.warn("{} does not have a valid extension, ignoring", fileStatus.getPath());
                 return null;
               }
             } else {
@@ -212,22 +213,22 @@ public class BulkImport extends MasterRepo {
 
             if (extension.equals(Constants.MAPFILE_EXTENSION)) {
               if (!fileStatus.isDirectory()) {
-                log.warn(fileStatus.getPath() + " is not a map file, ignoring");
+                log.warn("{} is not a map file, ignoring", fileStatus.getPath());
                 return null;
               }
 
               if (fileStatus.getPath().getName().equals("_logs")) {
-                log.info(fileStatus.getPath() + " is probably a log directory from a map/reduce task, skipping");
+                log.info("{} is probably a log directory from a map/reduce task, skipping", fileStatus.getPath());
                 return null;
               }
               try {
                 FileStatus dataStatus = fs.getFileStatus(new Path(fileStatus.getPath(), MapFile.DATA_FILE_NAME));
                 if (dataStatus.isDirectory()) {
-                  log.warn(fileStatus.getPath() + " is not a map file, ignoring");
+                  log.warn("{} is not a map file, ignoring", fileStatus.getPath());
                   return null;
                 }
               } catch (FileNotFoundException fnfe) {
-                log.warn(fileStatus.getPath() + " is not a map file, ignoring");
+                log.warn("{} is not a map file, ignoring", fileStatus.getPath());
                 return null;
               }
             }
@@ -236,7 +237,7 @@ public class BulkImport extends MasterRepo {
             Path newPath = new Path(bulkDir, newName);
             try {
               fs.rename(fileStatus.getPath(), newPath);
-              log.debug("Moved " + fileStatus.getPath() + " to " + newPath);
+              log.debug("Moved {} to {}", fileStatus.getPath(), newPath);
             } catch (IOException E1) {
               log.error("Could not move: {} {}", fileStatus.getPath().toString(), E1.getMessage());
             }

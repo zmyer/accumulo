@@ -34,6 +34,7 @@ import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.ZooKeeperInstance;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
@@ -43,6 +44,7 @@ import org.apache.accumulo.core.metadata.schema.DataFileValue;
 import org.apache.accumulo.core.metadata.schema.MetadataSchema.TabletsSection;
 import org.apache.accumulo.core.metadata.schema.MetadataSchema.TabletsSection.DataFileColumnFamily;
 import org.apache.accumulo.core.security.Authorizations;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.core.util.Stat;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.hadoop.io.Text;
@@ -50,7 +52,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.Iterators;
-import com.google.common.net.HostAndPort;
 
 /**
  * This little program can be used to write a lot of metadata entries and measure the performance of varying numbers of threads doing metadata lookups using the
@@ -67,7 +68,7 @@ public class MetadataBatchScanTest {
 
     ClientOpts opts = new ClientOpts();
     opts.parseArgs(MetadataBatchScanTest.class.getName(), args);
-    Instance inst = new ZooKeeperInstance(new ClientConfiguration().withInstance("acu14").withZkHosts("localhost"));
+    Instance inst = new ZooKeeperInstance(ClientConfiguration.create().withInstance("acu14").withZkHosts("localhost"));
     final Connector connector = inst.getConnector(opts.getPrincipal(), opts.getToken());
 
     TreeSet<Long> splits = new TreeSet<>();
@@ -77,7 +78,7 @@ public class MetadataBatchScanTest {
       splits.add((r.nextLong() & 0x7fffffffffffffffl) % 1000000000000l);
     }
 
-    String tid = "8";
+    Table.ID tid = Table.ID.of("8");
     Text per = null;
 
     ArrayList<KeyExtent> extents = new ArrayList<>();
@@ -175,22 +176,20 @@ public class MetadataBatchScanTest {
   }
 
   private static ScanStats runScanTest(Connector connector, int numLoop, List<Range> ranges) throws Exception {
-    Scanner scanner = null;
-
-    BatchScanner bs = connector.createBatchScanner(MetadataTable.NAME, Authorizations.EMPTY, 1);
-    bs.fetchColumnFamily(TabletsSection.CurrentLocationColumnFamily.NAME);
-    TabletsSection.TabletColumnFamily.PREV_ROW_COLUMN.fetch(bs);
-
-    bs.setRanges(ranges);
-
-    // System.out.println(ranges);
-
     ScanStats stats = new ScanStats();
-    for (int i = 0; i < numLoop; i++) {
-      ScanStat ss = scan(bs, ranges, scanner);
-      stats.merge(ss);
-    }
 
+    try (BatchScanner bs = connector.createBatchScanner(MetadataTable.NAME, Authorizations.EMPTY, 1)) {
+      bs.fetchColumnFamily(TabletsSection.CurrentLocationColumnFamily.NAME);
+      TabletsSection.TabletColumnFamily.PREV_ROW_COLUMN.fetch(bs);
+
+      bs.setRanges(ranges);
+
+      // System.out.println(ranges);
+      for (int i = 0; i < numLoop; i++) {
+        ScanStat ss = scan(bs, ranges, null);
+        stats.merge(ss);
+      }
+    }
     return stats;
   }
 

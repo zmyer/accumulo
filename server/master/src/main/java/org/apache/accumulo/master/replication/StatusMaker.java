@@ -16,6 +16,7 @@
  */
 package org.apache.accumulo.master.replication;
 
+import java.io.IOException;
 import java.util.Map.Entry;
 
 import org.apache.accumulo.core.client.AccumuloException;
@@ -26,6 +27,7 @@ import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.MutationsRejectedException;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.TableNotFoundException;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Value;
@@ -40,7 +42,9 @@ import org.apache.accumulo.core.replication.ReplicationTableOfflineException;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.trace.Span;
 import org.apache.accumulo.core.trace.Trace;
+import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.replication.proto.Replication.Status;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,12 +59,14 @@ public class StatusMaker {
   private static final Logger log = LoggerFactory.getLogger(StatusMaker.class);
 
   private final Connector conn;
+  private final VolumeManager fs;
 
   private BatchWriter replicationWriter, metadataWriter;
   private String sourceTableName = MetadataTable.NAME;
 
-  public StatusMaker(Connector conn) {
+  public StatusMaker(Connector conn, VolumeManager fs) {
     this.conn = conn;
+    this.fs = fs;
   }
 
   /**
@@ -106,7 +112,7 @@ public class StatusMaker {
         }
         // Extract the useful bits from the status key
         MetadataSchema.ReplicationSection.getFile(entry.getKey(), file);
-        String tableId = MetadataSchema.ReplicationSection.getTableId(entry.getKey());
+        Table.ID tableId = MetadataSchema.ReplicationSection.getTableId(entry.getKey());
 
         Status status;
         try {
@@ -158,10 +164,10 @@ public class StatusMaker {
   /**
    * Create a status record in the replication table
    */
-  protected boolean addStatusRecord(Text file, String tableId, Value v) {
+  protected boolean addStatusRecord(Text file, Table.ID tableId, Value v) {
     try {
       Mutation m = new Mutation(file);
-      m.put(StatusSection.NAME, new Text(tableId), v);
+      m.put(StatusSection.NAME, new Text(tableId.getUtf8()), v);
 
       try {
         replicationWriter.addMutation(m);
@@ -194,11 +200,23 @@ public class StatusMaker {
    * @param value
    *          Serialized version of the Status msg
    */
-  protected boolean addOrderRecord(Text file, String tableId, Status stat, Value value) {
+  protected boolean addOrderRecord(Text file, Table.ID tableId, Status stat, Value value) {
     try {
       if (!stat.hasCreatedTime()) {
-        log.error("Status record ({}) for {} in table {} was written to metadata table which lacked createdTime", ProtobufUtil.toString(stat), file, tableId);
-        return false;
+        try {
+          // If the createdTime is not set, work around the issue by retrieving the WAL creation time
+          // from HDFS (or the current time if the WAL does not exist). See ACCUMULO-4751
+          long createdTime = setAndGetCreatedTime(new Path(file.toString()), tableId.toString());
+          stat = Status.newBuilder(stat).setCreatedTime(createdTime).build();
+          value = ProtobufUtil.toValue(stat);
+          log.debug("Status was lacking createdTime, set to {} for {}", createdTime, file);
+        } catch (IOException e) {
+          log.warn("Failed to get file status, will retry", e);
+          return false;
+        } catch (MutationsRejectedException e) {
+          log.warn("Failed to write status mutation for replication, will retry", e);
+          return false;
+        }
       }
 
       log.info("Creating order record for {} for {} with {}", file, tableId, ProtobufUtil.toString(stat));
@@ -252,5 +270,22 @@ public class StatusMaker {
     } catch (MutationsRejectedException e) {
       log.warn("Failed to delete status mutations for metadata table, will retry", e);
     }
+  }
+
+  private long setAndGetCreatedTime(Path file, String tableId) throws IOException, MutationsRejectedException {
+    long createdTime;
+    if (fs.exists(file)) {
+      createdTime = fs.getFileStatus(file).getModificationTime();
+    } else {
+      createdTime = System.currentTimeMillis();
+    }
+
+    Status status = Status.newBuilder().setCreatedTime(createdTime).build();
+    Mutation m = new Mutation(new Text(ReplicationSection.getRowPrefix() + file.toString()));
+    m.put(MetadataSchema.ReplicationSection.COLF, new Text(tableId), ProtobufUtil.toValue(status));
+    replicationWriter.addMutation(m);
+    replicationWriter.flush();
+
+    return createdTime;
   }
 }

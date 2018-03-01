@@ -26,7 +26,6 @@ import java.util.TreeMap;
 
 import org.apache.accumulo.core.client.ClientConfiguration;
 import org.apache.accumulo.core.client.ClientConfiguration.ClientProperty;
-import org.apache.accumulo.core.client.impl.ClientContext;
 import org.apache.accumulo.core.client.security.tokens.AuthenticationToken;
 import org.apache.accumulo.core.client.security.tokens.KerberosToken;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
@@ -168,7 +167,8 @@ public class ShellOptionsJC {
   @Parameter(names = {"-h", "--hdfsZooInstance"}, description = "use hdfs zoo instance")
   private boolean hdfsZooInstance;
 
-  @Parameter(names = {"-z", "--zooKeeperInstance"}, description = "use a zookeeper instance with the given instance name and list of zoo hosts", arity = 2)
+  @Parameter(names = {"-z", "--zooKeeperInstance"}, description = "use a zookeeper instance with the given instance name and list of zoo hosts. "
+      + "Syntax: -z <zoo-instance-name> <zoo-hosts>. Where <zoo-hosts> is a comma separated list of zookeeper servers.", arity = 2)
   private List<String> zooKeeperInstance = new ArrayList<>();
 
   @Parameter(names = {"--ssl"}, description = "use ssl to connect to accumulo")
@@ -182,10 +182,12 @@ public class ShellOptionsJC {
       + "which defaults to ~/.accumulo/config:$ACCUMULO_CONF_DIR/client.conf:/etc/accumulo/client.conf")
   private String clientConfigFile = null;
 
-  @Parameter(names = {"-zi", "--zooKeeperInstanceName"}, description = "use a zookeeper instance with the given instance name")
+  @Parameter(names = {"-zi", "--zooKeeperInstanceName"}, description = "use a zookeeper instance with the given instance name. "
+      + "This parameter is used in conjunction with -zh.")
   private String zooKeeperInstanceName;
 
-  @Parameter(names = {"-zh", "--zooKeeperHosts"}, description = "use a zookeeper instance with the given list of zoo hosts")
+  @Parameter(names = {"-zh", "--zooKeeperHosts"}, description = "use a zookeeper instance with the given comma separated list of zookeeper servers. "
+      + "This parameter is used in conjunction with -zi.")
   private String zooKeeperHosts;
 
   @Parameter(names = "--auth-timeout", description = "minutes the shell can be idle without re-entering a password")
@@ -301,23 +303,33 @@ public class ShellOptionsJC {
   }
 
   public ClientConfiguration getClientConfiguration() throws ConfigurationException, FileNotFoundException {
-    ClientConfiguration clientConfig = clientConfigFile == null ? ClientConfiguration.loadDefault() : new ClientConfiguration(getClientConfigFile());
+    ClientConfiguration clientConfig = clientConfigFile == null ? ClientConfiguration.loadDefault() : ClientConfiguration.fromFile(new File(
+        getClientConfigFile()));
     if (useSsl()) {
       clientConfig.setProperty(ClientProperty.INSTANCE_RPC_SSL_ENABLED, "true");
     }
     if (useSasl()) {
       clientConfig.setProperty(ClientProperty.INSTANCE_RPC_SASL_ENABLED, "true");
     }
+    if (!getZooKeeperInstance().isEmpty()) {
+      List<String> zkOpts = getZooKeeperInstance();
+      String instanceName = zkOpts.get(0);
+      String hosts = zkOpts.get(1);
+      clientConfig.setProperty(ClientProperty.INSTANCE_ZK_HOST, hosts);
+      clientConfig.setProperty(ClientProperty.INSTANCE_NAME, instanceName);
+    }
+    // If the user provided the hosts, set the ZK for tracing too
+    if (null != zooKeeperHosts && !zooKeeperHosts.isEmpty()) {
+      clientConfig.setProperty(ClientProperty.INSTANCE_ZK_HOST, zooKeeperHosts);
+    }
+    if (null != zooKeeperInstanceName && !zooKeeperInstanceName.isEmpty()) {
+      clientConfig.setProperty(ClientProperty.INSTANCE_NAME, zooKeeperInstanceName);
+    }
 
     // Automatically try to add in the proper ZK from accumulo-site for backwards compat.
     if (!clientConfig.containsKey(ClientProperty.INSTANCE_ZK_HOST.getKey())) {
-      AccumuloConfiguration siteConf = SiteConfiguration.getInstance(ClientContext.convertClientConfig(clientConfig));
+      AccumuloConfiguration siteConf = SiteConfiguration.getInstance();
       clientConfig.withZkHosts(siteConf.get(Property.INSTANCE_ZK_HOST));
-    }
-
-    // If the user provided the hosts, set the ZK for tracing too
-    if (null != zooKeeperHosts) {
-      clientConfig.setProperty(ClientProperty.INSTANCE_ZK_HOST, zooKeeperHosts);
     }
 
     return clientConfig;

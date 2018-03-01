@@ -17,6 +17,7 @@
 package org.apache.accumulo.test.functional;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.util.Map;
 import java.util.Map.Entry;
@@ -47,8 +48,6 @@ import org.junit.Before;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class LargeRowIT extends AccumuloClusterHarness {
   private static final Logger log = LoggerFactory.getLogger(LargeRowIT.class);
@@ -82,7 +81,7 @@ public class LargeRowIT extends AccumuloClusterHarness {
     try {
       timeoutFactor = Integer.parseInt(System.getProperty("timeout.factor"));
     } catch (NumberFormatException e) {
-      log.warn("Could not parse property value for 'timeout.factor' as integer: " + System.getProperty("timeout.factor"));
+      log.warn("Could not parse property value for 'timeout.factor' as integer: {}", System.getProperty("timeout.factor"));
     }
 
     Assert.assertTrue("Timeout factor must be greater than or equal to 1", timeoutFactor >= 1);
@@ -189,33 +188,33 @@ public class LargeRowIT extends AccumuloClusterHarness {
 
     r.setSeed(SEED);
 
-    Scanner scanner = c.createScanner(table, Authorizations.EMPTY);
+    try (Scanner scanner = c.createScanner(table, Authorizations.EMPTY)) {
 
-    for (int i = 0; i < NUM_ROWS; i++) {
+      for (int i = 0; i < NUM_ROWS; i++) {
 
-      r.nextBytes(rowData);
-      TestIngest.toPrintableChars(rowData);
+        r.nextBytes(rowData);
+        TestIngest.toPrintableChars(rowData);
 
-      scanner.setRange(new Range(new Text(rowData)));
+        scanner.setRange(new Range(new Text(rowData)));
 
-      int count = 0;
+        int count = 0;
 
-      for (Entry<Key,Value> entry : scanner) {
-        if (!entry.getKey().getRow().equals(new Text(rowData))) {
-          throw new Exception("verification failed, unexpected row i =" + i);
+        for (Entry<Key,Value> entry : scanner) {
+          if (!entry.getKey().getRow().equals(new Text(rowData))) {
+            throw new Exception("verification failed, unexpected row i =" + i);
+          }
+          if (!entry.getValue().equals(new Value(Integer.toString(i).getBytes(UTF_8)))) {
+            throw new Exception("verification failed, unexpected value i =" + i + " value = " + entry.getValue());
+          }
+          count++;
         }
-        if (!entry.getValue().equals(Integer.toString(i).getBytes(UTF_8))) {
-          throw new Exception("verification failed, unexpected value i =" + i + " value = " + entry.getValue());
+
+        if (count != 1) {
+          throw new Exception("verification failed, unexpected count i =" + i + " count=" + count);
         }
-        count++;
-      }
 
-      if (count != 1) {
-        throw new Exception("verification failed, unexpected count i =" + i + " count=" + count);
       }
-
     }
-
   }
 
 }

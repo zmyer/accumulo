@@ -16,6 +16,10 @@
  */
 package org.apache.accumulo.core.file.rfile;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -33,6 +37,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.accumulo.core.client.sample.Sampler;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.data.ArrayByteSequence;
 import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.Key;
@@ -57,10 +62,6 @@ import org.apache.log4j.Logger;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
-
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 
 public class MultiThreadedRFileTest {
 
@@ -110,7 +111,7 @@ public class MultiThreadedRFileTest {
     public TestRFile(AccumuloConfiguration accumuloConfiguration) {
       this.accumuloConfiguration = accumuloConfiguration;
       if (this.accumuloConfiguration == null)
-        this.accumuloConfiguration = AccumuloConfiguration.getDefaultConfiguration();
+        this.accumuloConfiguration = DefaultConfiguration.getInstance();
     }
 
     public void close() throws IOException {
@@ -174,7 +175,7 @@ public class MultiThreadedRFileTest {
       Path path = new Path("file://" + rfile.toString());
 
       // the caches used to obfuscate the multithreaded issues
-      CachableBlockFile.Reader _cbr = new CachableBlockFile.Reader(fs, path, conf, null, null, AccumuloConfiguration.getDefaultConfiguration());
+      CachableBlockFile.Reader _cbr = new CachableBlockFile.Reader(fs, path, conf, null, null, DefaultConfiguration.getInstance());
       reader = new RFile.Reader(_cbr);
       iter = new ColumnFamilySkippingIterator(reader);
 
@@ -190,11 +191,11 @@ public class MultiThreadedRFileTest {
     }
   }
 
-  static Key nk(String row, String cf, String cq, String cv, long ts) {
+  static Key newKey(String row, String cf, String cq, String cv, long ts) {
     return new Key(row.getBytes(), cf.getBytes(), cq.getBytes(), cv.getBytes(), ts);
   }
 
-  static Value nv(String val) {
+  static Value newValue(String val) {
     return new Value(val.getBytes());
   }
 
@@ -223,7 +224,7 @@ public class MultiThreadedRFileTest {
       // now start up multiple RFile deepcopies
       int maxThreads = 10;
       String name = "MultiThreadedRFileTestThread";
-      ThreadPoolExecutor pool = new ThreadPoolExecutor(maxThreads + 1, maxThreads + 1, 5 * 60, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(),
+      ThreadPoolExecutor pool = new ThreadPoolExecutor(maxThreads + 1, maxThreads + 1, 5 * 60, TimeUnit.SECONDS, new LinkedBlockingQueue<>(),
           new NamingThreadFactory(name));
       pool.allowCoreThreadTimeOut(true);
       try {
@@ -362,7 +363,7 @@ public class MultiThreadedRFileTest {
     String cf = getCf(locality);
     String cq = "cq" + pad(index);
 
-    return nk(row, cf, cq, "", 1);
+    return newKey(row, cf, cq, "", 1);
   }
 
   private String pad(int val) {
@@ -380,7 +381,7 @@ public class MultiThreadedRFileTest {
   }
 
   private Value getValue(int index) {
-    return nv("" + index);
+    return newValue("" + index);
   }
 
   private String getCf(int locality) {

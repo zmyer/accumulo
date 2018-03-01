@@ -19,14 +19,17 @@ package org.apache.accumulo.core.conf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Map.Entry;
 import java.util.TreeMap;
-import java.util.TreeSet;
+import java.util.function.Predicate;
+import java.util.stream.Collector;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 import org.junit.Test;
 
@@ -84,7 +87,7 @@ public class PropertyTest {
 
   @Test
   public void testRawDefaultValues() {
-    AccumuloConfiguration conf = AccumuloConfiguration.getDefaultConfiguration();
+    AccumuloConfiguration conf = DefaultConfiguration.getInstance();
     assertEquals("${java.io.tmpdir}" + File.separator + "accumulo-vfs-cache-${user.name}", Property.VFS_CLASSLOADER_CACHE_DIR.getRawDefaultValue());
     assertEquals(new File(System.getProperty("java.io.tmpdir"), "accumulo-vfs-cache-" + System.getProperty("user.name")).getAbsolutePath(),
         conf.get(Property.VFS_CLASSLOADER_CACHE_DIR));
@@ -96,49 +99,26 @@ public class PropertyTest {
     assertEquals("", Property.GENERAL_MAVEN_PROJECT_BASEDIR.getDefaultValue());
   }
 
+  // This test verifies all "sensitive" properties are properly marked as sensitive
   @Test
   public void testSensitiveKeys() {
-    final TreeMap<String,String> extras = new TreeMap<>();
-    extras.put("trace.token.property.blah", "something");
+    // add trace token, because it's a sensitive property not in the default configuration
+    ConfigurationCopy conf = new ConfigurationCopy(DefaultConfiguration.getInstance());
+    conf.set("trace.token.property.blah", "something");
 
-    AccumuloConfiguration conf = new DefaultConfiguration() {
-      @Override
-      public Iterator<Entry<String,String>> iterator() {
-        final Iterator<Entry<String,String>> parent = super.iterator();
-        final Iterator<Entry<String,String>> mine = extras.entrySet().iterator();
+    // ignores duplicates because ConfigurationCopy already de-duplicates
+    Collector<Entry<String,String>,?,TreeMap<String,String>> treeMapCollector = Collectors.toMap(e -> e.getKey(), e -> e.getValue(), (a, b) -> a, TreeMap::new);
 
-        return new Iterator<Entry<String,String>>() {
+    Predicate<Entry<String,String>> sensitiveNames = e -> e.getKey().equals(Property.INSTANCE_SECRET.getKey()) || e.getKey().toLowerCase().contains("password")
+        || e.getKey().toLowerCase().endsWith("secret") || e.getKey().startsWith(Property.TRACE_TOKEN_PROPERTY_PREFIX.getKey());
 
-          @Override
-          public boolean hasNext() {
-            return parent.hasNext() || mine.hasNext();
-          }
+    Predicate<Entry<String,String>> isMarkedSensitive = e -> Property.isSensitive(e.getKey());
 
-          @Override
-          public Entry<String,String> next() {
-            return parent.hasNext() ? parent.next() : mine.next();
-          }
+    TreeMap<String,String> expected = StreamSupport.stream(conf.spliterator(), false).filter(sensitiveNames).collect(treeMapCollector);
+    TreeMap<String,String> actual = StreamSupport.stream(conf.spliterator(), false).filter(isMarkedSensitive).collect(treeMapCollector);
 
-          @Override
-          public void remove() {
-            throw new UnsupportedOperationException();
-          }
-        };
-      }
-    };
-    TreeSet<String> expected = new TreeSet<>();
-    for (Entry<String,String> entry : conf) {
-      String key = entry.getKey();
-      if (key.equals(Property.INSTANCE_SECRET.getKey()) || key.toLowerCase().contains("password") || key.toLowerCase().endsWith("secret")
-          || key.startsWith(Property.TRACE_TOKEN_PROPERTY_PREFIX.getKey()))
-        expected.add(key);
-    }
-    TreeSet<String> actual = new TreeSet<>();
-    for (Entry<String,String> entry : conf) {
-      String key = entry.getKey();
-      if (Property.isSensitive(key))
-        actual.add(key);
-    }
+    // make sure trace token property wasn't excluded from both
+    assertEquals("something", expected.get("trace.token.property.blah"));
     assertEquals(expected, actual);
   }
 
@@ -150,5 +130,62 @@ public class PropertyTest {
         assertNull(prop.getDefaultValue());
       }
     }
+  }
+
+  @SuppressWarnings("deprecation")
+  private Property getDeprecatedProperty() {
+    return Property.INSTANCE_DFS_DIR;
+  }
+
+  @Test
+  public void testAnnotations() {
+    assertTrue(Property.GENERAL_VOLUME_CHOOSER.isExperimental());
+    assertFalse(Property.TABLE_SAMPLER.isExperimental());
+
+    assertTrue(Property.INSTANCE_SECRET.isSensitive());
+    assertFalse(Property.INSTANCE_VOLUMES.isSensitive());
+
+    assertTrue(getDeprecatedProperty().isDeprecated());
+    assertFalse(Property.INSTANCE_VOLUMES_REPLACEMENTS.isDeprecated());
+
+  }
+
+  @Test
+  public void testGetPropertyByKey() {
+    for (Property prop : Property.values()) {
+      assertSame(prop, Property.getPropertyByKey(prop.getKey()));
+    }
+  }
+
+  @Test
+  public void testIsValidPropertyKey() {
+    for (Property prop : Property.values()) {
+      assertTrue(Property.isValidPropertyKey(prop.getKey()));
+      if (prop.getType().equals(PropertyType.PREFIX)) {
+        assertTrue(Property.isValidPropertyKey(prop.getKey() + "foo9"));
+      }
+    }
+
+    assertFalse(Property.isValidPropertyKey("abc.def"));
+  }
+
+  @Test
+  public void testIsValidTablePropertyKey() {
+    for (Property prop : Property.values()) {
+      if (prop.getKey().startsWith("table.") && !prop.getKey().equals("table.")) {
+        assertTrue(Property.isValidTablePropertyKey(prop.getKey()));
+
+        if (prop.getType().equals(PropertyType.PREFIX)) {
+          assertTrue(Property.isValidTablePropertyKey(prop.getKey() + "foo9"));
+        } else {
+          assertFalse(Property.isValidTablePropertyKey(prop.getKey() + "foo9"));
+        }
+      } else {
+        assertFalse(Property.isValidTablePropertyKey(prop.getKey()));
+      }
+
+    }
+
+    assertFalse(Property.isValidTablePropertyKey("abc.def"));
   }
 }

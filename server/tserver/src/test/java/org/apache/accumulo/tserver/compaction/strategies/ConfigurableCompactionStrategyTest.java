@@ -20,8 +20,9 @@ package org.apache.accumulo.tserver.compaction.strategies;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.compaction.CompactionSettings;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.ConfigurationTypeHelper;
 import org.apache.accumulo.core.data.impl.KeyExtent;
 import org.apache.accumulo.core.metadata.schema.DataFileValue;
 import org.apache.accumulo.server.fs.FileRef;
@@ -37,7 +38,7 @@ public class ConfigurableCompactionStrategyTest {
 
   @Test
   public void testOutputOptions() throws Exception {
-    MajorCompactionRequest mcr = new MajorCompactionRequest(new KeyExtent("1", null, null), MajorCompactionReason.USER, null, null);
+    MajorCompactionRequest mcr = new MajorCompactionRequest(new KeyExtent(Table.ID.of("1"), null, null), MajorCompactionReason.USER, null);
 
     Map<FileRef,DataFileValue> files = new HashMap<>();
     files.put(new FileRef("hdfs://nn1/accumulo/tables/1/t-009/F00001.rf"), new DataFileValue(50000, 400));
@@ -70,9 +71,9 @@ public class ConfigurableCompactionStrategyTest {
 
     plan = ccs.getCompactionPlan(mcr);
 
-    Assert.assertEquals(AccumuloConfiguration.getMemoryInBytes("64K"), plan.writeParameters.getBlockSize());
-    Assert.assertEquals(AccumuloConfiguration.getMemoryInBytes("256M"), plan.writeParameters.getHdfsBlockSize());
-    Assert.assertEquals(AccumuloConfiguration.getMemoryInBytes("32K"), plan.writeParameters.getIndexBlockSize());
+    Assert.assertEquals(ConfigurationTypeHelper.getFixedMemoryAsBytes("64K"), plan.writeParameters.getBlockSize());
+    Assert.assertEquals(ConfigurationTypeHelper.getFixedMemoryAsBytes("256M"), plan.writeParameters.getHdfsBlockSize());
+    Assert.assertEquals(ConfigurationTypeHelper.getFixedMemoryAsBytes("32K"), plan.writeParameters.getIndexBlockSize());
     Assert.assertEquals(5, plan.writeParameters.getReplication());
     Assert.assertEquals("snappy", plan.writeParameters.getCompressType());
 

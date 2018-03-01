@@ -16,20 +16,25 @@
  */
 package org.apache.accumulo.master.tableOps;
 
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.fate.Repo;
 import org.apache.accumulo.master.Master;
 
 class FinishCancelCompaction extends MasterRepo {
   private static final long serialVersionUID = 1L;
-  private String tableId;
+  private Table.ID tableId;
+  private Namespace.ID namespaceId;
 
-  public FinishCancelCompaction(String tableId) {
+  public FinishCancelCompaction(Namespace.ID namespaceId, Table.ID tableId) {
     this.tableId = tableId;
+    this.namespaceId = namespaceId;
   }
 
   @Override
   public Repo<Master> call(long tid, Master environment) throws Exception {
-    Utils.getReadLock(tableId, tid).unlock();
+    Utils.unreserveTable(tableId, tid, false);
+    Utils.unreserveNamespace(namespaceId, tid, false);
     return null;
   }
 

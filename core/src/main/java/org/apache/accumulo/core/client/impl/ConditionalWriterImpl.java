@@ -17,8 +17,8 @@
 
 package org.apache.accumulo.core.client.impl;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -77,6 +77,7 @@ import org.apache.accumulo.core.trace.Tracer;
 import org.apache.accumulo.core.trace.thrift.TInfo;
 import org.apache.accumulo.core.util.BadArgumentException;
 import org.apache.accumulo.core.util.ByteBufferUtil;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.core.util.NamingThreadFactory;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.util.LoggingRunnable;
@@ -93,11 +94,13 @@ import org.apache.thrift.transport.TTransportException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.net.HostAndPort;
-
 class ConditionalWriterImpl implements ConditionalWriter {
 
-  private static ThreadPoolExecutor cleanupThreadPool = new ThreadPoolExecutor(1, 1, 10, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>());
+  private static ThreadPoolExecutor cleanupThreadPool = new ThreadPoolExecutor(1, 1, 3, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), r -> {
+    Thread t = new Thread(r, "Conditional Writer Cleanup Thread");
+    t.setDaemon(true);
+    return t;
+  });
 
   static {
     cleanupThreadPool.allowCoreThreadTimeOut(true);
@@ -113,7 +116,7 @@ class ConditionalWriterImpl implements ConditionalWriter {
   private Map<Text,Boolean> cache = Collections.synchronizedMap(new LRUMap(1000));
   private final ClientContext context;
   private TabletLocator locator;
-  private final String tableId;
+  private final Table.ID tableId;
   private long timeout;
   private final Durability durability;
   private final String classLoaderContext;
@@ -298,9 +301,9 @@ class ConditionalWriterImpl implements ConditionalWriter {
 
       if (failures.size() == mutations.size())
         if (!Tables.exists(context.getInstance(), tableId))
-          throw new TableDeletedException(tableId);
+          throw new TableDeletedException(tableId.canonicalID());
         else if (Tables.getTableState(context.getInstance(), tableId) == TableState.OFFLINE)
-          throw new TableOfflineException(context.getInstance(), tableId);
+          throw new TableOfflineException(context.getInstance(), tableId.canonicalID());
 
     } catch (Exception e) {
       for (QCMutation qcm : mutations)
@@ -383,7 +386,7 @@ class ConditionalWriterImpl implements ConditionalWriter {
     }
   }
 
-  ConditionalWriterImpl(ClientContext context, String tableId, ConditionalWriterConfig config) {
+  ConditionalWriterImpl(ClientContext context, Table.ID tableId, ConditionalWriterConfig config) {
     this.context = context;
     this.auths = config.getAuthorizations();
     this.ve = new VisibilityEvaluator(config.getAuthorizations());
@@ -510,8 +513,8 @@ class ConditionalWriterImpl implements ConditionalWriter {
       }
     }
 
-    TConditionalSession tcs = client.startConditionalUpdate(tinfo, context.rpcCreds(), ByteBufferUtil.toByteBuffers(auths.getAuthorizations()), tableId,
-        DurabilityImpl.toThrift(durability), this.classLoaderContext);
+    TConditionalSession tcs = client.startConditionalUpdate(tinfo, context.rpcCreds(), ByteBufferUtil.toByteBuffers(auths.getAuthorizations()),
+        tableId.canonicalID(), DurabilityImpl.toThrift(durability), this.classLoaderContext);
 
     synchronized (cachedSessionIDs) {
       SessionID sid = new SessionID();
@@ -616,8 +619,8 @@ class ConditionalWriterImpl implements ConditionalWriter {
       queueRetry(ignored, location);
 
     } catch (ThriftSecurityException tse) {
-      AccumuloSecurityException ase = new AccumuloSecurityException(context.getCredentials().getPrincipal(), tse.getCode(), Tables.getPrintableTableInfoFromId(
-          context.getInstance(), tableId), tse);
+      AccumuloSecurityException ase = new AccumuloSecurityException(context.getCredentials().getPrincipal(), tse.getCode(),
+          Tables.getPrintableTableInfoFromId(context.getInstance(), tableId), tse);
       queueException(location, cmidToCm, ase);
     } catch (TTransportException e) {
       locator.invalidateCache(context.getInstance(), location.toString());
@@ -831,9 +834,7 @@ class ConditionalWriterImpl implements ConditionalWriter {
       Boolean bb = ve.evaluate(new ColumnVisibility(testVis));
       cache.put(new Text(testVis), bb);
       return bb;
-    } catch (VisibilityParseException e) {
-      return false;
-    } catch (BadArgumentException e) {
+    } catch (VisibilityParseException | BadArgumentException e) {
       return false;
     }
   }

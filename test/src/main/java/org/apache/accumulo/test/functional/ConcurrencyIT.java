@@ -17,6 +17,7 @@
 package org.apache.accumulo.test.functional;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.util.EnumSet;
 import java.util.Map;
@@ -44,20 +45,25 @@ import org.apache.hadoop.io.Text;
 import org.junit.Test;
 
 import com.google.common.collect.Iterators;
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class ConcurrencyIT extends AccumuloClusterHarness {
 
   static class ScanTask extends Thread {
 
     int count = 0;
-    Scanner scanner;
+    Scanner scanner = null;
 
     ScanTask(Connector conn, String tableName, long time) throws Exception {
-      scanner = conn.createScanner(tableName, Authorizations.EMPTY);
-      IteratorSetting slow = new IteratorSetting(30, "slow", SlowIterator.class);
-      SlowIterator.setSleepTime(slow, time);
-      scanner.addScanIterator(slow);
+      try {
+        scanner = conn.createScanner(tableName, Authorizations.EMPTY);
+        IteratorSetting slow = new IteratorSetting(30, "slow", SlowIterator.class);
+        SlowIterator.setSleepTime(slow, time);
+        scanner.addScanIterator(slow);
+      } finally {
+        if (scanner != null) {
+          scanner.close();
+        }
+      }
     }
 
     @Override

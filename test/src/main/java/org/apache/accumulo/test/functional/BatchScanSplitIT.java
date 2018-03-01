@@ -17,6 +17,7 @@
 package org.apache.accumulo.test.functional;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -42,8 +43,6 @@ import org.apache.hadoop.io.Text;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class BatchScanSplitIT extends AccumuloClusterHarness {
   private static final Logger log = LoggerFactory.getLogger(BatchScanSplitIT.class);
@@ -103,29 +102,29 @@ public class BatchScanSplitIT extends AccumuloClusterHarness {
     HashMap<Text,Value> found = new HashMap<>();
 
     for (int i = 0; i < 20; i++) {
-      BatchScanner bs = getConnector().createBatchScanner(tableName, Authorizations.EMPTY, 4);
+      try (BatchScanner bs = getConnector().createBatchScanner(tableName, Authorizations.EMPTY, 4)) {
 
-      found.clear();
+        found.clear();
 
-      long t1 = System.currentTimeMillis();
+        long t1 = System.currentTimeMillis();
 
-      bs.setRanges(ranges);
+        bs.setRanges(ranges);
 
-      for (Entry<Key,Value> entry : bs) {
-        found.put(entry.getKey().getRow(), entry.getValue());
+        for (Entry<Key,Value> entry : bs) {
+          found.put(entry.getKey().getRow(), entry.getValue());
+        }
+
+        long t2 = System.currentTimeMillis();
+
+        log.info(String.format("rate : %06.2f%n", ranges.size() / ((t2 - t1) / 1000.0)));
+
+        if (!found.equals(expected))
+          throw new Exception("Found and expected differ " + found + " " + expected);
       }
-      bs.close();
-
-      long t2 = System.currentTimeMillis();
-
-      log.info(String.format("rate : %06.2f%n", ranges.size() / ((t2 - t1) / 1000.0)));
-
-      if (!found.equals(expected))
-        throw new Exception("Found and expected differ " + found + " " + expected);
     }
 
     splits = getConnector().tableOperations().listSplits(tableName);
-    log.info("splits : " + splits);
+    log.info("splits : {}", splits);
   }
 
 }

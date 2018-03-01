@@ -25,12 +25,17 @@ import com.google.auto.service.AutoService;
 public class ConfigSanityCheck implements KeywordExecutable {
 
   public static void main(String[] args) {
-    new ServerConfigurationFactory(HdfsZooInstance.getInstance()).getConfiguration();
+    new ServerConfigurationFactory(HdfsZooInstance.getInstance()).getSystemConfiguration();
   }
 
   @Override
   public String keyword() {
     return "check-server-config";
+  }
+
+  @Override
+  public String description() {
+    return "Checks server config";
   }
 
   @Override

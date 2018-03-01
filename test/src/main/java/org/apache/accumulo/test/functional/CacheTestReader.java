@@ -17,6 +17,7 @@
 package org.apache.accumulo.test.functional;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -29,8 +30,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.slf4j.LoggerFactory;
-
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class CacheTestReader {
   public static void main(String[] args) throws Exception {

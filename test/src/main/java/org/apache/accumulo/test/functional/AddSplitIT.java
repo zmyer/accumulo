@@ -17,6 +17,7 @@
 package org.apache.accumulo.test.functional;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.util.Collection;
 import java.util.Iterator;
@@ -38,8 +39,6 @@ import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.harness.AccumuloClusterHarness;
 import org.apache.hadoop.io.Text;
 import org.junit.Test;
-
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class AddSplitIT extends AccumuloClusterHarness {
 
@@ -95,36 +94,36 @@ public class AddSplitIT extends AccumuloClusterHarness {
   }
 
   private void verifyData(String tableName, long ts) throws Exception {
-    Scanner scanner = getConnector().createScanner(tableName, Authorizations.EMPTY);
+    try (Scanner scanner = getConnector().createScanner(tableName, Authorizations.EMPTY)) {
 
-    Iterator<Entry<Key,Value>> iter = scanner.iterator();
+      Iterator<Entry<Key,Value>> iter = scanner.iterator();
 
-    for (int i = 0; i < 10000; i++) {
-      if (!iter.hasNext()) {
-        throw new Exception("row " + i + " not found");
+      for (int i = 0; i < 10000; i++) {
+        if (!iter.hasNext()) {
+          throw new Exception("row " + i + " not found");
+        }
+
+        Entry<Key,Value> entry = iter.next();
+
+        String row = String.format("%09d", i);
+
+        if (!entry.getKey().getRow().equals(new Text(row))) {
+          throw new Exception("unexpected row " + entry.getKey() + " " + i);
+        }
+
+        if (entry.getKey().getTimestamp() != ts) {
+          throw new Exception("unexpected ts " + entry.getKey() + " " + ts);
+        }
+
+        if (Integer.parseInt(entry.getValue().toString()) != i) {
+          throw new Exception("unexpected value " + entry + " " + i);
+        }
       }
 
-      Entry<Key,Value> entry = iter.next();
-
-      String row = String.format("%09d", i);
-
-      if (!entry.getKey().getRow().equals(new Text(row))) {
-        throw new Exception("unexpected row " + entry.getKey() + " " + i);
-      }
-
-      if (entry.getKey().getTimestamp() != ts) {
-        throw new Exception("unexpected ts " + entry.getKey() + " " + ts);
-      }
-
-      if (Integer.parseInt(entry.getValue().toString()) != i) {
-        throw new Exception("unexpected value " + entry + " " + i);
+      if (iter.hasNext()) {
+        throw new Exception("found more than expected " + iter.next());
       }
     }
-
-    if (iter.hasNext()) {
-      throw new Exception("found more than expected " + iter.next());
-    }
-
   }
 
   private void insertData(String tableName, long ts) throws AccumuloException, AccumuloSecurityException, TableNotFoundException, MutationsRejectedException {

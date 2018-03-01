@@ -27,6 +27,7 @@ import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.PartialKey;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
+import org.apache.commons.lang.math.NumberUtils;
 import org.apache.hadoop.io.Text;
 
 public class FirstEntryInRowIterator extends SkippingIterator implements OptionDescriber {
@@ -75,30 +76,31 @@ public class FirstEntryInRowIterator extends SkippingIterator implements OptionD
   // this is only ever called immediately after getting "next" entry
   @Override
   protected void consume() throws IOException {
-    if (finished == true || lastRowFound == null)
+    if (finished || lastRowFound == null)
       return;
     int count = 0;
-    while (getSource().hasTop() && lastRowFound.equals(getSource().getTopKey().getRow())) {
+    SortedKeyValueIterator<Key,Value> source = getSource();
+    while (source.hasTop() && lastRowFound.equals(source.getTopKey().getRow())) {
 
       // try to efficiently jump to the next matching key
       if (count < numscans) {
         ++count;
-        getSource().next(); // scan
+        source.next(); // scan
       } else {
         // too many scans, just seek
         count = 0;
 
         // determine where to seek to, but don't go beyond the user-specified range
-        Key nextKey = getSource().getTopKey().followingKey(PartialKey.ROW);
+        Key nextKey = source.getTopKey().followingKey(PartialKey.ROW);
         if (!latestRange.afterEndKey(nextKey))
-          getSource().seek(new Range(nextKey, true, latestRange.getEndKey(), latestRange.isEndKeyInclusive()), latestColumnFamilies, latestInclusive);
+          source.seek(new Range(nextKey, true, latestRange.getEndKey(), latestRange.isEndKeyInclusive()), latestColumnFamilies, latestInclusive);
         else {
           finished = true;
           break;
         }
       }
     }
-    lastRowFound = getSource().hasTop() ? getSource().getTopKey().getRow(lastRowFound) : null;
+    lastRowFound = source.hasTop() ? source.getTopKey().getRow(lastRowFound) : null;
   }
 
   private boolean finished = true;
@@ -139,13 +141,9 @@ public class FirstEntryInRowIterator extends SkippingIterator implements OptionD
 
   @Override
   public boolean validateOptions(Map<String,String> options) {
-    try {
-      String o = options.get(NUM_SCANS_STRING_NAME);
-      if (o != null)
-        Integer.parseInt(o);
-    } catch (Exception e) {
-      throw new IllegalArgumentException("bad integer " + NUM_SCANS_STRING_NAME + ":" + options.get(NUM_SCANS_STRING_NAME), e);
-    }
+    String o = options.get(NUM_SCANS_STRING_NAME);
+    if (o != null && !NumberUtils.isNumber(o))
+      throw new IllegalArgumentException("bad integer " + NUM_SCANS_STRING_NAME + ":" + options.get(NUM_SCANS_STRING_NAME));
     return true;
   }
 

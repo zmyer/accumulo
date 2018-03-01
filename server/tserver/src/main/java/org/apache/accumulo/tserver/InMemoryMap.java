@@ -16,7 +16,7 @@
  */
 package org.apache.accumulo.tserver;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -290,13 +290,11 @@ public class InMemoryMap {
     private SimpleMap maps[];
     private Partitioner partitioner;
     private PreAllocatedArray<List<Mutation>> partitioned;
-    private Set<ByteSequence> nonDefaultColumnFamilies;
 
     LocalityGroupMap(Map<String,Set<ByteSequence>> groups, boolean useNativeMap) {
       this.groupFams = new PreAllocatedArray<>(groups.size());
       this.maps = new SimpleMap[groups.size() + 1];
       this.partitioned = new PreAllocatedArray<>(groups.size() + 1);
-      this.nonDefaultColumnFamilies = new HashSet<>();
 
       for (int i = 0; i < maps.length; i++) {
         maps[i] = newMap(useNativeMap);
@@ -308,13 +306,12 @@ public class InMemoryMap {
         for (ByteSequence bs : cfset)
           map.put(bs, new MutableLong(1));
         this.groupFams.set(count++, map);
-        nonDefaultColumnFamilies.addAll(cfset);
       }
 
       partitioner = new LocalityGroupUtil.Partitioner(this.groupFams);
 
       for (int i = 0; i < partitioned.length; i++) {
-        partitioned.set(i, new ArrayList<Mutation>());
+        partitioned.set(i, new ArrayList<>());
       }
     }
 
@@ -349,7 +346,7 @@ public class InMemoryMap {
           groups[i] = new LocalityGroup(maps[i].skvIterator(null), null, true);
       }
 
-      return new LocalityGroupIterator(groups, nonDefaultColumnFamilies);
+      return new LocalityGroupIterator(groups);
     }
 
     @Override
@@ -683,13 +680,6 @@ public class InMemoryMap {
     private SourceSwitchingIterator ssi;
     private MemoryDataSource mds;
 
-    @Override
-    protected SortedKeyValueIterator<Key,Value> getSource() {
-      if (closed.get())
-        throw new IllegalStateException("Memory iterator is closed");
-      return super.getSource();
-    }
-
     private MemoryIterator(InterruptibleIterator source) {
       this(source, new AtomicBoolean(false));
     }
@@ -824,7 +814,7 @@ public class InMemoryMap {
 
         out.close();
 
-        log.debug("Created mem dump file " + tmpFile);
+        log.debug("Created mem dump file {}", tmpFile);
 
         memDumpFile = tmpFile;
 
@@ -839,7 +829,7 @@ public class InMemoryMap {
         fs.delete(new Path(memDumpFile), true);
 
       } catch (IOException ioe) {
-        log.error("Failed to create mem dump file ", ioe);
+        log.error("Failed to create mem dump file", ioe);
 
         while (activeIters.size() > 0) {
           sleepUninterruptibly(100, TimeUnit.MILLISECONDS);

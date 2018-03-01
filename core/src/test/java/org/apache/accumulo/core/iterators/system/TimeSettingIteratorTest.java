@@ -16,19 +16,21 @@
  */
 package org.apache.accumulo.core.iterators.system;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import java.io.IOException;
 import java.util.HashSet;
 import java.util.TreeMap;
 
-import org.apache.accumulo.core.data.ByteSequence;
+import org.apache.accumulo.core.client.IteratorSetting;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.iterators.SortedMapIterator;
+import org.apache.hadoop.io.Text;
 import org.junit.Test;
-
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 
 public class TimeSettingIteratorTest {
 
@@ -44,7 +46,7 @@ public class TimeSettingIteratorTest {
 
     TimeSettingIterator tsi = new TimeSettingIterator(new SortedMapIterator(tm1), 50);
 
-    tsi.seek(new Range(new Key("r1", "cf1", "cq1", 50l), true, new Key("r1", "cf1", "cq1", 50l), true), new HashSet<ByteSequence>(), false);
+    tsi.seek(new Range(new Key("r1", "cf1", "cq1", 50l), true, new Key("r1", "cf1", "cq1", 50l), true), new HashSet<>(), false);
 
     assertTrue(tsi.hasTop());
     assertEquals(new Key("r1", "cf1", "cq1", 50l), tsi.getTopKey());
@@ -63,7 +65,7 @@ public class TimeSettingIteratorTest {
 
     assertFalse(tsi.hasTop());
 
-    tsi.seek(new Range(new Key("r1", "cf1", "cq1", 50l), false, null, true), new HashSet<ByteSequence>(), false);
+    tsi.seek(new Range(new Key("r1", "cf1", "cq1", 50l), false, null, true), new HashSet<>(), false);
 
     assertTrue(tsi.hasTop());
     assertEquals(new Key("r2", "cf1", "cq1", 50l), tsi.getTopKey());
@@ -72,7 +74,7 @@ public class TimeSettingIteratorTest {
 
     assertFalse(tsi.hasTop());
 
-    tsi.seek(new Range(null, true, new Key("r1", "cf1", "cq1", 50l), false), new HashSet<ByteSequence>(), false);
+    tsi.seek(new Range(null, true, new Key("r1", "cf1", "cq1", 50l), false), new HashSet<>(), false);
 
     assertTrue(tsi.hasTop());
     assertEquals(new Key("r0", "cf1", "cq1", 50l), tsi.getTopKey());
@@ -81,7 +83,7 @@ public class TimeSettingIteratorTest {
 
     assertFalse(tsi.hasTop());
 
-    tsi.seek(new Range(new Key("r1", "cf1", "cq1", 51l), true, new Key("r1", "cf1", "cq1", 50l), false), new HashSet<ByteSequence>(), false);
+    tsi.seek(new Range(new Key("r1", "cf1", "cq1", 51l), true, new Key("r1", "cf1", "cq1", 50l), false), new HashSet<>(), false);
     assertFalse(tsi.hasTop());
   }
 
@@ -94,7 +96,7 @@ public class TimeSettingIteratorTest {
 
     TimeSettingIterator tsi = new TimeSettingIterator(new SortedMapIterator(tm1), 50);
 
-    tsi.seek(new Range(), new HashSet<ByteSequence>(), false);
+    tsi.seek(new Range(), new HashSet<>(), false);
 
     assertTrue(tsi.hasTop());
     final Key topKey = tsi.getTopKey();
@@ -106,4 +108,36 @@ public class TimeSettingIteratorTest {
     assertFalse(tsi.hasTop());
   }
 
+  @Test
+  public void testEndKeyRangeAtMinLongValue() throws IOException {
+    Text row = new Text("a");
+    Text colf = new Text("b");
+    Text colq = new Text("c");
+    Text cv = new Text();
+
+    for (boolean inclusiveEndRange : new boolean[] {true, false}) {
+      TreeMap<Key,Value> sources = new TreeMap<>();
+      sources.put(new Key(row.getBytes(), colf.getBytes(), colq.getBytes(), cv.getBytes(), Long.MIN_VALUE, true), new Value("00".getBytes()));
+      sources.put(new Key(row.getBytes(), colf.getBytes(), colq.getBytes(), cv.getBytes(), Long.MIN_VALUE), new Value("11".getBytes()));
+
+      TimeSettingIterator it = new TimeSettingIterator(new SortedMapIterator(sources), 111L);
+      IteratorSetting is = new IteratorSetting(1, TimeSettingIterator.class);
+      it.init(null, is.getOptions(), null);
+
+      Key startKey = new Key();
+      Key endKey = new Key(row, colf, colq, cv, Long.MIN_VALUE);
+      Range testRange = new Range(startKey, false, endKey, inclusiveEndRange);
+      it.seek(testRange, new HashSet<>(), false);
+
+      assertTrue(it.hasTop());
+      assertTrue(it.getTopValue().equals(new Value("00".getBytes())));
+      assertTrue(it.getTopKey().getTimestamp() == 111L);
+      it.next();
+      assertTrue(it.hasTop());
+      assertTrue(it.getTopValue().equals(new Value("11".getBytes())));
+      assertTrue(it.getTopKey().getTimestamp() == 111L);
+      it.next();
+      assertFalse(it.hasTop());
+    }
+  }
 }

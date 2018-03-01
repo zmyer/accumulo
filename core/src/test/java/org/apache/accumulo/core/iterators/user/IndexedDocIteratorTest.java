@@ -24,10 +24,8 @@ import java.util.Map.Entry;
 import java.util.Random;
 import java.util.TreeMap;
 
-import junit.framework.TestCase;
-
 import org.apache.accumulo.core.client.IteratorSetting;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Range;
@@ -41,6 +39,8 @@ import org.apache.accumulo.core.iterators.system.MultiIterator;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
+
+import junit.framework.TestCase;
 
 public class IndexedDocIteratorTest extends TestCase {
 
@@ -132,7 +132,7 @@ public class IndexedDocIteratorTest extends TestCase {
     return map;
   }
 
-  static TestRFile trf = new TestRFile(AccumuloConfiguration.getDefaultConfiguration());
+  static TestRFile trf = new TestRFile(DefaultConfiguration.getInstance());
 
   private SortedKeyValueIterator<Key,Value> createIteratorStack(float hitRatio, int numRows, int numDocsPerRow, Text[] columnFamilies,
       Text[] otherColumnFamilies, HashSet<Text> docs) throws IOException {
@@ -146,12 +146,12 @@ public class IndexedDocIteratorTest extends TestCase {
     trf.openWriter(false);
 
     TreeMap<Key,Value> inMemoryMap = createSortedMap(hitRatio, numRows, numDocsPerRow, columnFamilies, otherColumnFamilies, docs, negatedColumns);
-    trf.writer.startNewLocalityGroup("docs", RFileTest.ncfs(docColf.toString()));
+    trf.writer.startNewLocalityGroup("docs", RFileTest.newColFamByteSequence(docColf.toString()));
     for (Entry<Key,Value> entry : inMemoryMap.entrySet()) {
       if (entry.getKey().getColumnFamily().equals(docColf))
         trf.writer.append(entry.getKey(), entry.getValue());
     }
-    trf.writer.startNewLocalityGroup("terms", RFileTest.ncfs(indexColf.toString()));
+    trf.writer.startNewLocalityGroup("terms", RFileTest.newColFamByteSequence(indexColf.toString()));
     for (Entry<Key,Value> entry : inMemoryMap.entrySet()) {
       if (entry.getKey().getColumnFamily().equals(indexColf))
         trf.writer.append(entry.getKey(), entry.getValue());

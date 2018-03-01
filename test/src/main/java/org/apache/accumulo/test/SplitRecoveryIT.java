@@ -16,6 +16,7 @@
  */
 package org.apache.accumulo.test;
 
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 
 import java.util.Map.Entry;
@@ -26,6 +27,7 @@ import org.apache.accumulo.core.client.BatchWriterConfig;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.TableNotFoundException;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Range;
@@ -41,7 +43,6 @@ import org.apache.hadoop.io.Text;
 import org.junit.Test;
 
 import com.google.common.collect.Iterators;
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class SplitRecoveryIT extends AccumuloClusterHarness {
 
@@ -53,10 +54,11 @@ public class SplitRecoveryIT extends AccumuloClusterHarness {
 
   boolean isOffline(String tablename, Connector connector) throws TableNotFoundException {
     String tableId = connector.tableOperations().tableIdMap().get(tablename);
-    Scanner scanner = connector.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
-    scanner.setRange(new Range(new Text(tableId + ";"), new Text(tableId + "<")));
-    scanner.fetchColumnFamily(TabletsSection.CurrentLocationColumnFamily.NAME);
-    return Iterators.size(scanner.iterator()) == 0;
+    try (Scanner scanner = connector.createScanner(MetadataTable.NAME, Authorizations.EMPTY)) {
+      scanner.setRange(new Range(new Text(tableId + ";"), new Text(tableId + "<")));
+      scanner.fetchColumnFamily(TabletsSection.CurrentLocationColumnFamily.NAME);
+      return Iterators.size(scanner.iterator()) == 0;
+    }
   }
 
   @Override
@@ -86,7 +88,7 @@ public class SplitRecoveryIT extends AccumuloClusterHarness {
 
       // poke a partial split into the metadata table
       connector.securityOperations().grantTablePermission(getAdminPrincipal(), MetadataTable.NAME, TablePermission.WRITE);
-      String tableId = connector.tableOperations().tableIdMap().get(tableName);
+      Table.ID tableId = Table.ID.of(connector.tableOperations().tableIdMap().get(tableName));
 
       KeyExtent extent = new KeyExtent(tableId, null, new Text("b"));
       Mutation m = extent.getPrevRowUpdateMutation();
@@ -100,20 +102,21 @@ public class SplitRecoveryIT extends AccumuloClusterHarness {
 
         bw.flush();
 
-        Scanner scanner = connector.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
-        scanner.setRange(extent.toMetadataRange());
-        scanner.fetchColumnFamily(DataFileColumnFamily.NAME);
+        try (Scanner scanner = connector.createScanner(MetadataTable.NAME, Authorizations.EMPTY)) {
+          scanner.setRange(extent.toMetadataRange());
+          scanner.fetchColumnFamily(DataFileColumnFamily.NAME);
 
-        KeyExtent extent2 = new KeyExtent(tableId, new Text("b"), null);
-        m = extent2.getPrevRowUpdateMutation();
-        TabletsSection.ServerColumnFamily.DIRECTORY_COLUMN.put(m, new Value("/t2".getBytes()));
-        TabletsSection.ServerColumnFamily.TIME_COLUMN.put(m, new Value("M0".getBytes()));
+          KeyExtent extent2 = new KeyExtent(tableId, new Text("b"), null);
+          m = extent2.getPrevRowUpdateMutation();
+          TabletsSection.ServerColumnFamily.DIRECTORY_COLUMN.put(m, new Value("/t2".getBytes()));
+          TabletsSection.ServerColumnFamily.TIME_COLUMN.put(m, new Value("M0".getBytes()));
 
-        for (Entry<Key,Value> entry : scanner) {
-          m.put(DataFileColumnFamily.NAME, entry.getKey().getColumnQualifier(), entry.getValue());
+          for (Entry<Key,Value> entry : scanner) {
+            m.put(DataFileColumnFamily.NAME, entry.getKey().getColumnQualifier(), entry.getValue());
+          }
+
+          bw.addMutation(m);
         }
-
-        bw.addMutation(m);
       }
 
       bw.close();
@@ -121,17 +124,17 @@ public class SplitRecoveryIT extends AccumuloClusterHarness {
       connector.tableOperations().online(tableName);
 
       // verify the tablets went online
-      Scanner scanner = connector.createScanner(tableName, Authorizations.EMPTY);
-      int i = 0;
-      String expected[] = {"a", "b", "c"};
-      for (Entry<Key,Value> entry : scanner) {
-        assertEquals(expected[i], entry.getKey().getRow().toString());
-        i++;
+      try (Scanner scanner = connector.createScanner(tableName, Authorizations.EMPTY)) {
+        int i = 0;
+        String expected[] = {"a", "b", "c"};
+        for (Entry<Key,Value> entry : scanner) {
+          assertEquals(expected[i], entry.getKey().getRow().toString());
+          i++;
+        }
+        assertEquals(3, i);
+
+        connector.tableOperations().delete(tableName);
       }
-      assertEquals(3, i);
-
-      connector.tableOperations().delete(tableName);
-
     }
   }
 

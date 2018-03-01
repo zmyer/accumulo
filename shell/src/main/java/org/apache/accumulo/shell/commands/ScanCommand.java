@@ -19,9 +19,11 @@ package org.apache.accumulo.shell.commands;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.concurrent.TimeUnit;
+
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.IteratorSetting;
@@ -30,7 +32,7 @@ import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.ScannerBase;
 import org.apache.accumulo.core.client.TableNotFoundException;
 import org.apache.accumulo.core.client.sample.SamplerConfiguration;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.ConfigurationTypeHelper;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
@@ -79,55 +81,53 @@ public class ScanCommand extends Command {
 
   @Override
   public int execute(final String fullCommand, final CommandLine cl, final Shell shellState) throws Exception {
-    final PrintFile printFile = getOutputFile(cl);
-    final String tableName = OptUtil.getTableOpt(cl, shellState);
+    try (final PrintFile printFile = getOutputFile(cl)) {
+      final String tableName = OptUtil.getTableOpt(cl, shellState);
 
-    final Class<? extends Formatter> formatter = getFormatter(cl, tableName, shellState);
-    final ScanInterpreter interpeter = getInterpreter(cl, tableName, shellState);
+      final Class<? extends Formatter> formatter = getFormatter(cl, tableName, shellState);
+      final ScanInterpreter interpeter = getInterpreter(cl, tableName, shellState);
 
-    String classLoaderContext = null;
-    if (cl.hasOption(contextOpt.getOpt())) {
-      classLoaderContext = cl.getOptionValue(contextOpt.getOpt());
-    }
-    // handle first argument, if present, the authorizations list to
-    // scan with
-    final Authorizations auths = getAuths(cl, shellState);
-    final Scanner scanner = shellState.getConnector().createScanner(tableName, auths);
-    if (null != classLoaderContext) {
-      scanner.setClassLoaderContext(classLoaderContext);
-    }
-    // handle session-specific scan iterators
-    addScanIterators(shellState, cl, scanner, tableName);
-
-    // handle remaining optional arguments
-    scanner.setRange(getRange(cl, interpeter));
-
-    // handle columns
-    fetchColumns(cl, scanner, interpeter);
-
-    // set timeout
-    scanner.setTimeout(getTimeout(cl), TimeUnit.MILLISECONDS);
-
-    setupSampling(tableName, cl, shellState, scanner);
-
-    // output the records
-
-    final FormatterConfig config = new FormatterConfig();
-    config.setPrintTimestamps(cl.hasOption(timestampOpt.getOpt()));
-    if (cl.hasOption(showFewOpt.getOpt())) {
-      final String showLength = cl.getOptionValue(showFewOpt.getOpt());
-      try {
-        final int length = Integer.parseInt(showLength);
-        config.setShownLength(length);
-      } catch (NumberFormatException nfe) {
-        shellState.getReader().println("Arg must be an integer.");
-      } catch (IllegalArgumentException iae) {
-        shellState.getReader().println("Arg must be greater than one.");
+      String classLoaderContext = null;
+      if (cl.hasOption(contextOpt.getOpt())) {
+        classLoaderContext = cl.getOptionValue(contextOpt.getOpt());
       }
-    }
-    printRecords(cl, shellState, config, scanner, formatter, printFile);
-    if (printFile != null) {
-      printFile.close();
+      // handle first argument, if present, the authorizations list to
+      // scan with
+      final Authorizations auths = getAuths(cl, shellState);
+      final Scanner scanner = shellState.getConnector().createScanner(tableName, auths);
+      if (null != classLoaderContext) {
+        scanner.setClassLoaderContext(classLoaderContext);
+      }
+      // handle session-specific scan iterators
+      addScanIterators(shellState, cl, scanner, tableName);
+
+      // handle remaining optional arguments
+      scanner.setRange(getRange(cl, interpeter));
+
+      // handle columns
+      fetchColumns(cl, scanner, interpeter);
+
+      // set timeout
+      scanner.setTimeout(getTimeout(cl), TimeUnit.MILLISECONDS);
+
+      setupSampling(tableName, cl, shellState, scanner);
+
+      // output the records
+
+      final FormatterConfig config = new FormatterConfig();
+      config.setPrintTimestamps(cl.hasOption(timestampOpt.getOpt()));
+      if (cl.hasOption(showFewOpt.getOpt())) {
+        final String showLength = cl.getOptionValue(showFewOpt.getOpt());
+        try {
+          final int length = Integer.parseInt(showLength);
+          config.setShownLength(length);
+        } catch (NumberFormatException nfe) {
+          shellState.getReader().println("Arg must be an integer.");
+        } catch (IllegalArgumentException iae) {
+          shellState.getReader().println("Arg must be greater than one.");
+        }
+      }
+      printRecords(cl, shellState, config, scanner, formatter, printFile);
     }
 
     return 0;
@@ -139,7 +139,7 @@ public class ScanCommand extends Command {
 
   protected long getTimeout(final CommandLine cl) {
     if (cl.hasOption(timeoutOption.getLongOpt())) {
-      return AccumuloConfiguration.getTimeInMillis(cl.getOptionValue(timeoutOption.getLongOpt()));
+      return ConfigurationTypeHelper.getTimeInMillis(cl.getOptionValue(timeoutOption.getLongOpt()));
     }
 
     return Long.MAX_VALUE;
@@ -343,7 +343,12 @@ public class ScanCommand extends Command {
     o.addOption(interpreterOpt);
     o.addOption(formatterInterpeterOpt);
     o.addOption(timeoutOption);
-    o.addOption(outputFileOpt);
+    if (Arrays.asList(new String[] {ScanCommand.class.getName(), GrepCommand.class.getName(), EGrepCommand.class.getName()})
+        .contains(this.getClass().getName())) {
+      // supported subclasses must handle the output file option properly
+      // only add this option to commands which handle it correctly
+      o.addOption(outputFileOpt);
+    }
     o.addOption(profileOpt);
     o.addOption(sampleOpt);
     o.addOption(contextOpt);

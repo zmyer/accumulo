@@ -16,6 +16,7 @@
  */
 package org.apache.accumulo.test.functional;
 
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -39,8 +40,6 @@ import org.apache.accumulo.minicluster.impl.MiniAccumuloConfigImpl;
 import org.apache.accumulo.minicluster.impl.ProcessReference;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.Test;
-
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class ZookeeperRestartIT extends ConfigurableMacBase {
 
@@ -77,13 +76,14 @@ public class ZookeeperRestartIT extends ConfigurableMacBase {
     cluster.start();
 
     // use the tservers
-    Scanner s = c.createScanner("test_ingest", Authorizations.EMPTY);
-    Iterator<Entry<Key,Value>> i = s.iterator();
-    assertTrue(i.hasNext());
-    assertEquals("row", i.next().getKey().getRow().toString());
-    assertFalse(i.hasNext());
-    // use the master
-    c.tableOperations().delete("test_ingest");
+    try (Scanner s = c.createScanner("test_ingest", Authorizations.EMPTY)) {
+      Iterator<Entry<Key,Value>> i = s.iterator();
+      assertTrue(i.hasNext());
+      assertEquals("row", i.next().getKey().getRow().toString());
+      assertFalse(i.hasNext());
+      // use the master
+      c.tableOperations().delete("test_ingest");
+    }
   }
 
 }

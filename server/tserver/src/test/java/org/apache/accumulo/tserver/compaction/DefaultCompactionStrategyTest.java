@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.Key;
@@ -142,7 +142,7 @@ public class DefaultCompactionStrategyTest {
 
   }
 
-  static final DefaultConfiguration dfault = AccumuloConfiguration.getDefaultConfiguration();
+  static final DefaultConfiguration dfault = DefaultConfiguration.getInstance();
 
   private static class TestCompactionRequest extends MajorCompactionRequest {
     @Override
@@ -151,14 +151,14 @@ public class DefaultCompactionStrategyTest {
     }
 
     TestCompactionRequest(KeyExtent extent, MajorCompactionReason reason, Map<FileRef,DataFileValue> files) {
-      super(extent, reason, null, dfault);
+      super(extent, reason, dfault);
       setFiles(files);
     }
 
   }
 
   private MajorCompactionRequest createRequest(MajorCompactionReason reason, Object... objs) throws IOException {
-    return createRequest(new KeyExtent("0", null, null), reason, objs);
+    return createRequest(new KeyExtent(Table.ID.of("0"), null, null), reason, objs);
   }
 
   private MajorCompactionRequest createRequest(KeyExtent extent, MajorCompactionReason reason, Object... objs) throws IOException {

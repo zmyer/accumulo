@@ -23,10 +23,12 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map.Entry;
 
+import org.apache.accumulo.core.client.SampleNotPresentException;
 import org.apache.accumulo.core.client.ScannerBase;
 import org.apache.accumulo.core.client.impl.ScannerOptions;
 import org.apache.accumulo.core.client.sample.SamplerConfiguration;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.data.ArrayByteSequence;
 import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.Column;
@@ -81,7 +83,7 @@ public class MockScannerBase extends ScannerOptions implements ScannerBase {
 
     @Override
     public AccumuloConfiguration getConfig() {
-      return AccumuloConfiguration.getDefaultConfiguration();
+      return DefaultConfiguration.getInstance();
     }
 
     @Override
@@ -116,25 +118,25 @@ public class MockScannerBase extends ScannerOptions implements ScannerBase {
 
     @Override
     public boolean isSamplingEnabled() {
-      throw new UnsupportedOperationException();
+      return false;
     }
 
     @Override
     public SamplerConfiguration getSamplerConfiguration() {
-      throw new UnsupportedOperationException();
+      return null;
     }
 
     @Override
     public IteratorEnvironment cloneWithSamplingEnabled() {
-      throw new UnsupportedOperationException();
+      throw new SampleNotPresentException();
     }
   }
 
   public SortedKeyValueIterator<Key,Value> createFilter(SortedKeyValueIterator<Key,Value> inner) throws IOException {
     byte[] defaultLabels = {};
     inner = new ColumnFamilySkippingIterator(new DeletingIterator(inner, false));
-    ColumnQualifierFilter cqf = new ColumnQualifierFilter(inner, new HashSet<>(fetchedColumns));
-    VisibilityFilter vf = new VisibilityFilter(cqf, auths, defaultLabels);
+    SortedKeyValueIterator<Key,Value> cqf = ColumnQualifierFilter.wrap(inner, new HashSet<>(fetchedColumns));
+    SortedKeyValueIterator<Key,Value> vf = VisibilityFilter.wrap(cqf, auths, defaultLabels);
     AccumuloConfiguration conf = new MockConfiguration(table.settings);
     MockIteratorEnvironment iterEnv = new MockIteratorEnvironment(auths);
     SortedKeyValueIterator<Key,Value> result = iterEnv.getTopLevelIterator(IteratorUtil.loadIterators(IteratorScope.scan, vf, null, conf,

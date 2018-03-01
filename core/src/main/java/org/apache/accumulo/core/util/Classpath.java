@@ -19,17 +19,39 @@ package org.apache.accumulo.core.util;
 import org.apache.accumulo.start.Main;
 import org.apache.accumulo.start.spi.KeywordExecutable;
 
+import com.beust.jcommander.Parameter;
 import com.google.auto.service.AutoService;
 
 @AutoService(KeywordExecutable.class)
 public class Classpath implements KeywordExecutable {
+
+  static class Opts extends org.apache.accumulo.core.cli.Help {
+
+    @Parameter(names = {"-d", "--debug"}, description = "Turns on debugging")
+    public boolean debug = false;
+  }
+
   @Override
   public String keyword() {
     return "classpath";
   }
 
   @Override
+  public UsageGroup usageGroup() {
+    return UsageGroup.CORE;
+  }
+
+  @Override
+  public String description() {
+    return "Prints Accumulo classpath";
+  }
+
+  @Override
   public void execute(final String[] args) throws Exception {
-    Main.getVFSClassLoader().getMethod("printClassPath").invoke(Main.getVFSClassLoader());
+
+    Opts opts = new Opts();
+    opts.parseArgs("accumulo classpath", args);
+
+    Main.getVFSClassLoader().getMethod("printClassPath", boolean.class).invoke(Main.getVFSClassLoader(), opts.debug);
   }
 }

@@ -29,6 +29,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.accumulo.core.cli.Help;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.conf.SiteConfiguration;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.impl.KeyExtent;
@@ -38,6 +39,7 @@ import org.apache.accumulo.tserver.log.DfsLogger;
 import org.apache.accumulo.tserver.log.DfsLogger.DFSLoggerInputStreams;
 import org.apache.accumulo.tserver.log.DfsLogger.LogHeaderIncompleteException;
 import org.apache.accumulo.tserver.log.MultiReader;
+import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
 import org.slf4j.Logger;
@@ -84,7 +86,7 @@ public class LogReader {
       row = new Text(opts.row);
     if (opts.extent != null) {
       String sa[] = opts.extent.split(";");
-      ke = new KeyExtent(sa[0], new Text(sa[1]), new Text(sa[2]));
+      ke = new KeyExtent(Table.ID.of(sa[0]), new Text(sa[1]), new Text(sa[2]));
     }
     if (opts.regexp != null) {
       Pattern pattern = Pattern.compile(opts.regexp);
@@ -100,28 +102,30 @@ public class LogReader {
       LogFileValue value = new LogFileValue();
 
       if (fs.isFile(path)) {
-        // read log entries from a simple hdfs file
-        DFSLoggerInputStreams streams;
-        try {
-          streams = DfsLogger.readHeaderAndReturnStream(fs, path, SiteConfiguration.getInstance());
-        } catch (LogHeaderIncompleteException e) {
-          log.warn("Could not read header for " + path + ". Ignoring...");
-          continue;
-        }
-        DataInputStream input = streams.getDecryptingInputStream();
-
-        try {
-          while (true) {
-            try {
-              key.readFields(input);
-              value.readFields(input);
-            } catch (EOFException ex) {
-              break;
-            }
-            printLogEvent(key, value, row, rowMatcher, ke, tabletIds, opts.maxMutations);
+        try (final FSDataInputStream fsinput = fs.open(path)) {
+          // read log entries from a simple hdfs file
+          DFSLoggerInputStreams streams;
+          try {
+            streams = DfsLogger.readHeaderAndReturnStream(fsinput, SiteConfiguration.getInstance());
+          } catch (LogHeaderIncompleteException e) {
+            log.warn("Could not read header for {} . Ignoring...", path);
+            continue;
           }
-        } finally {
-          input.close();
+          DataInputStream input = streams.getDecryptingInputStream();
+
+          try {
+            while (true) {
+              try {
+                key.readFields(input);
+                value.readFields(input);
+              } catch (EOFException ex) {
+                break;
+              }
+              printLogEvent(key, value, row, rowMatcher, ke, tabletIds, opts.maxMutations);
+            }
+          } finally {
+            input.close();
+          }
         }
       } else {
         // read the log entries sorted in a map file

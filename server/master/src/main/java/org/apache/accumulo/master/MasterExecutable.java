@@ -29,6 +29,16 @@ public class MasterExecutable implements KeywordExecutable {
   }
 
   @Override
+  public UsageGroup usageGroup() {
+    return UsageGroup.PROCESS;
+  }
+
+  @Override
+  public String description() {
+    return "Starts Accumulo master";
+  }
+
+  @Override
   public void execute(final String[] args) throws Exception {
     Master.main(args);
   }

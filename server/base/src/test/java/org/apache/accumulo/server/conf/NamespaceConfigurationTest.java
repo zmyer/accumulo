@@ -36,7 +36,7 @@ import java.util.function.Predicate;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.Instance;
-import org.apache.accumulo.core.client.impl.Namespaces;
+import org.apache.accumulo.core.client.impl.Namespace;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigurationObserver;
 import org.apache.accumulo.core.conf.Property;
@@ -47,7 +47,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class NamespaceConfigurationTest {
-  private static final String NSID = "namespace";
+  private static final Namespace.ID NSID = Namespace.ID.of("namespace");
   private static final String ZOOKEEPERS = "localhost";
   private static final int ZK_SESSION_TIMEOUT = 120000;
 
@@ -63,15 +63,17 @@ public class NamespaceConfigurationTest {
     iid = UUID.randomUUID().toString();
     instance = createMock(Instance.class);
     parent = createMock(AccumuloConfiguration.class);
-    c = new NamespaceConfiguration(NSID, instance, parent);
-    zcf = createMock(ZooCacheFactory.class);
-    c.setZooCacheFactory(zcf);
 
     expect(instance.getInstanceID()).andReturn(iid);
     expectLastCall().anyTimes();
     expect(instance.getZooKeepers()).andReturn(ZOOKEEPERS);
     expect(instance.getZooKeepersSessionTimeOut()).andReturn(ZK_SESSION_TIMEOUT);
     replay(instance);
+
+    c = new NamespaceConfiguration(NSID, instance, parent);
+    zcf = createMock(ZooCacheFactory.class);
+    c.setZooCacheFactory(zcf);
+
     zc = createMock(ZooCache.class);
     expect(zcf.getZooCache(eq(ZOOKEEPERS), eq(ZK_SESSION_TIMEOUT), anyObject(NamespaceConfWatcher.class))).andReturn(zc);
     replay(zcf);
@@ -104,11 +106,10 @@ public class NamespaceConfigurationTest {
 
   @Test
   public void testGet_SkipParentIfAccumuloNS() {
-    c = new NamespaceConfiguration(Namespaces.ACCUMULO_NAMESPACE_ID, instance, parent);
+    c = new NamespaceConfiguration(Namespace.ID.ACCUMULO, instance, parent);
     c.setZooCacheFactory(zcf);
     Property p = Property.INSTANCE_SECRET;
-    expect(zc.get(ZooUtil.getRoot(iid) + Constants.ZNAMESPACES + "/" + Namespaces.ACCUMULO_NAMESPACE_ID + Constants.ZNAMESPACE_CONF + "/" + p.getKey()))
-        .andReturn(null);
+    expect(zc.get(ZooUtil.getRoot(iid) + Constants.ZNAMESPACES + "/" + Namespace.ID.ACCUMULO + Constants.ZNAMESPACE_CONF + "/" + p.getKey())).andReturn(null);
     replay(zc);
     assertNull(c.get(Property.INSTANCE_SECRET));
   }

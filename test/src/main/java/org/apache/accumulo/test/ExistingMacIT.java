@@ -25,14 +25,15 @@ import java.io.OutputStream;
 import java.util.Collection;
 import java.util.Map.Entry;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
+import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.BatchWriter;
 import org.apache.accumulo.core.client.BatchWriterConfig;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.ConfigurationTypeHelper;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
@@ -40,18 +41,19 @@ import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.metadata.MetadataTable;
 import org.apache.accumulo.core.metadata.RootTable;
 import org.apache.accumulo.core.security.Authorizations;
+import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
 import org.apache.accumulo.minicluster.ServerType;
 import org.apache.accumulo.minicluster.impl.MiniAccumuloClusterImpl;
 import org.apache.accumulo.minicluster.impl.MiniAccumuloConfigImpl;
 import org.apache.accumulo.minicluster.impl.ProcessReference;
+import org.apache.accumulo.server.util.AccumuloStatus;
+import org.apache.accumulo.server.zookeeper.ZooReaderWriterFactory;
 import org.apache.accumulo.test.functional.ConfigurableMacBase;
 import org.apache.commons.io.FileUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.RawLocalFileSystem;
 import org.junit.Assert;
 import org.junit.Test;
-
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class ExistingMacIT extends ConfigurableMacBase {
   @Override
@@ -62,6 +64,10 @@ public class ExistingMacIT extends ConfigurableMacBase {
   @Override
   public void configure(MiniAccumuloConfigImpl cfg, Configuration hadoopCoreSite) {
     cfg.setProperty(Property.INSTANCE_ZK_TIMEOUT, "15s");
+    // NativeMap.java was changed to fail if native lib missing in ACCUMULO-4596
+    // testExistingInstance will fail because the native path is not set in MiniAccumuloConfigImpl.useExistingInstance
+    // so disable Native maps for this test
+    cfg.setProperty(Property.TSERV_NATIVEMAP_ENABLED, "false");
 
     // use raw local file system so walogs sync and flush will work
     hadoopCoreSite.set("fs.file.impl", RawLocalFileSystem.class.getName());
@@ -103,9 +109,15 @@ public class ExistingMacIT extends ConfigurableMacBase {
         getCluster().killProcess(entry.getKey(), pr);
     }
 
-    // TODO clean out zookeeper? following sleep waits for ephemeral nodes to go away
-    long zkTimeout = AccumuloConfiguration.getTimeInMillis(getCluster().getConfig().getSiteConfig().get(Property.INSTANCE_ZK_TIMEOUT.getKey()));
-    sleepUninterruptibly(zkTimeout + 500, TimeUnit.MILLISECONDS);
+    final DefaultConfiguration defaultConfig = DefaultConfiguration.getInstance();
+    final long zkTimeout = ConfigurationTypeHelper.getTimeInMillis(getCluster().getConfig().getSiteConfig().get(Property.INSTANCE_ZK_TIMEOUT.getKey()));
+    IZooReaderWriter zrw = new ZooReaderWriterFactory().getZooReaderWriter(getCluster().getZooKeepers(), (int) zkTimeout,
+        defaultConfig.get(Property.INSTANCE_SECRET));
+    final String zInstanceRoot = Constants.ZROOT + "/" + conn.getInstance().getInstanceID();
+    while (!AccumuloStatus.isAccumuloOffline(zrw, zInstanceRoot)) {
+      log.debug("Accumulo services still have their ZK locks held");
+      Thread.sleep(1000);
+    }
 
     File hadoopConfDir = createTestDir(ExistingMacIT.class.getSimpleName() + "_hadoop_conf");
     FileUtils.deleteQuietly(hadoopConfDir);
@@ -124,14 +136,13 @@ public class ExistingMacIT extends ConfigurableMacBase {
 
     conn = accumulo2.getConnector("root", new PasswordToken(ROOT_PASSWORD));
 
-    Scanner scanner = conn.createScanner("table1", Authorizations.EMPTY);
-
-    int sum = 0;
-    for (Entry<Key,Value> entry : scanner) {
-      sum += Integer.parseInt(entry.getValue().toString());
+    try (Scanner scanner = conn.createScanner("table1", Authorizations.EMPTY)) {
+      int sum = 0;
+      for (Entry<Key,Value> entry : scanner) {
+        sum += Integer.parseInt(entry.getValue().toString());
+      }
+      Assert.assertEquals(6569, sum);
     }
-
-    Assert.assertEquals(6569, sum);
 
     accumulo2.stop();
   }

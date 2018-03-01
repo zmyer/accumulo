@@ -16,8 +16,8 @@
  */
 package org.apache.accumulo.core.client.impl;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 import static java.util.Objects.requireNonNull;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -117,7 +117,7 @@ public class ReplicationOperationsImpl implements ReplicationOperations {
     });
   }
 
-  protected String getTableId(Connector conn, String tableName) throws AccumuloException, AccumuloSecurityException, TableNotFoundException {
+  protected Table.ID getTableId(Connector conn, String tableName) throws AccumuloException, AccumuloSecurityException, TableNotFoundException {
     TableOperations tops = conn.tableOperations();
 
     if (!conn.tableOperations().exists(tableName)) {
@@ -132,7 +132,7 @@ public class ReplicationOperationsImpl implements ReplicationOperations {
       }
     }
 
-    return tableId;
+    return Table.ID.of(tableId);
   }
 
   @Override
@@ -142,7 +142,7 @@ public class ReplicationOperationsImpl implements ReplicationOperations {
     log.debug("Collecting referenced files for replication of table {}", tableName);
 
     Connector conn = context.getConnector();
-    String tableId = getTableId(conn, tableName);
+    Table.ID tableId = getTableId(conn, tableName);
 
     log.debug("Found id of {} for name {}", tableId, tableName);
 

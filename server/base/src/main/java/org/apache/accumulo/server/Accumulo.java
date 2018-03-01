@@ -17,12 +17,12 @@
 package org.apache.accumulo.server;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Map.Entry;
@@ -35,7 +35,6 @@ import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.util.AddressUtil;
-import org.apache.accumulo.core.util.Version;
 import org.apache.accumulo.core.volume.Volume;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.ReadOnlyStore;
@@ -45,27 +44,23 @@ import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfigurationFactory;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.util.time.SimpleTimer;
-import org.apache.accumulo.server.watcher.Log4jConfiguration;
-import org.apache.accumulo.server.watcher.MonitorLog4jWatcher;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.log4j.Logger;
-import org.apache.log4j.helpers.LogLog;
 import org.apache.zookeeper.KeeperException;
-
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class Accumulo {
 
-  private static final Logger log = Logger.getLogger(Accumulo.class);
+  private static final Logger log = LoggerFactory.getLogger(Accumulo.class);
 
   public static synchronized void updateAccumuloVersion(VolumeManager fs, int oldVersion) {
     for (Volume volume : fs.getVolumes()) {
       try {
-        if (getAccumuloPersistentVersion(fs) == oldVersion) {
-          log.debug("Attempting to upgrade " + volume);
+        if (getAccumuloPersistentVersion(volume) == oldVersion) {
+          log.debug("Attempting to upgrade {}", volume);
           Path dataVersionLocation = ServerConstants.getDataVersionLocation(volume);
           fs.create(new Path(dataVersionLocation, Integer.toString(ServerConstants.DATA_VERSION))).close();
           // TODO document failure mode & recovery if FS permissions cause above to work and below to fail ACCUMULO-2596
@@ -95,11 +90,14 @@ public class Accumulo {
     }
   }
 
-  public static synchronized int getAccumuloPersistentVersion(VolumeManager fs) {
-    // It doesn't matter which Volume is used as they should all have the data version stored
-    Volume v = fs.getVolumes().iterator().next();
+  public static synchronized int getAccumuloPersistentVersion(Volume v) {
     Path path = ServerConstants.getDataVersionLocation(v);
     return getAccumuloPersistentVersion(v.getFileSystem(), path);
+  }
+
+  public static synchronized int getAccumuloPersistentVersion(VolumeManager fs) {
+    // It doesn't matter which Volume is used as they should all have the data version stored
+    return getAccumuloPersistentVersion(fs.getVolumes().iterator().next());
   }
 
   public static synchronized Path getAccumuloInstanceIdPath(VolumeManager fs) {
@@ -108,78 +106,17 @@ public class Accumulo {
     return ServerConstants.getInstanceIdLocation(v);
   }
 
-  /**
-   * Finds the best log4j configuration file. A generic file is used only if an application-specific file is not available. An XML file is preferred over a
-   * properties file, if possible.
-   *
-   * @param confDir
-   *          directory where configuration files should reside
-   * @param application
-   *          application name for configuration file name
-   * @return configuration file name
-   */
-  static String locateLogConfig(String confDir, String application) {
-    String explicitConfigFile = System.getProperty("log4j.configuration");
-    if (explicitConfigFile != null) {
-      return explicitConfigFile;
-    }
-    String[] configFiles = {String.format("%s/%s_logger.xml", confDir, application), String.format("%s/%s_logger.properties", confDir, application),
-        String.format("%s/generic_logger.xml", confDir), String.format("%s/generic_logger.properties", confDir)};
-    String defaultConfigFile = configFiles[2]; // generic_logger.xml
-    for (String f : configFiles) {
-      if (new File(f).exists()) {
-        return f;
-      }
-    }
-    return defaultConfigFile;
-  }
+  public static void init(VolumeManager fs, Instance instance, ServerConfigurationFactory serverConfig, String application) throws IOException {
+    final AccumuloConfiguration conf = serverConfig.getSystemConfiguration();
 
-  public static void setupLogging(String application) throws UnknownHostException {
-    System.setProperty("org.apache.accumulo.core.application", application);
-
-    if (System.getenv("ACCUMULO_LOG_DIR") != null)
-      System.setProperty("org.apache.accumulo.core.dir.log", System.getenv("ACCUMULO_LOG_DIR"));
-    else
-      System.setProperty("org.apache.accumulo.core.dir.log", System.getenv("ACCUMULO_HOME") + "/logs/");
-
-    String localhost = InetAddress.getLocalHost().getHostName();
-    System.setProperty("org.apache.accumulo.core.ip.localhost.hostname", localhost);
-
-    // Use a specific log config, if it exists
-    String logConfigFile = locateLogConfig(System.getenv("ACCUMULO_CONF_DIR"), application);
-    // Turn off messages about not being able to reach the remote logger... we protect against that.
-    LogLog.setQuietMode(true);
-
-    // Set up local file-based logging right away
-    Log4jConfiguration logConf = new Log4jConfiguration(logConfigFile);
-    logConf.resetLogger();
-  }
-
-  public static void init(VolumeManager fs, ServerConfigurationFactory serverConfig, String application) throws IOException {
-    final AccumuloConfiguration conf = serverConfig.getConfiguration();
-    final Instance instance = serverConfig.getInstance();
-
-    // Use a specific log config, if it exists
-    final String logConfigFile = locateLogConfig(System.getenv("ACCUMULO_CONF_DIR"), application);
-
-    // Set up polling log4j updates and log-forwarding using information advertised in zookeeper by the monitor
-    MonitorLog4jWatcher logConfigWatcher = new MonitorLog4jWatcher(instance.getInstanceID(), logConfigFile);
-    logConfigWatcher.setDelay(5000L);
-    logConfigWatcher.start();
-
-    // Makes sure the log-forwarding to the monitor is configured
-    int[] logPort = conf.getPort(Property.MONITOR_LOG4J_PORT);
-    System.setProperty("org.apache.accumulo.core.host.log.port", Integer.toString(logPort[0]));
-
-    log.info(application + " starting");
-    log.info("Instance " + serverConfig.getInstance().getInstanceID());
+    log.info("{} starting", application);
+    log.info("Instance {}", instance.getInstanceID());
     int dataVersion = Accumulo.getAccumuloPersistentVersion(fs);
-    log.info("Data Version " + dataVersion);
+    log.info("Data Version {}", dataVersion);
     Accumulo.waitForZookeeperAndHdfs(fs);
 
-    Version codeVersion = new Version(Constants.VERSION);
     if (!(canUpgradeFromDataVersion(dataVersion))) {
-      throw new RuntimeException("This version of accumulo (" + codeVersion + ") is not compatible with files stored using data version " + dataVersion);
+      throw new RuntimeException("This version of accumulo (" + Constants.VERSION + ") is not compatible with files stored using data version " + dataVersion);
     }
 
     TreeMap<String,String> sortedProps = new TreeMap<>();
@@ -188,7 +125,7 @@ public class Accumulo {
 
     for (Entry<String,String> entry : sortedProps.entrySet()) {
       String key = entry.getKey();
-      log.info(key + " = " + (Property.isSensitive(key) ? "<hidden>" : entry.getValue()));
+      log.info("{} = {}", key, (Property.isSensitive(key) ? "<hidden>" : entry.getValue()));
     }
 
     monitorSwappiness(conf);
@@ -199,7 +136,7 @@ public class Accumulo {
         Property.MONITOR_SSL_INCLUDE_PROTOCOLS)) {
       String value = conf.get(sslProtocolProperty);
       if (value.contains(SSL)) {
-        log.warn("It is recommended that " + sslProtocolProperty + " only allow TLS");
+        log.warn("It is recommended that {} only allow TLS", sslProtocolProperty);
       }
     }
   }
@@ -232,22 +169,19 @@ public class Accumulo {
           String procFile = "/proc/sys/vm/swappiness";
           File swappiness = new File(procFile);
           if (swappiness.exists() && swappiness.canRead()) {
-            InputStream is = new FileInputStream(procFile);
-            try {
+            try (InputStream is = new FileInputStream(procFile)) {
               byte[] buffer = new byte[10];
               int bytes = is.read(buffer);
               String setting = new String(buffer, 0, bytes, UTF_8);
               setting = setting.trim();
               if (bytes > 0 && Integer.parseInt(setting) > 10) {
-                log.warn("System swappiness setting is greater than ten (" + setting + ") which can cause time-sensitive operations to be delayed. "
-                    + " Accumulo is time sensitive because it needs to maintain distributed lock agreement.");
+                log.warn("System swappiness setting is greater than ten ({}) which can cause time-sensitive operations to be delayed. "
+                    + " Accumulo is time sensitive because it needs to maintain distributed lock agreement.", setting);
               }
-            } finally {
-              is.close();
             }
           }
         } catch (Throwable t) {
-          log.error(t, t);
+          log.error("", t);
         }
       }
     }, 1000, 10 * 60 * 1000);
@@ -280,7 +214,7 @@ public class Accumulo {
         /* Unwrap the UnknownHostException so we can deal with it directly */
         if (exception.getCause() instanceof UnknownHostException) {
           if (unknownHostTries > 0) {
-            log.warn("Unable to connect to HDFS, will retry. cause: " + exception.getCause());
+            log.warn("Unable to connect to HDFS, will retry. cause: {}", exception.getCause());
             /* We need to make sure our sleep period is long enough to avoid getting a cached failure of the host lookup. */
             sleep = Math.max(sleep, (AddressUtil.getAddressCacheNegativeTtl((UnknownHostException) (exception.getCause())) + 1) * 1000);
           } else {
@@ -292,7 +226,7 @@ public class Accumulo {
           throw exception;
         }
       }
-      log.info("Backing off due to failure; current sleep period is " + sleep / 1000. + " seconds");
+      log.info("Backing off due to failure; current sleep period is {} seconds", sleep / 1000.);
       sleepUninterruptibly(sleep, TimeUnit.MILLISECONDS);
       /* Back off to give transient failures more time to clear. */
       sleep = Math.min(60 * 1000, sleep * 2);
@@ -320,7 +254,7 @@ public class Accumulo {
             + "Please see the README document for instructions on what to do under your previous version.");
       }
     } catch (Exception exception) {
-      log.fatal("Problem verifying Fate readiness", exception);
+      log.error("Problem verifying Fate readiness", exception);
       System.exit(1);
     }
   }

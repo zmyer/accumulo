@@ -259,7 +259,6 @@ public class UserImpersonation {
    * @param configProperties
    *          The relevant configuration properties for impersonation.
    */
-  @SuppressWarnings("javadoc")
   private void parseMultiPropertyConfiguration(Map<String,String> configProperties) {
     @SuppressWarnings("deprecation")
     final String configKey = Property.INSTANCE_RPC_SASL_PROXYUSERS.getKey();
@@ -305,7 +304,7 @@ public class UserImpersonation {
           hosts.addAll(Arrays.<String> asList(hostValues));
         }
       } else {
-        log.debug("Ignoring key " + aclKey);
+        log.debug("Ignoring key {}", aclKey);
       }
     }
   }

@@ -16,10 +16,14 @@
 -->
 <FindBugsFilter>
   <Match>
+    <!-- ignore thrift-generated files -->
+    <Or>
+      <Package name="org.apache.accumulo.test.rpc.thrift" />
+    </Or>
+  </Match>
+  <Match>
     <!-- ignore intentional infinite loop in test main methods -->
     <Or>
-      <Class name="org.apache.accumulo.test.continuous.ContinuousQuery" />
-      <Class name="org.apache.accumulo.test.continuous.ContinuousScanner" />
       <Class name="org.apache.accumulo.test.stress.random.Write" />
     </Or>
     <Method name="main" params="java.lang.String[]" returns="void" />

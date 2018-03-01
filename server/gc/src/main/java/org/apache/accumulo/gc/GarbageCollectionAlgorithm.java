@@ -32,6 +32,7 @@ import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.TableNotFoundException;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.data.impl.KeyExtent;
@@ -119,7 +120,7 @@ public class GarbageCollectionAlgorithm {
       try {
         relPath = makeRelative(candidate, 0);
       } catch (IllegalArgumentException iae) {
-        log.warn("Ignoring invalid deletion candidate " + candidate);
+        log.warn("Ignoring invalid deletion candidate {}", candidate);
         continue;
       }
       ret.put(relPath, candidate);
@@ -160,7 +161,7 @@ public class GarbageCollectionAlgorithm {
         }
 
         if (count > 0)
-          log.debug("Folder has bulk processing flag: " + blipPath);
+          log.debug("Folder has bulk processing flag: {}", blipPath);
       }
 
     }
@@ -187,11 +188,11 @@ public class GarbageCollectionAlgorithm {
         // WARNING: This line is EXTREMELY IMPORTANT.
         // You MUST REMOVE candidates that are still in use
         if (candidateMap.remove(reference) != null)
-          log.debug("Candidate was still in use: " + reference);
+          log.debug("Candidate was still in use: {}", reference);
 
         String dir = reference.substring(0, reference.lastIndexOf('/'));
         if (candidateMap.remove(dir) != null)
-          log.debug("Candidate was still in use: " + reference);
+          log.debug("Candidate was still in use: {}", reference);
 
       } else if (TabletsSection.ServerColumnFamily.DIRECTORY_COLUMN.hasColumns(key)) {
         String tableID = new String(KeyExtent.tableOfMetadataRow(key.getRow()));
@@ -205,7 +206,7 @@ public class GarbageCollectionAlgorithm {
         dir = makeRelative(dir, 2);
 
         if (candidateMap.remove(dir) != null)
-          log.debug("Candidate was still in use: " + dir);
+          log.debug("Candidate was still in use: {}", dir);
       } else
         throw new RuntimeException("Scanner over metadata table returned unexpected column : " + entry.getKey());
     }
@@ -243,25 +244,25 @@ public class GarbageCollectionAlgorithm {
   }
 
   private void cleanUpDeletedTableDirs(GarbageCollectionEnvironment gce, SortedMap<String,String> candidateMap) throws IOException {
-    HashSet<String> tableIdsWithDeletes = new HashSet<>();
+    HashSet<Table.ID> tableIdsWithDeletes = new HashSet<>();
 
     // find the table ids that had dirs deleted
     for (String delete : candidateMap.keySet()) {
       String[] tokens = delete.split("/");
       if (tokens.length == 2) {
         // its a directory
-        String tableId = delete.split("/")[0];
+        Table.ID tableId = Table.ID.of(delete.split("/")[0]);
         tableIdsWithDeletes.add(tableId);
       }
     }
 
-    Set<String> tableIdsInZookeeper = gce.getTableIDs();
+    Set<Table.ID> tableIdsInZookeeper = gce.getTableIDs();
 
     tableIdsWithDeletes.removeAll(tableIdsInZookeeper);
 
     // tableIdsWithDeletes should now contain the set of deleted tables that had dirs deleted
 
-    for (String delTableId : tableIdsWithDeletes) {
+    for (Table.ID delTableId : tableIdsWithDeletes) {
       gce.deleteTableDirIfEmpty(delTableId);
     }
 

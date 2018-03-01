@@ -95,11 +95,11 @@ public class Scanner {
         iter = new SourceSwitchingIterator(dataSource, false);
       }
 
-      results = tablet.nextBatch(iter, range, options.getNum(), options.getColumnSet(), options.getBatchTimeOut());
+      results = tablet.nextBatch(iter, range, options.getNum(), options.getColumnSet(), options.getBatchTimeOut(), options.isIsolated());
 
       if (results.getResults() == null) {
         range = null;
-        return new ScanBatch(new ArrayList<KVEntry>(), false);
+        return new ScanBatch(new ArrayList<>(), false);
       } else if (results.getContinueKey() == null) {
         return new ScanBatch(results.getResults(), false);
       } else {

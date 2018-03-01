@@ -56,6 +56,7 @@ import org.apache.accumulo.core.security.SystemPermission;
 import org.apache.accumulo.core.security.TablePermission;
 import org.apache.accumulo.core.trace.Tracer;
 import org.apache.accumulo.core.util.AddressUtil;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.accumulo.fate.zookeeper.ZooCacheFactory;
@@ -75,7 +76,6 @@ import com.beust.jcommander.Parameter;
 import com.beust.jcommander.Parameters;
 import com.google.auto.service.AutoService;
 import com.google.common.collect.Lists;
-import com.google.common.net.HostAndPort;
 
 @AutoService(KeywordExecutable.class)
 public class Admin implements KeywordExecutable {
@@ -159,12 +159,22 @@ public class Admin implements KeywordExecutable {
   }
 
   @Override
+  public UsageGroup usageGroup() {
+    return UsageGroup.CORE;
+  }
+
+  @Override
+  public String description() {
+    return "Executes administrative commands";
+  }
+
+  @Override
   public void execute(final String[] args) {
     boolean everything;
 
     AdminOpts opts = new AdminOpts();
     JCommander cl = new JCommander(opts);
-    cl.setProgramName(Admin.class.getName());
+    cl.setProgramName("accumulo admin");
 
     CheckTabletsCommand checkTabletsCommand = new CheckTabletsCommand();
     cl.addCommand("checkTablets", checkTabletsCommand);
@@ -208,7 +218,7 @@ public class Admin implements KeywordExecutable {
     ServerConfigurationFactory confFactory = new ServerConfigurationFactory(instance);
 
     try {
-      ClientContext context = new AccumuloServerContext(confFactory);
+      ClientContext context = new AccumuloServerContext(instance, confFactory);
 
       int rc = 0;
 
@@ -365,7 +375,7 @@ public class Admin implements KeywordExecutable {
       for (int port : context.getConfiguration().getPort(Property.TSERV_CLIENTPORT)) {
         HostAndPort address = AddressUtil.parseAddress(server, port);
         final String finalServer = qualifyWithZooKeeperSessionId(zTServerRoot, zc, address.toString());
-        log.info("Stopping server " + finalServer);
+        log.info("Stopping server {}", finalServer);
         MasterClient.executeVoid(context, new ClientExec<MasterClientService.Client>() {
           @Override
           public void execute(MasterClientService.Client client) throws Exception {
@@ -439,7 +449,7 @@ public class Admin implements KeywordExecutable {
       }
     }
     Connector connector = context.getConnector();
-    defaultConfig = AccumuloConfiguration.getDefaultConfiguration();
+    defaultConfig = DefaultConfiguration.getInstance();
     siteConfig = connector.instanceOperations().getSiteConfiguration();
     systemConfig = connector.instanceOperations().getSystemConfiguration();
     if (opts.allConfiguration || opts.users) {
@@ -568,11 +578,8 @@ public class Admin implements KeywordExecutable {
       }
     }
     File siteBackup = new File(outputDirectory, ACCUMULO_SITE_BACKUP_FILE);
-    FileOutputStream fos = new FileOutputStream(siteBackup);
-    try {
+    try (FileOutputStream fos = new FileOutputStream(siteBackup)) {
       conf.writeXml(fos);
-    } finally {
-      fos.close();
     }
   }
 

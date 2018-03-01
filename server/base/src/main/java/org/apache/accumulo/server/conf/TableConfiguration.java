@@ -16,20 +16,36 @@
  */
 package org.apache.accumulo.server.conf;
 
+import static java.util.Objects.requireNonNull;
+
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.Instance;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.conf.ConfigurationObserver;
 import org.apache.accumulo.core.conf.ObservableConfiguration;
 import org.apache.accumulo.core.conf.Property;
+import org.apache.accumulo.core.data.thrift.IterInfo;
+import org.apache.accumulo.core.iterators.IteratorUtil;
+import org.apache.accumulo.core.iterators.IteratorUtil.IteratorScope;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.accumulo.fate.zookeeper.ZooCacheFactory;
 import org.apache.accumulo.server.conf.ZooCachePropertyAccessor.PropCacheKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableMap.Builder;
 
 public class TableConfiguration extends ObservableConfiguration {
   private static final Logger log = LoggerFactory.getLogger(TableConfiguration.class);
@@ -41,12 +57,19 @@ public class TableConfiguration extends ObservableConfiguration {
   private final NamespaceConfiguration parent;
   private ZooCacheFactory zcf = new ZooCacheFactory();
 
-  private final String tableId;
+  private final Table.ID tableId;
 
-  public TableConfiguration(Instance instance, String tableId, NamespaceConfiguration parent) {
-    this.instance = instance;
-    this.tableId = tableId;
-    this.parent = parent;
+  private EnumMap<IteratorScope,AtomicReference<ParsedIteratorConfig>> iteratorConfig;
+
+  public TableConfiguration(Instance instance, Table.ID tableId, NamespaceConfiguration parent) {
+    this.instance = requireNonNull(instance);
+    this.tableId = requireNonNull(tableId);
+    this.parent = requireNonNull(parent);
+
+    iteratorConfig = new EnumMap<>(IteratorScope.class);
+    for (IteratorScope scope : IteratorScope.values()) {
+      iteratorConfig.put(scope, new AtomicReference<ParsedIteratorConfig>(null));
+    }
   }
 
   void setZooCacheFactory(ZooCacheFactory zcf) {
@@ -56,7 +79,7 @@ public class TableConfiguration extends ObservableConfiguration {
   private synchronized ZooCachePropertyAccessor getPropCacheAccessor() {
     if (propCacheAccessor == null) {
       synchronized (propCaches) {
-        PropCacheKey key = new PropCacheKey(instance.getInstanceID(), tableId);
+        PropCacheKey key = new PropCacheKey(instance.getInstanceID(), tableId.canonicalID());
         ZooCache propCache = propCaches.get(key);
         if (propCache == null) {
           propCache = zcf.getZooCache(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut(), new TableConfWatcher(instance));
@@ -103,7 +126,7 @@ public class TableConfiguration extends ObservableConfiguration {
     getPropCacheAccessor().getProperties(props, getPath(), filter, parent, null);
   }
 
-  public String getTableId() {
+  public Table.ID getTableId() {
     return tableId;
   }
 
@@ -115,8 +138,7 @@ public class TableConfiguration extends ObservableConfiguration {
   }
 
   /**
-   * Gets the parent configuration of this configuration. The parent is actually a {@link TableParentConfiguration} that can change which namespace it
-   * references.
+   * Gets the parent configuration of this configuration.
    *
    * @return parent configuration
    */
@@ -137,5 +159,56 @@ public class TableConfiguration extends ObservableConfiguration {
   @Override
   public String toString() {
     return this.getClass().getSimpleName();
+  }
+
+  @Override
+  public long getUpdateCount() {
+    return parent.getUpdateCount() + getPropCacheAccessor().getZooCache().getUpdateCount();
+  }
+
+  public static class ParsedIteratorConfig {
+    private final List<IterInfo> tableIters;
+    private final Map<String,Map<String,String>> tableOpts;
+    private final String context;
+    private final long updateCount;
+
+    private ParsedIteratorConfig(List<IterInfo> ii, Map<String,Map<String,String>> opts, String context, long updateCount) {
+      this.tableIters = ImmutableList.copyOf(ii);
+      Builder<String,Map<String,String>> imb = ImmutableMap.builder();
+      for (Entry<String,Map<String,String>> entry : opts.entrySet()) {
+        imb.put(entry.getKey(), ImmutableMap.copyOf(entry.getValue()));
+      }
+      tableOpts = imb.build();
+      this.context = context;
+      this.updateCount = updateCount;
+    }
+
+    public List<IterInfo> getIterInfo() {
+      return tableIters;
+    }
+
+    public Map<String,Map<String,String>> getOpts() {
+      return tableOpts;
+    }
+
+    public String getContext() {
+      return context;
+    }
+  }
+
+  public ParsedIteratorConfig getParsedIteratorConfig(IteratorScope scope) {
+    long count = getUpdateCount();
+    AtomicReference<ParsedIteratorConfig> ref = iteratorConfig.get(scope);
+    ParsedIteratorConfig pic = ref.get();
+    if (pic == null || pic.updateCount != count) {
+      List<IterInfo> iters = new ArrayList<>();
+      Map<String,Map<String,String>> allOptions = new HashMap<>();
+      IteratorUtil.parseIterConf(scope, iters, allOptions, this);
+      ParsedIteratorConfig newPic = new ParsedIteratorConfig(iters, allOptions, get(Property.TABLE_CLASSPATH), count);
+      ref.compareAndSet(pic, newPic);
+      pic = newPic;
+    }
+
+    return pic;
   }
 }

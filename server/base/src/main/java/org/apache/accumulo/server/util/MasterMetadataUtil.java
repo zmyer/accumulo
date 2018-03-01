@@ -16,8 +16,8 @@
  */
 package org.apache.accumulo.server.util;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -35,6 +35,7 @@ import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.impl.ClientContext;
 import org.apache.accumulo.core.client.impl.ScannerImpl;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.PartialKey;
@@ -101,7 +102,7 @@ public class MasterMetadataUtil {
 
   public static KeyExtent fixSplit(ClientContext context, Text metadataEntry, SortedMap<ColumnFQ,Value> columns, TServerInstance tserver, ZooLock lock)
       throws AccumuloException, IOException {
-    log.info("Incomplete split " + metadataEntry + " attempting to fix");
+    log.info("Incomplete split {} attempting to fix", metadataEntry);
 
     Value oper = columns.get(TabletsSection.TabletColumnFamily.OLD_PREV_ROW_COLUMN);
 
@@ -135,12 +136,12 @@ public class MasterMetadataUtil {
 
     Text metadataPrevEndRow = KeyExtent.decodePrevEndRow(prevEndRowIBW);
 
-    String table = (new KeyExtent(metadataEntry, (Text) null)).getTableId();
+    Table.ID tableId = (new KeyExtent(metadataEntry, (Text) null)).getTableId();
 
-    return fixSplit(context, table, metadataEntry, metadataPrevEndRow, oper, splitRatio, tserver, time.toString(), initFlushID, initCompactID, lock);
+    return fixSplit(context, tableId, metadataEntry, metadataPrevEndRow, oper, splitRatio, tserver, time.toString(), initFlushID, initCompactID, lock);
   }
 
-  private static KeyExtent fixSplit(ClientContext context, String table, Text metadataEntry, Text metadataPrevEndRow, Value oper, double splitRatio,
+  private static KeyExtent fixSplit(ClientContext context, Table.ID tableId, Text metadataEntry, Text metadataPrevEndRow, Value oper, double splitRatio,
       TServerInstance tserver, String time, long initFlushID, long initCompactID, ZooLock lock) throws AccumuloException, IOException {
     if (metadataPrevEndRow == null)
       // something is wrong, this should not happen... if a tablet is split, it will always have a
@@ -148,18 +149,18 @@ public class MasterMetadataUtil {
       throw new AccumuloException("Split tablet does not have prev end row, something is amiss, extent = " + metadataEntry);
 
     // check to see if prev tablet exist in metadata tablet
-    Key prevRowKey = new Key(new Text(KeyExtent.getMetadataEntry(table, metadataPrevEndRow)));
+    Key prevRowKey = new Key(new Text(KeyExtent.getMetadataEntry(tableId, metadataPrevEndRow)));
 
     try (ScannerImpl scanner2 = new ScannerImpl(context, MetadataTable.ID, Authorizations.EMPTY)) {
       scanner2.setRange(new Range(prevRowKey, prevRowKey.followingKey(PartialKey.ROW)));
 
       VolumeManager fs = VolumeManagerImpl.get();
       if (!scanner2.iterator().hasNext()) {
-        log.info("Rolling back incomplete split " + metadataEntry + " " + metadataPrevEndRow);
+        log.info("Rolling back incomplete split {} {}", metadataEntry, metadataPrevEndRow);
         MetadataTableUtil.rollBackSplit(metadataEntry, KeyExtent.decodePrevEndRow(oper), context, lock);
         return new KeyExtent(metadataEntry, KeyExtent.decodePrevEndRow(oper));
       } else {
-        log.info("Finishing incomplete split " + metadataEntry + " " + metadataPrevEndRow);
+        log.info("Finishing incomplete split {} {}", metadataEntry, metadataPrevEndRow);
 
         List<FileRef> highDatafilesToRemove = new ArrayList<>();
 
@@ -180,8 +181,8 @@ public class MasterMetadataUtil {
           }
         }
 
-        MetadataTableUtil.splitDatafiles(table, metadataPrevEndRow, splitRatio, new HashMap<FileRef,FileUtil.FileInfo>(), origDatafileSizes, lowDatafileSizes,
-            highDatafileSizes, highDatafilesToRemove);
+        MetadataTableUtil.splitDatafiles(metadataPrevEndRow, splitRatio, new HashMap<>(), origDatafileSizes, lowDatafileSizes, highDatafileSizes,
+            highDatafilesToRemove);
 
         MetadataTableUtil.finishSplit(metadataEntry, highDatafileSizes, highDatafilesToRemove, context, lock);
 
@@ -194,9 +195,7 @@ public class MasterMetadataUtil {
     while (true) {
       try {
         return new TServerInstance(address, zooLock.getSessionId());
-      } catch (KeeperException e) {
-        log.error("{}", e.getMessage(), e);
-      } catch (InterruptedException e) {
+      } catch (KeeperException | InterruptedException e) {
         log.error("{}", e.getMessage(), e);
       }
       sleepUninterruptibly(1, TimeUnit.SECONDS);
@@ -273,13 +272,11 @@ public class MasterMetadataUtil {
       while (true) {
         try {
           if (zk.exists(zpath)) {
-            log.debug("Removing WAL reference for root table " + zpath);
+            log.debug("Removing WAL reference for root table {}", zpath);
             zk.recursiveDelete(zpath, NodeMissingPolicy.SKIP);
           }
           break;
-        } catch (KeeperException e) {
-          log.error("{}", e.getMessage(), e);
-        } catch (InterruptedException e) {
+        } catch (KeeperException | InterruptedException e) {
           log.error("{}", e.getMessage(), e);
         }
         sleepUninterruptibly(1, TimeUnit.SECONDS);

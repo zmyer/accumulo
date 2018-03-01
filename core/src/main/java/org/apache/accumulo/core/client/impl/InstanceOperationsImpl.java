@@ -42,14 +42,13 @@ import org.apache.accumulo.core.tabletserver.thrift.TabletClientService;
 import org.apache.accumulo.core.tabletserver.thrift.TabletClientService.Client;
 import org.apache.accumulo.core.trace.Tracer;
 import org.apache.accumulo.core.util.AddressUtil;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.accumulo.fate.zookeeper.ZooCacheFactory;
 import org.apache.thrift.TException;
 import org.apache.thrift.transport.TTransport;
 import org.apache.thrift.transport.TTransportException;
-
-import com.google.common.net.HostAndPort;
 
 /**
  * Provides a class for administering the accumulo instance
@@ -194,10 +193,6 @@ public class InstanceOperationsImpl implements InstanceOperations {
       transport = ThriftUtil.createTransport(AddressUtil.parseAddress(tserver, false), context);
       TabletClientService.Client client = ThriftUtil.createClient(new TabletClientService.Client.Factory(), transport);
       client.getTabletServerStatus(Tracer.traceInfo(), context.rpcCreds());
-    } catch (TTransportException e) {
-      throw new AccumuloException(e);
-    } catch (ThriftSecurityException e) {
-      throw new AccumuloException(e);
     } catch (TException e) {
       throw new AccumuloException(e);
     } finally {

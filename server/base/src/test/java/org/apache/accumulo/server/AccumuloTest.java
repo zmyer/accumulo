@@ -20,17 +20,19 @@ import static org.easymock.EasyMock.createMock;
 import static org.easymock.EasyMock.expect;
 import static org.easymock.EasyMock.replay;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 
-import java.io.File;
 import java.io.FileNotFoundException;
 
-import org.apache.commons.io.FileUtils;
+import org.apache.accumulo.core.volume.Volume;
+import org.apache.accumulo.server.fs.VolumeManager;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.junit.Before;
 import org.junit.Test;
+
+import com.google.common.collect.Sets;
 
 public class AccumuloTest {
   private FileSystem fs;
@@ -87,52 +89,49 @@ public class AccumuloTest {
   }
 
   @Test
-  public void testLocateLogConfig() throws Exception {
-    File confDir = new File(FileUtils.getTempDirectory(), "AccumuloTest" + System.currentTimeMillis());
-    String confDirName = confDir.getAbsolutePath();
-    assertTrue("Failed to make test configuration directory", confDir.mkdir());
-    try {
-      File appProps = new File(confDir, "flogger_logger.properties");
-      String appPropsName = String.format("%s/flogger_logger.properties", confDirName);
-      FileUtils.touch(appProps);
-      File genericXml = new File(confDir, "generic_logger.xml");
-      String genericXmlName = String.format("%s/generic_logger.xml", confDirName);
-      FileUtils.touch(genericXml);
+  public void testUpdateAccumuloVersion() throws Exception {
+    Volume v1 = createMock(Volume.class);
+    FileSystem fs1 = createMock(FileSystem.class);
+    Path baseVersion1 = new Path("hdfs://volume1/accumulo/version");
+    Path oldVersion1 = new Path("hdfs://volume1/accumulo/version/7");
+    Path newVersion1 = new Path("hdfs://volume1/accumulo/version/" + Integer.toString(ServerConstants.DATA_VERSION));
 
-      assertEquals(appPropsName, Accumulo.locateLogConfig(confDirName, "flogger"));
-      assertEquals(genericXmlName, Accumulo.locateLogConfig(confDirName, "flagger"));
+    FileStatus[] files1 = mockPersistentVersion("7");
+    expect(fs1.listStatus(baseVersion1)).andReturn(files1);
+    replay(fs1);
 
-      assertTrue("Failed to delete log configuration file", appProps.delete());
-      assertEquals(genericXmlName, Accumulo.locateLogConfig(confDirName, "flogger"));
-    } finally {
-      FileUtils.deleteDirectory(confDir);
-    }
-  }
+    FSDataOutputStream fsdos1 = createMock(FSDataOutputStream.class);
+    expect(v1.getFileSystem()).andReturn(fs1);
+    expect(v1.prefixChild(ServerConstants.VERSION_DIR)).andReturn(baseVersion1).times(2);
+    replay(v1);
+    fsdos1.close();
+    replay(fsdos1);
 
-  @Test
-  public void testLocateLogConfig_Default() throws Exception {
-    File confDir = new File(FileUtils.getTempDirectory(), "AccumuloTest" + System.currentTimeMillis());
-    String confDirName = confDir.getAbsolutePath();
-    assertTrue("Failed to make test configuration directory", confDir.mkdir());
-    try {
-      String genericXmlName = String.format("%s/generic_logger.xml", confDirName);
+    Volume v2 = createMock(Volume.class);
+    FileSystem fs2 = createMock(FileSystem.class);
+    Path baseVersion2 = new Path("hdfs://volume2/accumulo/version");
+    Path oldVersion2 = new Path("hdfs://volume2/accumulo/version/7");
+    Path newVersion2 = new Path("hdfs://volume2/accumulo/version/" + Integer.toString(ServerConstants.DATA_VERSION));
 
-      assertEquals(genericXmlName, Accumulo.locateLogConfig(confDirName, "flogger"));
-    } finally {
-      FileUtils.deleteDirectory(confDir);
-    }
-  }
+    FileStatus[] files2 = mockPersistentVersion("7");
+    expect(fs2.listStatus(baseVersion2)).andReturn(files2);
+    replay(fs2);
 
-  @Test
-  public void testLocateLogConfig_Explicit() throws Exception {
-    File confDir = new File(FileUtils.getTempDirectory(), "AccumuloTest" + System.currentTimeMillis());
-    String confDirName = confDir.getAbsolutePath();
-    System.setProperty("log4j.configuration", "myconfig.xml");
-    try {
-      assertEquals("myconfig.xml", Accumulo.locateLogConfig(confDirName, "flogger"));
-    } finally {
-      FileUtils.deleteDirectory(confDir);
-      System.clearProperty("log4j.configuration");
-    }
+    FSDataOutputStream fsdos2 = createMock(FSDataOutputStream.class);
+    expect(v2.getFileSystem()).andReturn(fs2);
+    expect(v2.prefixChild(ServerConstants.VERSION_DIR)).andReturn(baseVersion2).times(2);
+    replay(v2);
+    fsdos2.close();
+    replay(fsdos2);
+
+    VolumeManager vm = createMock(VolumeManager.class);
+    expect(vm.getVolumes()).andReturn(Sets.newHashSet(v1, v2));
+    expect(vm.delete(oldVersion1)).andReturn(true);
+    expect(vm.create(newVersion1)).andReturn(fsdos1);
+    expect(vm.delete(oldVersion2)).andReturn(true);
+    expect(vm.create(newVersion2)).andReturn(fsdos2);
+    replay(vm);
+
+    Accumulo.updateAccumuloVersion(vm, 7);
   }
 }

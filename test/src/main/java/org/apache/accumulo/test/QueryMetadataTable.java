@@ -41,12 +41,13 @@ import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.server.cli.ClientOpts;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.hadoop.io.Text;
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.beust.jcommander.Parameter;
 
 public class QueryMetadataTable {
-  private static final Logger log = Logger.getLogger(QueryMetadataTable.class);
+  private static final Logger log = LoggerFactory.getLogger(QueryMetadataTable.class);
 
   private static String principal;
   private static AuthenticationToken token;
@@ -62,11 +63,12 @@ public class QueryMetadataTable {
 
     @Override
     public void run() {
+      Scanner mdScanner = null;
       try {
         KeyExtent extent = new KeyExtent(row, (Text) null);
 
         Connector connector = HdfsZooInstance.getInstance().getConnector(principal, token);
-        Scanner mdScanner = connector.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
+        mdScanner = connector.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
         Text row = extent.getMetadataEntry();
 
         mdScanner.setRange(new Range(row));
@@ -85,6 +87,10 @@ public class QueryMetadataTable {
       } catch (AccumuloSecurityException e) {
         log.error("AccumuloSecurityException encountered.", e);
         throw new RuntimeException(e);
+      } finally {
+        if (mdScanner != null) {
+          mdScanner.close();
+        }
       }
     }
   }
@@ -102,27 +108,28 @@ public class QueryMetadataTable {
     opts.parseArgs(QueryMetadataTable.class.getName(), args, scanOpts);
 
     Connector connector = opts.getConnector();
-    Scanner scanner = connector.createScanner(MetadataTable.NAME, opts.auths);
-    scanner.setBatchSize(scanOpts.scanBatchSize);
-    Text mdrow = new Text(KeyExtent.getMetadataEntry(MetadataTable.ID, null));
-
     HashSet<Text> rowSet = new HashSet<>();
 
     int count = 0;
 
-    for (Entry<Key,Value> entry : scanner) {
-      System.out.print(".");
-      if (count % 72 == 0) {
-        System.out.printf(" %,d%n", count);
-      }
-      if (entry.getKey().compareRow(mdrow) == 0 && entry.getKey().getColumnFamily().compareTo(TabletsSection.CurrentLocationColumnFamily.NAME) == 0) {
-        System.out.println(entry.getKey() + " " + entry.getValue());
-        location = entry.getValue().toString();
-      }
+    try (Scanner scanner = connector.createScanner(MetadataTable.NAME, opts.auths)) {
+      scanner.setBatchSize(scanOpts.scanBatchSize);
+      Text mdrow = new Text(KeyExtent.getMetadataEntry(MetadataTable.ID, null));
 
-      if (!entry.getKey().getRow().toString().startsWith(MetadataTable.ID))
-        rowSet.add(entry.getKey().getRow());
-      count++;
+      for (Entry<Key,Value> entry : scanner) {
+        System.out.print(".");
+        if (count % 72 == 0) {
+          System.out.printf(" %,d%n", count);
+        }
+        if (entry.getKey().compareRow(mdrow) == 0 && entry.getKey().getColumnFamily().compareTo(TabletsSection.CurrentLocationColumnFamily.NAME) == 0) {
+          System.out.println(entry.getKey() + " " + entry.getValue());
+          location = entry.getValue().toString();
+        }
+
+        if (!entry.getKey().getRow().toString().startsWith(MetadataTable.ID.canonicalID()))
+          rowSet.add(entry.getKey().getRow());
+        count++;
+      }
     }
 
     System.out.printf(" %,d%n", count);

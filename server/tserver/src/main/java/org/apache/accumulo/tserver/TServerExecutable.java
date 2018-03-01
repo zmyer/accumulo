@@ -29,6 +29,16 @@ public class TServerExecutable implements KeywordExecutable {
   }
 
   @Override
+  public UsageGroup usageGroup() {
+    return UsageGroup.PROCESS;
+  }
+
+  @Override
+  public String description() {
+    return "Starts Accumulo tablet server";
+  }
+
+  @Override
   public void execute(final String[] args) throws Exception {
     TabletServer.main(args);
   }

@@ -38,13 +38,13 @@ public class TableOperationsImplTest {
     Instance instance = EasyMock.createMock(Instance.class);
     Credentials credentials = EasyMock.createMock(Credentials.class);
 
-    ClientContext context = new ClientContext(instance, credentials, new ClientConfiguration());
+    ClientContext context = new ClientContext(instance, credentials, ClientConfiguration.create());
     TableOperationsImpl topsImpl = new TableOperationsImpl(context);
 
     Connector connector = EasyMock.createMock(Connector.class);
     Scanner scanner = EasyMock.createMock(Scanner.class);
 
-    Range range = new KeyExtent("1", null, null).toMetadataRange();
+    Range range = new KeyExtent(Table.ID.of("1"), null, null).toMetadataRange();
 
     String user = "root";
     PasswordToken token = new PasswordToken("password");

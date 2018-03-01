@@ -27,6 +27,8 @@ import org.apache.accumulo.core.client.IsolatedScanner;
 import org.apache.accumulo.core.client.RowIterator;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.impl.AcceptableThriftTableOperationException;
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.impl.thrift.TableOperation;
 import org.apache.accumulo.core.client.impl.thrift.TableOperationExceptionType;
@@ -56,14 +58,15 @@ class CompactionDriver extends MasterRepo {
   private static final long serialVersionUID = 1L;
 
   private long compactId;
-  private final String tableId;
+  private final Table.ID tableId;
+  private final Namespace.ID namespaceId;
   private byte[] startRow;
   private byte[] endRow;
 
-  public CompactionDriver(long compactId, String tableId, byte[] startRow, byte[] endRow) {
-
+  public CompactionDriver(long compactId, Namespace.ID namespaceId, Table.ID tableId, byte[] startRow, byte[] endRow) {
     this.compactId = compactId;
     this.tableId = tableId;
+    this.namespaceId = namespaceId;
     this.startRow = startRow;
     this.endRow = endRow;
   }
@@ -77,7 +80,8 @@ class CompactionDriver extends MasterRepo {
 
     if (Long.parseLong(new String(zoo.getData(zCancelID, null))) >= compactId) {
       // compaction was canceled
-      throw new AcceptableThriftTableOperationException(tableId, null, TableOperation.COMPACT, TableOperationExceptionType.OTHER, "Compaction canceled");
+      throw new AcceptableThriftTableOperationException(tableId.canonicalID(), null, TableOperation.COMPACT, TableOperationExceptionType.OTHER,
+          "Compaction canceled");
     }
 
     MapCounter<TServerInstance> serversToFlush = new MapCounter<>();
@@ -140,10 +144,10 @@ class CompactionDriver extends MasterRepo {
     Instance instance = master.getInstance();
     Tables.clearCache(instance);
     if (tabletCount == 0 && !Tables.exists(instance, tableId))
-      throw new AcceptableThriftTableOperationException(tableId, null, TableOperation.COMPACT, TableOperationExceptionType.NOTFOUND, null);
+      throw new AcceptableThriftTableOperationException(tableId.canonicalID(), null, TableOperation.COMPACT, TableOperationExceptionType.NOTFOUND, null);
 
     if (serversToFlush.size() == 0 && Tables.getTableState(instance, tableId) == TableState.OFFLINE)
-      throw new AcceptableThriftTableOperationException(tableId, null, TableOperation.COMPACT, TableOperationExceptionType.OFFLINE, null);
+      throw new AcceptableThriftTableOperationException(tableId.canonicalID(), null, TableOperation.COMPACT, TableOperationExceptionType.OFFLINE, null);
 
     if (tabletsToWaitFor == 0)
       return 0;
@@ -152,7 +156,7 @@ class CompactionDriver extends MasterRepo {
       try {
         final TServerConnection server = master.getConnection(tsi);
         if (server != null)
-          server.compact(master.getMasterLock(), tableId, startRow, endRow);
+          server.compact(master.getMasterLock(), tableId.canonicalID(), startRow, endRow);
       } catch (TException ex) {
         LoggerFactory.getLogger(CompactionDriver.class).error(ex.toString());
       }
@@ -172,9 +176,8 @@ class CompactionDriver extends MasterRepo {
   }
 
   @Override
-  public Repo<Master> call(long tid, Master environment) throws Exception {
-    String namespaceId = Tables.getNamespaceId(environment.getInstance(), tableId);
-    CompactRange.removeIterators(environment, tid, tableId);
+  public Repo<Master> call(long tid, Master env) throws Exception {
+    CompactRange.removeIterators(env, tid, tableId);
     Utils.getReadLock(tableId, tid).unlock();
     Utils.getReadLock(namespaceId, tid).unlock();
     return null;

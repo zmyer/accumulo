@@ -29,6 +29,7 @@ import java.util.Set;
 import javax.security.auth.DestroyFailedException;
 
 import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.security.UserGroupInformation.AuthenticationMethod;
 
 /**
  * Authentication token for Kerberos authenticated clients
@@ -47,15 +48,25 @@ public class KerberosToken implements AuthenticationToken {
   /**
    * Creates a token using the provided principal and the currently logged-in user via {@link UserGroupInformation}.
    *
+   * This method expects the current user (as defined by {@link UserGroupInformation#getCurrentUser()} to be authenticated via Kerberos or as a Proxy (on top of
+   * another user). An {@link IllegalArgumentException} will be thrown for all other cases.
+   *
    * @param principal
    *          The user that is logged in
+   * @throws IllegalArgumentException
+   *           If the current user is not authentication via Kerberos or Proxy methods.
+   * @see UserGroupInformation#getCurrentUser()
+   * @see UserGroupInformation#getAuthenticationMethod()
    */
   public KerberosToken(String principal) throws IOException {
-    requireNonNull(principal);
-    final UserGroupInformation ugi = UserGroupInformation.getCurrentUser();
-    checkArgument(ugi.hasKerberosCredentials(), "Subject is not logged in via Kerberos");
-    checkArgument(principal.equals(ugi.getUserName()), "Provided principal does not match currently logged-in user");
-    this.principal = ugi.getUserName();
+    this.principal = requireNonNull(principal);
+    validateAuthMethod(UserGroupInformation.getCurrentUser().getAuthenticationMethod());
+  }
+
+  static void validateAuthMethod(AuthenticationMethod authMethod) {
+    // There is also KERBEROS_SSL but that appears to be deprecated/OBE
+    checkArgument(AuthenticationMethod.KERBEROS == authMethod || AuthenticationMethod.PROXY == authMethod,
+        "KerberosToken expects KERBEROS or PROXY authentication for the current UserGroupInformation user. Saw " + authMethod);
   }
 
   /**
@@ -86,18 +97,12 @@ public class KerberosToken implements AuthenticationToken {
    */
   @Deprecated
   public KerberosToken(String principal, File keytab, boolean replaceCurrentUser) throws IOException {
-    requireNonNull(principal, "Principal was null");
-    requireNonNull(keytab, "Keytab was null");
+    this.principal = requireNonNull(principal, "Principal was null");
+    this.keytab = requireNonNull(keytab, "Keytab was null");
     checkArgument(keytab.exists() && keytab.isFile(), "Keytab was not a normal file");
-    UserGroupInformation ugi;
     if (replaceCurrentUser) {
       UserGroupInformation.loginUserFromKeytab(principal, keytab.getAbsolutePath());
-      ugi = UserGroupInformation.getCurrentUser();
-    } else {
-      ugi = UserGroupInformation.loginUserFromKeytabAndReturnUGI(principal, keytab.getAbsolutePath());
     }
-    this.principal = ugi.getUserName();
-    this.keytab = keytab;
   }
 
   /**

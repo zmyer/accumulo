@@ -78,9 +78,14 @@ public class CreateToken implements KeywordExecutable {
   }
 
   @Override
+  public String description() {
+    return "Creates authentication token";
+  }
+
+  @Override
   public void execute(String[] args) {
     Opts opts = new Opts();
-    opts.parseArgs(CreateToken.class.getName(), args);
+    opts.parseArgs("accumulo create-token", args);
 
     Password pass = opts.password;
     if (pass == null && opts.securePassword != null) {

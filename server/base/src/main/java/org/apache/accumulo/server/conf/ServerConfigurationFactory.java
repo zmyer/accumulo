@@ -16,17 +16,18 @@
  */
 package org.apache.accumulo.server.conf;
 
-import java.security.SecurityPermission;
 import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.accumulo.core.client.Instance;
+import org.apache.accumulo.core.client.TableNotFoundException;
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigSanityCheck;
 import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.SiteConfiguration;
-import org.apache.accumulo.core.data.impl.KeyExtent;
 import org.apache.accumulo.fate.zookeeper.ZooCacheFactory;
 
 /**
@@ -34,44 +35,29 @@ import org.apache.accumulo.fate.zookeeper.ZooCacheFactory;
  */
 public class ServerConfigurationFactory extends ServerConfiguration {
 
-  private static final Map<String,Map<String,TableConfiguration>> tableConfigs = new HashMap<>(1);
-  private static final Map<String,Map<String,NamespaceConfiguration>> namespaceConfigs = new HashMap<>(1);
-  private static final Map<String,Map<String,NamespaceConfiguration>> tableParentConfigs = new HashMap<>(1);
+  private static final Map<String,Map<Table.ID,TableConfiguration>> tableConfigs = new HashMap<>(1);
+  private static final Map<String,Map<Namespace.ID,NamespaceConfiguration>> namespaceConfigs = new HashMap<>(1);
+  private static final Map<String,Map<Table.ID,NamespaceConfiguration>> tableParentConfigs = new HashMap<>(1);
 
   private static void addInstanceToCaches(String iid) {
     synchronized (tableConfigs) {
-      if (!tableConfigs.containsKey(iid)) {
-        tableConfigs.put(iid, new HashMap<String,TableConfiguration>());
-      }
+      tableConfigs.computeIfAbsent(iid, k -> new HashMap<>());
     }
     synchronized (namespaceConfigs) {
-      if (!namespaceConfigs.containsKey(iid)) {
-        namespaceConfigs.put(iid, new HashMap<String,NamespaceConfiguration>());
-      }
+      namespaceConfigs.computeIfAbsent(iid, k -> new HashMap<>());
     }
     synchronized (tableParentConfigs) {
-      if (!tableParentConfigs.containsKey(iid)) {
-        tableParentConfigs.put(iid, new HashMap<String,NamespaceConfiguration>());
-      }
+      tableParentConfigs.computeIfAbsent(iid, k -> new HashMap<>());
     }
   }
 
-  private static final SecurityPermission CONFIGURATION_PERMISSION = new SecurityPermission("configurationPermission");
-  private static final SecurityManager SM = System.getSecurityManager();
-
-  private static void checkPermissions() {
-    if (SM != null) {
-      SM.checkPermission(CONFIGURATION_PERMISSION);
-    }
-  }
-
-  static boolean removeCachedTableConfiguration(String instanceId, String tableId) {
+  static boolean removeCachedTableConfiguration(String instanceId, Table.ID tableId) {
     synchronized (tableConfigs) {
       return tableConfigs.get(instanceId).remove(tableId) != null;
     }
   }
 
-  static boolean removeCachedNamespaceConfiguration(String instanceId, String namespaceId) {
+  static boolean removeCachedNamespaceConfiguration(String instanceId, Namespace.ID namespaceId) {
     synchronized (namespaceConfigs) {
       return namespaceConfigs.get(instanceId).remove(namespaceId) != null;
     }
@@ -91,7 +77,7 @@ public class ServerConfigurationFactory extends ServerConfiguration {
 
   static void expireAllTableObservers() {
     synchronized (tableConfigs) {
-      for (Map<String,TableConfiguration> instanceMap : tableConfigs.values()) {
+      for (Map<Table.ID,TableConfiguration> instanceMap : tableConfigs.values()) {
         for (TableConfiguration c : instanceMap.values()) {
           c.expireAllObservers();
         }
@@ -119,32 +105,28 @@ public class ServerConfigurationFactory extends ServerConfiguration {
 
   public synchronized SiteConfiguration getSiteConfiguration() {
     if (siteConfig == null) {
-      checkPermissions();
-      siteConfig = SiteConfiguration.getInstance(getDefaultConfiguration());
+      siteConfig = SiteConfiguration.getInstance();
     }
     return siteConfig;
   }
 
   public synchronized DefaultConfiguration getDefaultConfiguration() {
     if (defaultConfig == null) {
-      checkPermissions();
       defaultConfig = DefaultConfiguration.getInstance();
     }
     return defaultConfig;
   }
 
   @Override
-  public synchronized AccumuloConfiguration getConfiguration() {
+  public synchronized AccumuloConfiguration getSystemConfiguration() {
     if (systemConfig == null) {
-      checkPermissions();
       systemConfig = new ZooConfigurationFactory().getInstance(instance, zcf, getSiteConfiguration());
     }
     return systemConfig;
   }
 
   @Override
-  public TableConfiguration getTableConfiguration(String tableId) {
-    checkPermissions();
+  public TableConfiguration getTableConfiguration(Table.ID tableId) {
     TableConfiguration conf;
     synchronized (tableConfigs) {
       conf = tableConfigs.get(instanceID).get(tableId);
@@ -161,7 +143,7 @@ public class ServerConfigurationFactory extends ServerConfiguration {
       conf = new TableConfiguration(instance, tableId, getNamespaceConfigurationForTable(tableId));
       ConfigSanityCheck.validate(conf);
       synchronized (tableConfigs) {
-        Map<String,TableConfiguration> configs = tableConfigs.get(instanceID);
+        Map<Table.ID,TableConfiguration> configs = tableConfigs.get(instanceID);
         TableConfiguration existingConf = configs.get(tableId);
         if (null == existingConf) {
           // Configuration doesn't exist yet
@@ -175,13 +157,7 @@ public class ServerConfigurationFactory extends ServerConfiguration {
     return conf;
   }
 
-  @Override
-  public TableConfiguration getTableConfiguration(KeyExtent extent) {
-    return getTableConfiguration(extent.getTableId());
-  }
-
-  public NamespaceConfiguration getNamespaceConfigurationForTable(String tableId) {
-    checkPermissions();
+  public NamespaceConfiguration getNamespaceConfigurationForTable(Table.ID tableId) {
     NamespaceConfiguration conf;
     synchronized (tableParentConfigs) {
       conf = tableParentConfigs.get(instanceID).get(tableId);
@@ -189,8 +165,13 @@ public class ServerConfigurationFactory extends ServerConfiguration {
     // can't hold the lock during the construction and validation of the config,
     // which may result in creating multiple objects for the same id, but that's ok.
     if (conf == null) {
-      // changed - include instance in constructor call
-      conf = new TableParentConfiguration(tableId, instance, getConfiguration());
+      Namespace.ID namespaceId;
+      try {
+        namespaceId = Tables.getNamespaceId(instance, tableId);
+      } catch (TableNotFoundException e) {
+        throw new RuntimeException(e);
+      }
+      conf = new NamespaceConfiguration(namespaceId, instance, getSystemConfiguration());
       ConfigSanityCheck.validate(conf);
       synchronized (tableParentConfigs) {
         tableParentConfigs.get(instanceID).put(tableId, conf);
@@ -200,8 +181,7 @@ public class ServerConfigurationFactory extends ServerConfiguration {
   }
 
   @Override
-  public NamespaceConfiguration getNamespaceConfiguration(String namespaceId) {
-    checkPermissions();
+  public NamespaceConfiguration getNamespaceConfiguration(Namespace.ID namespaceId) {
     NamespaceConfiguration conf;
     // can't hold the lock during the construction and validation of the config,
     // which may result in creating multiple objects for the same id, but that's ok.
@@ -210,7 +190,7 @@ public class ServerConfigurationFactory extends ServerConfiguration {
     }
     if (conf == null) {
       // changed - include instance in constructor call
-      conf = new NamespaceConfiguration(namespaceId, instance, getConfiguration());
+      conf = new NamespaceConfiguration(namespaceId, instance, getSystemConfiguration());
       conf.setZooCacheFactory(zcf);
       ConfigSanityCheck.validate(conf);
       synchronized (namespaceConfigs) {
@@ -220,8 +200,4 @@ public class ServerConfigurationFactory extends ServerConfiguration {
     return conf;
   }
 
-  @Override
-  public Instance getInstance() {
-    return instance;
-  }
 }

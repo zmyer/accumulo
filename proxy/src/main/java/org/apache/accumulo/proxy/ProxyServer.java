@@ -18,6 +18,7 @@ package org.apache.accumulo.proxy;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
+import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -64,7 +65,7 @@ import org.apache.accumulo.core.client.admin.CompactionConfig;
 import org.apache.accumulo.core.client.admin.NewTableConfiguration;
 import org.apache.accumulo.core.client.admin.TimeType;
 import org.apache.accumulo.core.client.impl.Credentials;
-import org.apache.accumulo.core.client.impl.Namespaces;
+import org.apache.accumulo.core.client.impl.Namespace;
 import org.apache.accumulo.core.client.impl.thrift.TableOperationExceptionType;
 import org.apache.accumulo.core.client.impl.thrift.ThriftTableOperationException;
 import org.apache.accumulo.core.client.security.SecurityErrorCode;
@@ -112,7 +113,6 @@ import org.apache.accumulo.proxy.thrift.UnknownWriter;
 import org.apache.accumulo.proxy.thrift.WriterOptions;
 import org.apache.accumulo.server.rpc.ThriftServerType;
 import org.apache.accumulo.server.rpc.UGIAssumingProcessor;
-import org.apache.commons.configuration.ConfigurationException;
 import org.apache.hadoop.io.Text;
 import org.apache.thrift.TException;
 import org.slf4j.Logger;
@@ -197,11 +197,7 @@ public class ProxyServer implements AccumuloProxy.Iface {
       ClientConfiguration clientConf;
       if (props.containsKey("clientConfigurationFile")) {
         String clientConfFile = props.getProperty("clientConfigurationFile");
-        try {
-          clientConf = new ClientConfiguration(clientConfFile);
-        } catch (ConfigurationException e) {
-          throw new RuntimeException(e);
-        }
+        clientConf = ClientConfiguration.fromFile(new File(clientConfFile));
       } else {
         clientConf = ClientConfiguration.loadDefault();
       }
@@ -653,7 +649,7 @@ public class ProxyServer implements AccumuloProxy.Iface {
     try {
       Map<String,Set<Text>> groups = new HashMap<>();
       for (Entry<String,Set<String>> groupEntry : groupStrings.entrySet()) {
-        groups.put(groupEntry.getKey(), new HashSet<Text>());
+        groups.put(groupEntry.getKey(), new HashSet<>());
         for (String val : groupEntry.getValue()) {
           groups.get(groupEntry.getKey()).add(new Text(val));
         }
@@ -1198,7 +1194,7 @@ public class ProxyServer implements AccumuloProxy.Iface {
     // synchronized to prevent race conditions
     synchronized (batchScanner) {
       ScanResult ret = new ScanResult();
-      ret.setResults(new ArrayList<KeyValue>());
+      ret.setResults(new ArrayList<>());
       int numRead = 0;
       try {
         while (batchScanner.hasNext() && numRead < k) {
@@ -1607,12 +1603,12 @@ public class ProxyServer implements AccumuloProxy.Iface {
 
   @Override
   public String systemNamespace() throws TException {
-    return Namespaces.ACCUMULO_NAMESPACE;
+    return Namespace.ACCUMULO;
   }
 
   @Override
   public String defaultNamespace() throws TException {
-    return Namespaces.DEFAULT_NAMESPACE;
+    return Namespace.DEFAULT;
   }
 
   @Override
@@ -1852,7 +1848,7 @@ public class ProxyServer implements AccumuloProxy.Iface {
     if (ThriftServerType.SASL == serverType) {
       String remoteUser = UGIAssumingProcessor.rpcPrincipal();
       if (null == remoteUser || !remoteUser.equals(principal)) {
-        logger.error("Denying login from user " + remoteUser + " who attempted to log in as " + principal);
+        logger.error("Denying login from user {} who attempted to log in as {}", remoteUser, principal);
         throw new org.apache.accumulo.proxy.thrift.AccumuloSecurityException(RPC_ACCUMULO_PRINCIPAL_MISMATCH_MSG);
       }
     }

@@ -36,12 +36,33 @@ import java.util.ServiceLoader;
  */
 public interface KeywordExecutable {
 
+  public static enum UsageGroup {
+    CORE, PROCESS, OTHER;
+  }
+
   /**
-   * Provides access to the service's keyword.
-   *
-   * @return the keyword which identifies this service
+   * @return Keyword which identifies this service
    */
   String keyword();
+
+  /**
+   * @return Usage for service
+   */
+  default String usage() {
+    return keyword();
+  }
+
+  /**
+   * @return Usage group for this command
+   */
+  default UsageGroup usageGroup() {
+    return UsageGroup.OTHER;
+  }
+
+  /**
+   * @return Description of service
+   */
+  String description();
 
   /**
    * Execute the item with the given arguments.

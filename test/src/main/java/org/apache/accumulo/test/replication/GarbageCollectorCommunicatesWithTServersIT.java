@@ -32,6 +32,7 @@ import org.apache.accumulo.core.client.impl.ClientContext;
 import org.apache.accumulo.core.client.impl.ClientExecReturn;
 import org.apache.accumulo.core.client.impl.Credentials;
 import org.apache.accumulo.core.client.impl.MasterClient;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.Key;
@@ -47,6 +48,7 @@ import org.apache.accumulo.core.rpc.ThriftUtil;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.tabletserver.thrift.TabletClientService.Client;
 import org.apache.accumulo.core.trace.Tracer;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.minicluster.impl.MiniAccumuloConfigImpl;
 import org.apache.accumulo.server.log.WalStateManager;
 import org.apache.accumulo.server.log.WalStateManager.WalState;
@@ -62,8 +64,6 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.google.common.net.HostAndPort;
 
 /**
  * ACCUMULO-3302 series of tests which ensure that a WAL is prematurely closed when a TServer may still continue to use it. Checking that no tablet references a
@@ -123,25 +123,25 @@ public class GarbageCollectorCommunicatesWithTServersIT extends ConfigurableMacB
    */
   private Set<String> getFilesForTable(String tableName) throws Exception {
     final Connector conn = getConnector();
-    final String tableId = conn.tableOperations().tableIdMap().get(tableName);
+    final Table.ID tableId = Table.ID.of(conn.tableOperations().tableIdMap().get(tableName));
 
     Assert.assertNotNull("Could not determine table ID for " + tableName, tableId);
 
-    Scanner s = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
-    Range r = MetadataSchema.TabletsSection.getRange(tableId);
-    s.setRange(r);
-    s.fetchColumnFamily(MetadataSchema.TabletsSection.DataFileColumnFamily.NAME);
-
     Set<String> rfiles = new HashSet<>();
-    for (Entry<Key,Value> entry : s) {
-      log.debug("Reading RFiles: {}={}", entry.getKey().toStringNoTruncate(), entry.getValue());
-      // uri://path/to/wal
-      String cq = entry.getKey().getColumnQualifier().toString();
-      String path = new Path(cq).toString();
-      log.debug("Normalize path to rfile: {}", path);
-      rfiles.add(path);
-    }
+    try (Scanner s = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY)) {
+      Range r = MetadataSchema.TabletsSection.getRange(tableId);
+      s.setRange(r);
+      s.fetchColumnFamily(MetadataSchema.TabletsSection.DataFileColumnFamily.NAME);
 
+      for (Entry<Key,Value> entry : s) {
+        log.debug("Reading RFiles: {}={}", entry.getKey().toStringNoTruncate(), entry.getValue());
+        // uri://path/to/wal
+        String cq = entry.getKey().getColumnQualifier().toString();
+        String path = new Path(cq).toString();
+        log.debug("Normalize path to rfile: {}", path);
+        rfiles.add(path);
+      }
+    }
     return rfiles;
   }
 
@@ -154,20 +154,20 @@ public class GarbageCollectorCommunicatesWithTServersIT extends ConfigurableMacB
 
     Assert.assertNotNull("Could not determine table ID for " + tableName, tableId);
 
-    Scanner s = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
-    Range r = MetadataSchema.ReplicationSection.getRange();
-    s.setRange(r);
-    s.fetchColumn(MetadataSchema.ReplicationSection.COLF, new Text(tableId));
-
     Map<String,Status> fileToStatus = new HashMap<>();
-    for (Entry<Key,Value> entry : s) {
-      Text file = new Text();
-      MetadataSchema.ReplicationSection.getFile(entry.getKey(), file);
-      Status status = Status.parseFrom(entry.getValue().get());
-      log.info("Got status for {}: {}", file, ProtobufUtil.toString(status));
-      fileToStatus.put(file.toString(), status);
-    }
+    try (Scanner s = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY)) {
+      Range r = MetadataSchema.ReplicationSection.getRange();
+      s.setRange(r);
+      s.fetchColumn(MetadataSchema.ReplicationSection.COLF, new Text(tableId));
 
+      for (Entry<Key,Value> entry : s) {
+        Text file = new Text();
+        MetadataSchema.ReplicationSection.getFile(entry.getKey(), file);
+        Status status = Status.parseFrom(entry.getValue().get());
+        log.info("Got status for {}: {}", file, ProtobufUtil.toString(status));
+        fileToStatus.put(file.toString(), status);
+      }
+    }
     return fileToStatus;
   }
 

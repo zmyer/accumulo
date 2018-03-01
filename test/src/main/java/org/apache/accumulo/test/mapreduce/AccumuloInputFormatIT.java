@@ -16,8 +16,8 @@
  */
 package org.apache.accumulo.test.mapreduce;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 import static java.lang.System.currentTimeMillis;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
@@ -107,7 +107,7 @@ public class AccumuloInputFormatIT extends AccumuloClusterHarness {
     insertData(table, currentTimeMillis());
 
     ClientConfiguration clientConf = cluster.getClientConfig();
-    AccumuloConfiguration clusterClientConf = new ConfigurationCopy(new DefaultConfiguration());
+    AccumuloConfiguration clusterClientConf = new ConfigurationCopy(DefaultConfiguration.getInstance());
 
     // Pass SSL and CredentialProvider options into the ClientConfiguration given to AccumuloInputFormat
     boolean sslEnabled = Boolean.valueOf(clusterClientConf.get(Property.INSTANCE_RPC_SSL_ENABLED));
@@ -298,8 +298,7 @@ public class AccumuloInputFormatIT extends AccumuloClusterHarness {
 
       job.setInputFormatClass(inputFormatClass);
 
-      AccumuloInputFormat.setZooKeeperInstance(job, cluster.getClientConfig());
-      AccumuloInputFormat.setConnectorInfo(job, getAdminPrincipal(), getAdminToken());
+      AccumuloInputFormat.setConnectionInfo(job, getConnectionInfo());
       AccumuloInputFormat.setInputTableName(job, table);
       AccumuloInputFormat.setBatchScan(job, batchScan);
       if (sample) {
@@ -409,9 +408,7 @@ public class AccumuloInputFormatIT extends AccumuloClusterHarness {
     Connector connector = getConnector();
     connector.tableOperations().create(table);
 
-    AccumuloInputFormat.setZooKeeperInstance(job, cluster.getClientConfig());
-    AccumuloInputFormat.setConnectorInfo(job, getAdminPrincipal(), getAdminToken());
-
+    AccumuloInputFormat.setConnectionInfo(job, getConnectionInfo());
     AccumuloInputFormat.setInputTableName(job, table);
     AccumuloInputFormat.setScanAuthorizations(job, auths);
     AccumuloInputFormat.setScanIsolation(job, isolated);

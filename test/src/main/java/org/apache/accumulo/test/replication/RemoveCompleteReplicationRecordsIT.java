@@ -26,6 +26,7 @@ import org.apache.accumulo.core.client.BatchScanner;
 import org.apache.accumulo.core.client.BatchWriter;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.IteratorSetting;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Range;
@@ -76,6 +77,10 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
     ReplicationTable.setOnline(conn);
   }
 
+  private Table.ID createTableId(int i) {
+    return Table.ID.of(Integer.toString(i));
+  }
+
   @Test
   public void notYetReplicationRecordsIgnored() throws Exception {
     BatchWriter bw = ReplicationTable.getBatchWriter(conn);
@@ -83,7 +88,7 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
     for (int i = 0; i < numRecords; i++) {
       String file = "/accumulo/wal/tserver+port/" + UUID.randomUUID();
       Mutation m = new Mutation(file);
-      StatusSection.add(m, Integer.toString(i), StatusUtil.openWithUnknownLengthValue());
+      StatusSection.add(m, createTableId(i), StatusUtil.openWithUnknownLengthValue());
       bw.addMutation(m);
     }
 
@@ -91,18 +96,17 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
 
     Assert.assertEquals(numRecords, Iterables.size(ReplicationTable.getScanner(conn)));
 
-    BatchScanner bs = ReplicationTable.getBatchScanner(conn, 1);
-    bs.setRanges(Collections.singleton(new Range()));
-    IteratorSetting cfg = new IteratorSetting(50, WholeRowIterator.class);
-    bs.addScanIterator(cfg);
-    bw = EasyMock.createMock(BatchWriter.class);
+    try (BatchScanner bs = ReplicationTable.getBatchScanner(conn, 1)) {
+      bs.setRanges(Collections.singleton(new Range()));
+      IteratorSetting cfg = new IteratorSetting(50, WholeRowIterator.class);
+      bs.addScanIterator(cfg);
+      bw = EasyMock.createMock(BatchWriter.class);
 
-    EasyMock.replay(bw);
+      EasyMock.replay(bw);
 
-    rcrr.removeCompleteRecords(conn, bs, bw);
-    bs.close();
-
-    Assert.assertEquals(numRecords, Iterables.size(ReplicationTable.getScanner(conn)));
+      rcrr.removeCompleteRecords(conn, bs, bw);
+      Assert.assertEquals(numRecords, Iterables.size(ReplicationTable.getScanner(conn)));
+    }
   }
 
   @Test
@@ -116,7 +120,7 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
     for (int i = 0; i < numRecords; i++) {
       String file = "/accumulo/wal/tserver+port/" + UUID.randomUUID();
       Mutation m = new Mutation(file);
-      StatusSection.add(m, Integer.toString(i), ProtobufUtil.toValue(builder.setBegin(1000 * (i + 1)).build()));
+      StatusSection.add(m, createTableId(i), ProtobufUtil.toValue(builder.setBegin(1000 * (i + 1)).build()));
       bw.addMutation(m);
     }
 
@@ -124,19 +128,18 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
 
     Assert.assertEquals(numRecords, Iterables.size(ReplicationTable.getScanner(conn)));
 
-    BatchScanner bs = ReplicationTable.getBatchScanner(conn, 1);
-    bs.setRanges(Collections.singleton(new Range()));
-    IteratorSetting cfg = new IteratorSetting(50, WholeRowIterator.class);
-    bs.addScanIterator(cfg);
-    bw = EasyMock.createMock(BatchWriter.class);
+    try (BatchScanner bs = ReplicationTable.getBatchScanner(conn, 1)) {
+      bs.setRanges(Collections.singleton(new Range()));
+      IteratorSetting cfg = new IteratorSetting(50, WholeRowIterator.class);
+      bs.addScanIterator(cfg);
+      bw = EasyMock.createMock(BatchWriter.class);
 
-    EasyMock.replay(bw);
+      EasyMock.replay(bw);
 
-    // We don't remove any records, so we can just pass in a fake BW for both
-    rcrr.removeCompleteRecords(conn, bs, bw);
-    bs.close();
-
-    Assert.assertEquals(numRecords, Iterables.size(ReplicationTable.getScanner(conn)));
+      // We don't remove any records, so we can just pass in a fake BW for both
+      rcrr.removeCompleteRecords(conn, bs, bw);
+      Assert.assertEquals(numRecords, Iterables.size(ReplicationTable.getScanner(conn)));
+    }
   }
 
   @Test
@@ -153,21 +156,21 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
     for (int i = 0; i < numRecords; i++) {
       String file = "/accumulo/wal/tserver+port/" + UUID.randomUUID();
       Mutation m = new Mutation(file);
-      StatusSection.add(m, Integer.toString(i), ProtobufUtil.toValue(builder.setBegin(1000 * (i + 1)).build()));
+      StatusSection.add(m, createTableId(i), ProtobufUtil.toValue(builder.setBegin(1000 * (i + 1)).build()));
       replBw.addMutation(m);
     }
 
     // Add two records that we can delete
     String fileToRemove = "/accumulo/wal/tserver+port/" + UUID.randomUUID();
     Mutation m = new Mutation(fileToRemove);
-    StatusSection.add(m, "5", ProtobufUtil.toValue(builder.setBegin(10000).setEnd(10000).setClosed(false).build()));
+    StatusSection.add(m, Table.ID.of("5"), ProtobufUtil.toValue(builder.setBegin(10000).setEnd(10000).setClosed(false).build()));
     replBw.addMutation(m);
 
     numRecords++;
 
     fileToRemove = "/accumulo/wal/tserver+port/" + UUID.randomUUID();
     m = new Mutation(fileToRemove);
-    StatusSection.add(m, "6", ProtobufUtil.toValue(builder.setBegin(10000).setEnd(10000).setClosed(false).build()));
+    StatusSection.add(m, Table.ID.of("6"), ProtobufUtil.toValue(builder.setBegin(10000).setEnd(10000).setClosed(false).build()));
     replBw.addMutation(m);
 
     numRecords++;
@@ -178,16 +181,16 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
     Assert.assertEquals(numRecords, Iterables.size(ReplicationTable.getScanner(conn)));
 
     // We should not remove any records because they're missing closed status
-    BatchScanner bs = ReplicationTable.getBatchScanner(conn, 1);
-    bs.setRanges(Collections.singleton(new Range()));
-    IteratorSetting cfg = new IteratorSetting(50, WholeRowIterator.class);
-    bs.addScanIterator(cfg);
+    try (BatchScanner bs = ReplicationTable.getBatchScanner(conn, 1)) {
+      bs.setRanges(Collections.singleton(new Range()));
+      IteratorSetting cfg = new IteratorSetting(50, WholeRowIterator.class);
+      bs.addScanIterator(cfg);
 
-    try {
-      Assert.assertEquals(0l, rcrr.removeCompleteRecords(conn, bs, replBw));
-    } finally {
-      bs.close();
-      replBw.close();
+      try {
+        Assert.assertEquals(0l, rcrr.removeCompleteRecords(conn, bs, replBw));
+      } finally {
+        replBw.close();
+      }
     }
   }
 
@@ -208,10 +211,10 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
       String file = "/accumulo/wal/tserver+port/" + UUID.randomUUID();
       Mutation m = new Mutation(file);
       Value v = ProtobufUtil.toValue(builder.setBegin(1000 * (i + 1)).build());
-      StatusSection.add(m, Integer.toString(i), v);
+      StatusSection.add(m, createTableId(i), v);
       replBw.addMutation(m);
       m = OrderSection.createMutation(file, time);
-      OrderSection.add(m, Integer.toString(i), v);
+      OrderSection.add(m, createTableId(i), v);
       replBw.addMutation(m);
     }
 
@@ -224,14 +227,14 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
     String fileToRemove = "/accumulo/wal/tserver+port/" + UUID.randomUUID();
     filesToRemove.add(fileToRemove);
     Mutation m = new Mutation(fileToRemove);
-    ReplicationTarget target = new ReplicationTarget("peer1", "5", "5");
+    ReplicationTarget target = new ReplicationTarget("peer1", "5", Table.ID.of("5"));
     Value value = ProtobufUtil.toValue(builder.setBegin(10000).setEnd(10000).setClosed(true).setCreatedTime(time).build());
-    StatusSection.add(m, "5", value);
+    StatusSection.add(m, Table.ID.of("5"), value);
     WorkSection.add(m, target.toText(), value);
     replBw.addMutation(m);
 
     m = OrderSection.createMutation(fileToRemove, time);
-    OrderSection.add(m, "5", value);
+    OrderSection.add(m, Table.ID.of("5"), value);
     replBw.addMutation(m);
     time++;
 
@@ -241,13 +244,13 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
     filesToRemove.add(fileToRemove);
     m = new Mutation(fileToRemove);
     value = ProtobufUtil.toValue(builder.setBegin(10000).setEnd(10000).setClosed(true).setCreatedTime(time).build());
-    target = new ReplicationTarget("peer1", "6", "6");
-    StatusSection.add(m, "6", value);
+    target = new ReplicationTarget("peer1", "6", Table.ID.of("6"));
+    StatusSection.add(m, Table.ID.of("6"), value);
     WorkSection.add(m, target.toText(), value);
     replBw.addMutation(m);
 
     m = OrderSection.createMutation(fileToRemove, time);
-    OrderSection.add(m, "6", value);
+    OrderSection.add(m, Table.ID.of("6"), value);
     replBw.addMutation(m);
     time++;
 
@@ -259,27 +262,27 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
     Assert.assertEquals(numRecords, Iterables.size(ReplicationTable.getScanner(conn)));
 
     // We should remove the two fully completed records we inserted
-    BatchScanner bs = ReplicationTable.getBatchScanner(conn, 1);
-    bs.setRanges(Collections.singleton(new Range()));
-    StatusSection.limit(bs);
-    WorkSection.limit(bs);
-    IteratorSetting cfg = new IteratorSetting(50, WholeRowIterator.class);
-    bs.addScanIterator(cfg);
+    try (BatchScanner bs = ReplicationTable.getBatchScanner(conn, 1)) {
+      bs.setRanges(Collections.singleton(new Range()));
+      StatusSection.limit(bs);
+      WorkSection.limit(bs);
+      IteratorSetting cfg = new IteratorSetting(50, WholeRowIterator.class);
+      bs.addScanIterator(cfg);
 
-    try {
-      Assert.assertEquals(4l, rcrr.removeCompleteRecords(conn, bs, replBw));
-    } finally {
-      bs.close();
-      replBw.close();
+      try {
+        Assert.assertEquals(4l, rcrr.removeCompleteRecords(conn, bs, replBw));
+      } finally {
+        replBw.close();
+      }
+
+      int actualRecords = 0;
+      for (Entry<Key,Value> entry : ReplicationTable.getScanner(conn)) {
+        Assert.assertFalse(filesToRemove.contains(entry.getKey().getRow().toString()));
+        actualRecords++;
+      }
+
+      Assert.assertEquals(finalNumRecords, actualRecords);
     }
-
-    int actualRecords = 0;
-    for (Entry<Key,Value> entry : ReplicationTable.getScanner(conn)) {
-      Assert.assertFalse(filesToRemove.contains(entry.getKey().getRow().toString()));
-      actualRecords++;
-    }
-
-    Assert.assertEquals(finalNumRecords, actualRecords);
   }
 
   @Test
@@ -296,20 +299,20 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
     for (int i = 0; i < numRecords; i++) {
       String file = "/accumulo/wal/tserver+port/" + UUID.randomUUID();
       Mutation m = new Mutation(file);
-      StatusSection.add(m, Integer.toString(i), ProtobufUtil.toValue(builder.setBegin(1000 * (i + 1)).build()));
+      StatusSection.add(m, createTableId(i), ProtobufUtil.toValue(builder.setBegin(1000 * (i + 1)).build()));
       replBw.addMutation(m);
     }
 
     // Add two records that we can delete
     String fileToRemove = "/accumulo/wal/tserver+port/" + UUID.randomUUID();
     Mutation m = new Mutation(fileToRemove);
-    ReplicationTarget target = new ReplicationTarget("peer1", "5", "5");
+    ReplicationTarget target = new ReplicationTarget("peer1", "5", Table.ID.of("5"));
     Value value = ProtobufUtil.toValue(builder.setBegin(10000).setEnd(10000).setClosed(true).build());
-    StatusSection.add(m, "5", value);
+    StatusSection.add(m, Table.ID.of("5"), value);
     WorkSection.add(m, target.toText(), value);
-    target = new ReplicationTarget("peer2", "5", "5");
+    target = new ReplicationTarget("peer2", "5", Table.ID.of("5"));
     WorkSection.add(m, target.toText(), value);
-    target = new ReplicationTarget("peer3", "5", "5");
+    target = new ReplicationTarget("peer3", "5", Table.ID.of("5"));
     WorkSection.add(m, target.toText(), ProtobufUtil.toValue(builder.setClosed(false).build()));
     replBw.addMutation(m);
 
@@ -321,16 +324,16 @@ public class RemoveCompleteReplicationRecordsIT extends ConfigurableMacBase {
     Assert.assertEquals(numRecords, Iterables.size(ReplicationTable.getScanner(conn)));
 
     // We should remove the two fully completed records we inserted
-    BatchScanner bs = ReplicationTable.getBatchScanner(conn, 1);
-    bs.setRanges(Collections.singleton(new Range()));
-    IteratorSetting cfg = new IteratorSetting(50, WholeRowIterator.class);
-    bs.addScanIterator(cfg);
+    try (BatchScanner bs = ReplicationTable.getBatchScanner(conn, 1)) {
+      bs.setRanges(Collections.singleton(new Range()));
+      IteratorSetting cfg = new IteratorSetting(50, WholeRowIterator.class);
+      bs.addScanIterator(cfg);
 
-    try {
-      Assert.assertEquals(0l, rcrr.removeCompleteRecords(conn, bs, replBw));
-    } finally {
-      bs.close();
-      replBw.close();
+      try {
+        Assert.assertEquals(0l, rcrr.removeCompleteRecords(conn, bs, replBw));
+      } finally {
+        replBw.close();
+      }
     }
   }
 }

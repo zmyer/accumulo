@@ -66,7 +66,7 @@ public class ScannerIterator implements Iterator<Entry<Key,Value>> {
 
   private static final List<KeyValue> EMPTY_LIST = Collections.emptyList();
 
-  private static ThreadPoolExecutor readaheadPool = new ThreadPoolExecutor(0, Integer.MAX_VALUE, 3l, TimeUnit.SECONDS, new SynchronousQueue<Runnable>(),
+  private static ThreadPoolExecutor readaheadPool = new ThreadPoolExecutor(0, Integer.MAX_VALUE, 3l, TimeUnit.SECONDS, new SynchronousQueue<>(),
       new NamingThreadFactory("Accumulo scanner read ahead thread"));
 
   private class Reader implements Runnable {
@@ -104,7 +104,7 @@ public class ScannerIterator implements Iterator<Entry<Key,Value>> {
 
   }
 
-  ScannerIterator(ClientContext context, String tableId, Authorizations authorizations, Range range, int size, int timeOut, ScannerOptions options,
+  ScannerIterator(ClientContext context, Table.ID tableId, Authorizations authorizations, Range range, int size, int timeOut, ScannerOptions options,
       boolean isolated, long readaheadThreshold) {
     this.timeOut = timeOut;
     this.readaheadThreshold = readaheadThreshold;

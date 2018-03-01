@@ -16,8 +16,8 @@
  */
 package org.apache.accumulo.minicluster.impl;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -69,7 +69,9 @@ import org.apache.accumulo.core.client.impl.thrift.ThriftNotActiveServiceExcepti
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.client.security.tokens.AuthenticationToken;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
+import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigurationCopy;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.master.thrift.MasterClientService;
 import org.apache.accumulo.core.master.thrift.MasterGoalState;
@@ -93,9 +95,6 @@ import org.apache.accumulo.server.util.time.SimpleTimer;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriterFactory;
 import org.apache.accumulo.start.Main;
 import org.apache.accumulo.start.classloader.vfs.MiniDFSUtil;
-import org.apache.commons.configuration.AbstractConfiguration;
-import org.apache.commons.configuration.MapConfiguration;
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.vfs2.FileObject;
 import org.apache.commons.vfs2.impl.VFSClassLoader;
 import org.apache.hadoop.conf.Configuration;
@@ -112,6 +111,7 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 
 /**
@@ -354,7 +354,7 @@ public class MiniAccumuloClusterImpl implements AccumuloCluster {
       confMap.putAll(config.getSiteConfig());
       confMap.putAll(configOverrides);
       writeConfig(siteFile, confMap.entrySet());
-      jvmOpts.add("-Dorg.apache.accumulo.config.file=" + siteFile.getName());
+      jvmOpts.add("-Daccumulo.configuration=" + siteFile.getName());
     }
 
     if (config.isJDWPEnabled()) {
@@ -394,7 +394,6 @@ public class MiniAccumuloClusterImpl implements AccumuloCluster {
     if (!config.useExistingInstance()) {
       if (!config.useExistingZooKeepers())
         mkdirs(config.getZooKeeperDir());
-      mkdirs(config.getWalogDir());
       mkdirs(config.getAccumuloDir());
     }
 
@@ -462,14 +461,6 @@ public class MiniAccumuloClusterImpl implements AccumuloCluster {
 
       fileWriter.close();
     }
-
-    // disable audit logging for mini....
-    InputStream auditStream = this.getClass().getResourceAsStream("/auditLog.xml");
-
-    if (auditStream != null) {
-      FileUtils.copyInputStreamToFile(auditStream, new File(config.getConfDir(), "auditLog.xml"));
-    }
-
     clusterControl = new MiniAccumuloClusterControl(this);
   }
 
@@ -718,7 +709,7 @@ public class MiniAccumuloClusterImpl implements AccumuloCluster {
 
       // the single thread executor shouldn't have any pending tasks, but check anyways
       if (!tasksRemaining.isEmpty()) {
-        log.warn("Unexpectedly had " + tasksRemaining.size() + " task(s) remaining in threadpool for execution when being stopped");
+        log.warn("Unexpectedly had {} task(s) remaining in threadpool for execution when being stopped", tasksRemaining.size());
       }
 
       executor = null;
@@ -748,13 +739,7 @@ public class MiniAccumuloClusterImpl implements AccumuloCluster {
 
   @Override
   public ClientConfiguration getClientConfig() {
-    return new ClientConfiguration(getConfigs(config)).withInstance(this.getInstanceName()).withZkHosts(this.getZooKeepers());
-  }
-
-  private static List<AbstractConfiguration> getConfigs(MiniAccumuloConfigImpl config) {
-    MapConfiguration cfg = new MapConfiguration(config.getSiteConfig());
-    cfg.setListDelimiter('\0');
-    return Collections.<AbstractConfiguration> singletonList(cfg);
+    return ClientConfiguration.fromMap(config.getSiteConfig()).withInstance(this.getInstanceName()).withZkHosts(this.getZooKeepers());
   }
 
   @Override
@@ -838,5 +823,10 @@ public class MiniAccumuloClusterImpl implements AccumuloCluster {
       mkdirs(tmp);
       return new Path(tmp.toString());
     }
+  }
+
+  @Override
+  public AccumuloConfiguration getSiteConfiguration() {
+    return new ConfigurationCopy(Iterables.concat(DefaultConfiguration.getInstance(), config.getSiteConfig().entrySet()));
   }
 }

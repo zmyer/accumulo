@@ -16,6 +16,7 @@
  */
 package org.apache.accumulo.test;
 
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 
 import java.util.Map.Entry;
@@ -46,7 +47,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.Iterators;
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class CleanWalIT extends AccumuloClusterHarness {
   private static final Logger log = LoggerFactory.getLogger(CleanWalIT.class);
@@ -102,10 +102,10 @@ public class CleanWalIT extends AccumuloClusterHarness {
 
     for (String table : new String[] {MetadataTable.NAME, RootTable.NAME})
       conn.tableOperations().flush(table, null, null, true);
-    log.debug("Checking entries for " + tableName);
+    log.debug("Checking entries for {}", tableName);
     assertEquals(1, count(tableName, conn));
     for (String table : new String[] {MetadataTable.NAME, RootTable.NAME}) {
-      log.debug("Checking logs for " + table);
+      log.debug("Checking logs for {}", table);
       assertEquals("Found logs for " + table, 0, countLogs(table, conn));
     }
 
@@ -128,20 +128,21 @@ public class CleanWalIT extends AccumuloClusterHarness {
   }
 
   private int countLogs(String tableName, Connector conn) throws TableNotFoundException {
-    Scanner scanner = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
-    scanner.fetchColumnFamily(MetadataSchema.TabletsSection.LogColumnFamily.NAME);
-    scanner.setRange(MetadataSchema.TabletsSection.getRange());
     int count = 0;
-    for (Entry<Key,Value> entry : scanner) {
-      log.debug("Saw " + entry.getKey() + "=" + entry.getValue());
-      count++;
+    try (Scanner scanner = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY)) {
+      scanner.fetchColumnFamily(MetadataSchema.TabletsSection.LogColumnFamily.NAME);
+      scanner.setRange(MetadataSchema.TabletsSection.getRange());
+      for (Entry<Key,Value> entry : scanner) {
+        log.debug("Saw {}={}", entry.getKey(), entry.getValue());
+        count++;
+      }
     }
     return count;
   }
 
   int count(String tableName, Connector conn) throws Exception {
-    Scanner s = conn.createScanner(tableName, Authorizations.EMPTY);
-    return Iterators.size(s.iterator());
+    try (Scanner s = conn.createScanner(tableName, Authorizations.EMPTY)) {
+      return Iterators.size(s.iterator());
+    }
   }
-
 }

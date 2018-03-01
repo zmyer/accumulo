@@ -20,8 +20,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Random;
 
-import junit.framework.TestCase;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.file.blockfile.ABlockWriter;
 import org.apache.accumulo.core.file.blockfile.impl.CachableBlockFile;
@@ -38,6 +38,8 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 
+import junit.framework.TestCase;
+
 public class MultiLevelIndexTest extends TestCase {
 
   public void test1() throws Exception {
@@ -52,7 +54,7 @@ public class MultiLevelIndexTest extends TestCase {
   }
 
   private void runTest(int maxBlockSize, int num) throws IOException {
-    AccumuloConfiguration aconf = AccumuloConfiguration.getDefaultConfiguration();
+    AccumuloConfiguration aconf = DefaultConfiguration.getInstance();
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     FSDataOutputStream dos = new FSDataOutputStream(baos, new FileSystem.Statistics("a"));
     CachableBlockFile.Writer _cbw = new CachableBlockFile.Writer(PositionedOutputs.wrap(dos), "gz", CachedConfiguration.getInstance(), aconf);

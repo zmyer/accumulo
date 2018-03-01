@@ -16,14 +16,15 @@
  */
 package org.apache.accumulo.test.functional;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.util.HashMap;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.accumulo.core.Constants;
+import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.master.thrift.TabletServerStatus;
 import org.apache.accumulo.core.security.thrift.TCredentials;
@@ -31,6 +32,7 @@ import org.apache.accumulo.core.tabletserver.thrift.TabletClientService.Iface;
 import org.apache.accumulo.core.tabletserver.thrift.TabletClientService.Processor;
 import org.apache.accumulo.core.trace.Tracer;
 import org.apache.accumulo.core.trace.thrift.TInfo;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.core.util.ServerServices;
 import org.apache.accumulo.core.util.ServerServices.Service;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
@@ -50,14 +52,12 @@ import org.apache.thrift.TException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.net.HostAndPort;
-
 /**
  * Tablet server that creates a lock in zookeeper, responds to one status request, and then hangs on subsequent requests. Exits with code zero if halted.
  */
 public class ZombieTServer {
 
-  public static class ThriftClientHandler extends org.apache.accumulo.test.performance.thrift.NullTserver.ThriftClientHandler {
+  public static class ThriftClientHandler extends org.apache.accumulo.test.performance.NullTserver.ThriftClientHandler {
 
     int statusCount = 0;
 
@@ -99,7 +99,8 @@ public class ZombieTServer {
   public static void main(String[] args) throws Exception {
     Random random = new Random(System.currentTimeMillis() % 1000);
     int port = random.nextInt(30000) + 2000;
-    AccumuloServerContext context = new AccumuloServerContext(new ServerConfigurationFactory(HdfsZooInstance.getInstance()));
+    Instance instance = HdfsZooInstance.getInstance();
+    AccumuloServerContext context = new AccumuloServerContext(instance, new ServerConfigurationFactory(instance));
 
     TransactionWatcher watcher = new TransactionWatcher();
     final ThriftClientHandler tch = new ThriftClientHandler(context, watcher);
@@ -138,7 +139,7 @@ public class ZombieTServer {
 
     byte[] lockContent = new ServerServices(addressString, Service.TSERV_CLIENT).toString().getBytes(UTF_8);
     if (zlock.tryLock(lw, lockContent)) {
-      log.debug("Obtained tablet server lock " + zlock.getLockPath());
+      log.debug("Obtained tablet server lock {}", zlock.getLockPath());
     }
     // modify metadata
     synchronized (tch) {

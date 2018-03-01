@@ -17,6 +17,7 @@
 package org.apache.accumulo.test.functional;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -58,8 +59,6 @@ import org.apache.hadoop.io.Text;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 /**
  * ACCUMULO-2641 Integration test. ACCUMULO-2641 Adds scan id to thrift protocol so that {@code org.apache.accumulo.core.client.admin.ActiveScan.getScanid()}
@@ -231,46 +230,46 @@ public class ScanIdIT extends AccumuloClusterHarness {
         // create different ranges to try to hit more than one tablet.
         scanner.setRange(new Range(new Text(Integer.toString(workerIndex)), new Text("9")));
 
+        scanner.fetchColumnFamily(new Text("fam1"));
+
+        for (Map.Entry<Key,Value> entry : scanner) {
+
+          // exit when success condition is met.
+          if (!testInProgress.get()) {
+            scanner.clearScanIterators();
+            scanner.close();
+            return;
+          }
+
+          Text row = entry.getKey().getRow();
+
+          log.debug("worker {}, row {}", workerIndex, row.toString());
+
+          if (entry.getValue() != null) {
+
+            Value prevValue = resultsByWorker.put(workerIndex, entry.getValue());
+
+            // value should always being increasing
+            if (prevValue != null) {
+
+              log.trace("worker {} values {}", workerIndex, String.format("%1$s < %2$s", prevValue, entry.getValue()));
+
+              assertTrue(prevValue.compareTo(entry.getValue()) > 0);
+            }
+          } else {
+            log.info("Scanner returned null");
+            fail("Scanner returned unexpected null value");
+          }
+
+        }
+        log.debug("Scanner ran out of data. (info only, not an error) ");
       } catch (TableNotFoundException e) {
         throw new IllegalStateException("Initialization failure. Could not create scanner", e);
-      }
-
-      scanner.fetchColumnFamily(new Text("fam1"));
-
-      for (Map.Entry<Key,Value> entry : scanner) {
-
-        // exit when success condition is met.
-        if (!testInProgress.get()) {
-          scanner.clearScanIterators();
+      } finally {
+        if (scanner != null) {
           scanner.close();
-
-          return;
         }
-
-        Text row = entry.getKey().getRow();
-
-        log.debug("worker {}, row {}", workerIndex, row.toString());
-
-        if (entry.getValue() != null) {
-
-          Value prevValue = resultsByWorker.put(workerIndex, entry.getValue());
-
-          // value should always being increasing
-          if (prevValue != null) {
-
-            log.trace("worker {} values {}", workerIndex, String.format("%1$s < %2$s", prevValue, entry.getValue()));
-
-            assertTrue(prevValue.compareTo(entry.getValue()) > 0);
-          }
-        } else {
-          log.info("Scanner returned null");
-          fail("Scanner returned unexpected null value");
-        }
-
       }
-
-      log.debug("Scanner ran out of data. (info only, not an error) ");
-
     }
   }
 
@@ -297,11 +296,7 @@ public class ScanIdIT extends AccumuloClusterHarness {
         log.trace("Split {}", split);
       }
 
-    } catch (AccumuloSecurityException e) {
-      throw new IllegalStateException("Initialization failed. Could not add splits to " + tableName, e);
-    } catch (TableNotFoundException e) {
-      throw new IllegalStateException("Initialization failed. Could not add splits to " + tableName, e);
-    } catch (AccumuloException e) {
+    } catch (AccumuloSecurityException | AccumuloException | TableNotFoundException e) {
       throw new IllegalStateException("Initialization failed. Could not add splits to " + tableName, e);
     }
 
@@ -355,9 +350,7 @@ public class ScanIdIT extends AccumuloClusterHarness {
       }
 
       bw.close();
-    } catch (TableNotFoundException ex) {
-      throw new IllegalStateException("Initialization failed. Could not create test data", ex);
-    } catch (MutationsRejectedException ex) {
+    } catch (TableNotFoundException | MutationsRejectedException ex) {
       throw new IllegalStateException("Initialization failed. Could not create test data", ex);
     }
   }
@@ -378,11 +371,7 @@ public class ScanIdIT extends AccumuloClusterHarness {
 
       connector.tableOperations().attachIterator(tablename, slowIter, EnumSet.of(IteratorUtil.IteratorScope.scan));
 
-    } catch (AccumuloException ex) {
-      throw new IllegalStateException("Initialization failed. Could not attach slow iterator", ex);
-    } catch (TableNotFoundException ex) {
-      throw new IllegalStateException("Initialization failed. Could not attach slow iterator", ex);
-    } catch (AccumuloSecurityException ex) {
+    } catch (AccumuloException | AccumuloSecurityException | TableNotFoundException ex) {
       throw new IllegalStateException("Initialization failed. Could not attach slow iterator", ex);
     }
   }

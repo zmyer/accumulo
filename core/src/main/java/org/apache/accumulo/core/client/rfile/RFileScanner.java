@@ -23,10 +23,12 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import org.apache.accumulo.core.client.IteratorSetting;
 import org.apache.accumulo.core.client.Scanner;
@@ -34,8 +36,8 @@ import org.apache.accumulo.core.client.impl.BaseIteratorEnvironment;
 import org.apache.accumulo.core.client.impl.ScannerOptions;
 import org.apache.accumulo.core.client.rfile.RFileScannerBuilder.InputArgs;
 import org.apache.accumulo.core.client.sample.SamplerConfiguration;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigurationCopy;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.Column;
@@ -43,8 +45,11 @@ import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.file.blockfile.cache.BlockCache;
+import org.apache.accumulo.core.file.blockfile.cache.BlockCacheManager;
 import org.apache.accumulo.core.file.blockfile.cache.CacheEntry;
-import org.apache.accumulo.core.file.blockfile.cache.LruBlockCache;
+import org.apache.accumulo.core.file.blockfile.cache.CacheType;
+import org.apache.accumulo.core.file.blockfile.cache.impl.BlockCacheConfiguration;
+import org.apache.accumulo.core.file.blockfile.cache.impl.BlockCacheManagerFactory;
 import org.apache.accumulo.core.file.blockfile.impl.CachableBlockFile;
 import org.apache.accumulo.core.file.rfile.RFile;
 import org.apache.accumulo.core.file.rfile.RFile.Reader;
@@ -67,13 +72,12 @@ class RFileScanner extends ScannerOptions implements Scanner {
   private static final Range EMPTY_RANGE = new Range();
 
   private Range range;
+  private BlockCacheManager blockCacheManager = null;
   private BlockCache dataCache = null;
   private BlockCache indexCache = null;
   private Opts opts;
   private int batchSize = 1000;
   private long readaheadThreshold = 3;
-
-  private static final long CACHE_BLOCK_SIZE = AccumuloConfiguration.getDefaultConfiguration().getMemoryInBytes(Property.TSERV_DEFAULT_BLOCKSIZE);
 
   static class Opts {
     InputArgs in;
@@ -93,10 +97,6 @@ class RFileScanner extends ScannerOptions implements Scanner {
   // block is accessed the entire thing is read into memory immediately allocating and deallocating
   // a decompressor. If the user does not read all data, no decompressors are left allocated.
   private static class NoopCache implements BlockCache {
-    @Override
-    public CacheEntry cacheBlock(String blockName, byte[] buf, boolean inMemory) {
-      return null;
-    }
 
     @Override
     public CacheEntry cacheBlock(String blockName, byte[] buf) {
@@ -106,6 +106,11 @@ class RFileScanner extends ScannerOptions implements Scanner {
     @Override
     public CacheEntry getBlock(String blockName) {
       return null;
+    }
+
+    @Override
+    public long getMaxHeapSize() {
+      return getMaxSize();
     }
 
     @Override
@@ -127,6 +132,43 @@ class RFileScanner extends ScannerOptions implements Scanner {
         }
       };
     }
+
+    @Override
+    public CacheEntry getBlock(String blockName, Loader loader) {
+      Map<String,Loader> depLoaders = loader.getDependencies();
+      Map<String,byte[]> depData;
+
+      switch (depLoaders.size()) {
+        case 0:
+          depData = Collections.emptyMap();
+          break;
+        case 1:
+          Entry<String,Loader> entry = depLoaders.entrySet().iterator().next();
+          depData = Collections.singletonMap(entry.getKey(), getBlock(entry.getKey(), entry.getValue()).getBuffer());
+          break;
+        default:
+          depData = new HashMap<>();
+          depLoaders.forEach((k, v) -> depData.put(k, getBlock(k, v).getBuffer()));
+      }
+
+      byte[] data = loader.load(Integer.MAX_VALUE, depData);
+
+      return new CacheEntry() {
+
+        @Override
+        public byte[] getBuffer() {
+          return data;
+        }
+
+        @Override
+        public <T extends Weighbable> T getIndex(Supplier<T> supplier) {
+          return null;
+        }
+
+        @Override
+        public void indexWeightChanged() {}
+      };
+    }
   }
 
   RFileScanner(Opts opts) {
@@ -135,15 +177,34 @@ class RFileScanner extends ScannerOptions implements Scanner {
     }
 
     this.opts = opts;
-    if (opts.indexCacheSize > 0) {
-      this.indexCache = new LruBlockCache(opts.indexCacheSize, CACHE_BLOCK_SIZE);
-    } else {
+
+    if (opts.indexCacheSize > 0 || opts.dataCacheSize > 0) {
+      ConfigurationCopy cc = new ConfigurationCopy(DefaultConfiguration.getInstance());
+      if (null != opts.tableConfig) {
+        opts.tableConfig.forEach(cc::set);
+      }
+
+      try {
+        blockCacheManager = BlockCacheManagerFactory.getClientInstance(cc);
+        if (opts.indexCacheSize > 0) {
+          cc.set(Property.TSERV_INDEXCACHE_SIZE, Long.toString(opts.indexCacheSize));
+        }
+        if (opts.dataCacheSize > 0) {
+          cc.set(Property.TSERV_DATACACHE_SIZE, Long.toString(opts.dataCacheSize));
+        }
+        blockCacheManager.start(new BlockCacheConfiguration(cc));
+        this.indexCache = blockCacheManager.getBlockCache(CacheType.INDEX);
+        this.dataCache = blockCacheManager.getBlockCache(CacheType.DATA);
+      } catch (RuntimeException e) {
+        throw e;
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    }
+    if (null == indexCache) {
       this.indexCache = new NoopCache();
     }
-
-    if (opts.dataCacheSize > 0) {
-      this.dataCache = new LruBlockCache(opts.dataCacheSize, CACHE_BLOCK_SIZE);
-    } else {
+    if (null == this.dataCache) {
       this.dataCache = new NoopCache();
     }
   }
@@ -279,9 +340,10 @@ class RFileScanner extends ScannerOptions implements Scanner {
       RFileSource[] sources = opts.in.getSources();
       List<SortedKeyValueIterator<Key,Value>> readers = new ArrayList<>(sources.length);
       for (int i = 0; i < sources.length; i++) {
+        // TODO may have been a bug with multiple files and caching in older version...
         FSDataInputStream inputStream = (FSDataInputStream) sources[i].getInputStream();
-        readers.add(new RFile.Reader(new CachableBlockFile.Reader(inputStream, sources[i].getLength(), opts.in.getConf(), dataCache, indexCache,
-            AccumuloConfiguration.getDefaultConfiguration())));
+        readers.add(new RFile.Reader(new CachableBlockFile.Reader("source-" + i, inputStream, sources[i].getLength(), opts.in.getConf(), dataCache, indexCache,
+            DefaultConfiguration.getInstance())));
       }
 
       if (getSamplerConfiguration() != null) {
@@ -326,20 +388,19 @@ class RFileScanner extends ScannerOptions implements Scanner {
 
   @Override
   public void close() {
-    if (dataCache instanceof LruBlockCache) {
-      ((LruBlockCache) dataCache).shutdown();
-    }
-
-    if (indexCache instanceof LruBlockCache) {
-      ((LruBlockCache) indexCache).shutdown();
-    }
-
     try {
       for (RFileSource source : opts.in.getSources()) {
         source.getInputStream().close();
       }
     } catch (IOException e) {
       throw new RuntimeException(e);
+    }
+    try {
+      if (null != this.blockCacheManager) {
+        this.blockCacheManager.stop();
+      }
+    } catch (Exception e1) {
+      throw new RuntimeException(e1);
     }
   }
 }

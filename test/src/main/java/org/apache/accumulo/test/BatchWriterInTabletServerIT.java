@@ -16,7 +16,8 @@
  */
 package org.apache.accumulo.test;
 
-import com.google.common.collect.Iterators;
+import java.util.Map;
+
 import org.apache.accumulo.core.client.BatchWriter;
 import org.apache.accumulo.core.client.BatchWriterConfig;
 import org.apache.accumulo.core.client.Connector;
@@ -35,7 +36,7 @@ import org.apache.log4j.Logger;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.Map;
+import com.google.common.collect.Iterators;
 
 /**
  * Test writing to another table from inside an iterator.
@@ -103,24 +104,23 @@ public class BatchWriterInTabletServerIT extends AccumuloClusterHarness {
     c.tableOperations().attachIterator(t2, summer);
 
     Map.Entry<Key,Value> actual;
-    // Scan t1 with an iterator that writes to table t2
-    Scanner scanner = c.createScanner(t1, Authorizations.EMPTY);
-    scanner.addScanIterator(itset);
-    actual = Iterators.getOnlyElement(scanner.iterator());
-    Assert.assertTrue(actual.getKey().equals(k, PartialKey.ROW_COLFAM_COLQUAL));
-    Assert.assertEquals(BatchWriterIterator.SUCCESS_VALUE, actual.getValue());
-    scanner.close();
+    try (Scanner scanner = c.createScanner(t1, Authorizations.EMPTY)) {
+      // Scan t1 with an iterator that writes to table t2
+      scanner.addScanIterator(itset);
+      actual = Iterators.getOnlyElement(scanner.iterator());
+      Assert.assertTrue(actual.getKey().equals(k, PartialKey.ROW_COLFAM_COLQUAL));
+      Assert.assertEquals(BatchWriterIterator.SUCCESS_VALUE, actual.getValue());
+    }
 
-    // ensure entries correctly wrote to table t2
-    scanner = c.createScanner(t2, Authorizations.EMPTY);
-    actual = Iterators.getOnlyElement(scanner.iterator());
-    log.debug("t2 entry is " + actual.getKey().toStringNoTime() + " -> " + actual.getValue());
-    Assert.assertTrue(actual.getKey().equals(k, PartialKey.ROW_COLFAM_COLQUAL));
-    Assert.assertEquals(numEntriesToWritePerEntry, Integer.parseInt(actual.getValue().toString()));
-    scanner.close();
+    try (Scanner scanner = c.createScanner(t2, Authorizations.EMPTY)) {
+      // ensure entries correctly wrote to table t2
+      actual = Iterators.getOnlyElement(scanner.iterator());
+      log.debug("t2 entry is " + actual.getKey().toStringNoTime() + " -> " + actual.getValue());
+      Assert.assertTrue(actual.getKey().equals(k, PartialKey.ROW_COLFAM_COLQUAL));
+      Assert.assertEquals(numEntriesToWritePerEntry, Integer.parseInt(actual.getValue().toString()));
+    }
 
     c.tableOperations().delete(t1);
     c.tableOperations().delete(t2);
   }
-
 }

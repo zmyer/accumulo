@@ -231,7 +231,7 @@ public class Compactor implements Callable<CompactionStats> {
       } catch (IOException ex) {
         if (!fs.deleteRecursively(outputFile.path())) {
           if (fs.exists(outputFile.path())) {
-            log.error("Unable to delete " + outputFile);
+            log.error("Unable to delete {}", outputFile);
           }
         }
         throw ex;
@@ -243,10 +243,7 @@ public class Compactor implements Callable<CompactionStats> {
 
       majCStats.setFileSize(mfwTmp.getLength());
       return majCStats;
-    } catch (IOException e) {
-      log.error("{}", e.getMessage(), e);
-      throw e;
-    } catch (RuntimeException e) {
+    } catch (IOException | RuntimeException e) {
       log.error("{}", e.getMessage(), e);
       throw e;
     } finally {
@@ -264,13 +261,11 @@ public class Compactor implements Callable<CompactionStats> {
           } finally {
             if (!fs.deleteRecursively(outputFile.path()))
               if (fs.exists(outputFile.path()))
-                log.error("Unable to delete " + outputFile);
+                log.error("Unable to delete {}", outputFile);
           }
         }
-      } catch (IOException e) {
+      } catch (IOException | RuntimeException e) {
         log.warn("{}", e.getMessage(), e);
-      } catch (RuntimeException exception) {
-        log.warn("{}", exception.getMessage(), exception);
       }
     }
   }
@@ -384,7 +379,7 @@ public class Compactor implements Callable<CompactionStats> {
             }
             fs.deleteRecursively(outputFile.path());
           } catch (Exception e) {
-            log.warn("Failed to delete Canceled compaction output file " + outputFile, e);
+            log.warn("Failed to delete Canceled compaction output file {}", outputFile, e);
           }
           throw new CompactionCanceledException();
         }

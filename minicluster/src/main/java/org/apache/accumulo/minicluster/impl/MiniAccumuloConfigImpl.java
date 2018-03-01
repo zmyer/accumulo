@@ -64,7 +64,6 @@ public class MiniAccumuloConfigImpl {
   private File zooKeeperDir;
   private File accumuloDir;
   private File logDir;
-  private File walogDir;
 
   private int zooKeeperPort = 0;
   private int configuredZooKeeperPort = 0;
@@ -125,7 +124,6 @@ public class MiniAccumuloConfigImpl {
       accumuloDir = new File(dir, "accumulo");
       zooKeeperDir = new File(dir, "zookeeper");
       logDir = new File(dir, "logs");
-      walogDir = new File(dir, "walogs");
 
       // Never want to override these if an existing instance, which may be using the defaults
       if (existingInstance == null || !existingInstance) {
@@ -133,19 +131,21 @@ public class MiniAccumuloConfigImpl {
         // TODO ACCUMULO-XXXX replace usage of instance.dfs.{dir,uri} with instance.volumes
         setInstanceLocation();
         mergeProp(Property.INSTANCE_SECRET.getKey(), DEFAULT_INSTANCE_SECRET);
-        mergeProp(Property.LOGGER_DIR.getKey(), walogDir.getAbsolutePath());
         mergeProp(Property.TRACE_TOKEN_PROPERTY_PREFIX.getKey() + "password", getRootPassword());
       }
 
       mergeProp(Property.TSERV_PORTSEARCH.getKey(), "true");
       mergeProp(Property.TSERV_DATACACHE_SIZE.getKey(), "10M");
       mergeProp(Property.TSERV_INDEXCACHE_SIZE.getKey(), "10M");
-      mergeProp(Property.TSERV_MAXMEM.getKey(), "50M");
+      mergeProp(Property.TSERV_SUMMARYCACHE_SIZE.getKey(), "10M");
+      mergeProp(Property.TSERV_MAXMEM.getKey(), "40M");
       mergeProp(Property.TSERV_WALOG_MAX_SIZE.getKey(), "100M");
       mergeProp(Property.TSERV_NATIVEMAP_ENABLED.getKey(), "false");
       // since there is a small amount of memory, check more frequently for majc... setting may not be needed in 1.5
       mergeProp(Property.TSERV_MAJC_DELAY.getKey(), "3");
-      mergeProp(Property.GENERAL_CLASSPATHS.getKey(), libDir.getAbsolutePath() + "/[^.].*[.]jar");
+      @SuppressWarnings("deprecation")
+      Property generalClasspaths = Property.GENERAL_CLASSPATHS;
+      mergeProp(generalClasspaths.getKey(), libDir.getAbsolutePath() + "/[^.].*[.]jar");
       mergeProp(Property.GENERAL_DYNAMIC_CLASSPATHS.getKey(), libExtDir.getAbsolutePath() + "/[^.].*[.]jar");
       mergeProp(Property.GC_CYCLE_DELAY.getKey(), "4s");
       mergeProp(Property.GC_CYCLE_START.getKey(), "0s");
@@ -443,10 +443,6 @@ public class MiniAccumuloConfigImpl {
     return logDir;
   }
 
-  File getWalogDir() {
-    return walogDir;
-  }
-
   /**
    * @param serverType
    *          get configuration for this server type
@@ -647,7 +643,7 @@ public class MiniAccumuloConfigImpl {
 
     this.existingInstance = Boolean.TRUE;
 
-    System.setProperty("org.apache.accumulo.config.file", "accumulo-site.xml");
+    System.setProperty("accumulo.configuration", "accumulo-site.xml");
     this.hadoopConfDir = hadoopConfDir;
     hadoopConf = new Configuration(false);
     accumuloConf = new Configuration(false);
@@ -668,7 +664,7 @@ public class MiniAccumuloConfigImpl {
     }
     _setSiteConfig(siteConfigMap);
 
-    for (Entry<String,String> entry : DefaultConfiguration.getDefaultConfiguration())
+    for (Entry<String,String> entry : DefaultConfiguration.getInstance())
       accumuloConf.setIfUnset(entry.getKey(), entry.getValue());
 
     return this;

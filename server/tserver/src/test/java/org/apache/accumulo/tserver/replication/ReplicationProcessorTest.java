@@ -25,6 +25,7 @@ import org.apache.accumulo.core.client.ClientConfiguration;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.impl.ClientContext;
 import org.apache.accumulo.core.client.impl.Credentials;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
 import org.apache.accumulo.core.conf.ConfigurationCopy;
 import org.apache.accumulo.core.conf.Property;
@@ -46,7 +47,7 @@ public class ReplicationProcessorTest {
     Instance inst = EasyMock.createMock(Instance.class);
     VolumeManager fs = EasyMock.createMock(VolumeManager.class);
     Credentials creds = new Credentials("foo", new PasswordToken("bar"));
-    ClientContext context = new ClientContext(inst, creds, new ClientConfiguration());
+    ClientContext context = new ClientContext(inst, creds, ClientConfiguration.create());
 
     Map<String,String> data = new HashMap<>();
 
@@ -65,7 +66,7 @@ public class ReplicationProcessorTest {
     Instance inst = EasyMock.createMock(Instance.class);
     VolumeManager fs = EasyMock.createMock(VolumeManager.class);
     Credentials creds = new Credentials("foo", new PasswordToken("bar"));
-    ClientContext context = new ClientContext(inst, creds, new ClientConfiguration());
+    ClientContext context = new ClientContext(inst, creds, ClientConfiguration.create());
 
     Map<String,String> data = new HashMap<>();
     ConfigurationCopy conf = new ConfigurationCopy(data);
@@ -82,7 +83,7 @@ public class ReplicationProcessorTest {
     ReplicationProcessor proc = EasyMock.createMockBuilder(ReplicationProcessor.class)
         .addMockedMethods("getReplicaSystem", "doesFileExist", "getStatus", "getHelper").createMock();
 
-    ReplicationTarget target = new ReplicationTarget("peer", "1", "1");
+    ReplicationTarget target = new ReplicationTarget("peer", "1", Table.ID.of("1"));
     Status status = Status.newBuilder().setBegin(0).setEnd(0).setInfiniteEnd(true).setClosed(true).build();
     Path path = new Path("/accumulo");
 

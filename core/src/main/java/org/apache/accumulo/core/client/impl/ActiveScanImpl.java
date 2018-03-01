@@ -32,7 +32,6 @@ import org.apache.accumulo.core.data.impl.TabletIdImpl;
 import org.apache.accumulo.core.data.thrift.IterInfo;
 import org.apache.accumulo.core.data.thrift.TColumn;
 import org.apache.accumulo.core.security.Authorizations;
-import org.apache.hadoop.io.Text;
 
 /**
  * A class that contains information about an ActiveScan
@@ -61,7 +60,7 @@ public class ActiveScanImpl extends ActiveScan {
     this.user = activeScan.user;
     this.age = activeScan.age;
     this.idle = activeScan.idleTime;
-    this.tableName = Tables.getTableName(instance, activeScan.tableId);
+    this.tableName = Tables.getTableName(instance, Table.ID.of(activeScan.tableId));
     this.type = ScanType.valueOf(activeScan.getType().name());
     this.state = ScanState.valueOf(activeScan.state.name());
     this.extent = new KeyExtent(activeScan.extent);
@@ -117,12 +116,6 @@ public class ActiveScanImpl extends ActiveScan {
   @Override
   public ScanState getState() {
     return state;
-  }
-
-  @Override
-  @Deprecated
-  public org.apache.accumulo.core.data.KeyExtent getExtent() {
-    return new org.apache.accumulo.core.data.KeyExtent(new Text(extent.getTableId()), extent.getEndRow(), extent.getPrevEndRow());
   }
 
   @Override

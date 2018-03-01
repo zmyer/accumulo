@@ -16,7 +16,8 @@
  */
 package org.apache.accumulo.core.metadata;
 
-import org.apache.accumulo.core.client.impl.Namespaces;
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.data.impl.KeyExtent;
 
 /**
@@ -24,8 +25,8 @@ import org.apache.accumulo.core.data.impl.KeyExtent;
  */
 public class RootTable {
 
-  public static final String ID = "+r";
-  public static final String NAME = Namespaces.ACCUMULO_NAMESPACE + ".root";
+  public static final Table.ID ID = Table.ID.ROOT;
+  public static final String NAME = Namespace.ACCUMULO + ".root";
 
   /**
    * DFS location relative to the Accumulo directory

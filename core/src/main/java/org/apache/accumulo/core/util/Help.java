@@ -29,6 +29,16 @@ public class Help implements KeywordExecutable {
   }
 
   @Override
+  public UsageGroup usageGroup() {
+    return UsageGroup.CORE;
+  }
+
+  @Override
+  public String description() {
+    return "Prints usage";
+  }
+
+  @Override
   public void execute(final String[] args) throws Exception {
     Main.printUsage();
   }

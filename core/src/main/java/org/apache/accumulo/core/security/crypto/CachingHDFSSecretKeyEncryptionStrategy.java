@@ -18,6 +18,7 @@ package org.apache.accumulo.core.security.crypto;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.security.InvalidKeyException;
 import java.security.Key;
@@ -45,13 +46,13 @@ public class CachingHDFSSecretKeyEncryptionStrategy implements SecretKeyEncrypti
   private SecretKeyCache secretKeyCache = new SecretKeyCache();
 
   @Override
-  public CryptoModuleParameters encryptSecretKey(CryptoModuleParameters context) {
+  public CryptoModuleParameters encryptSecretKey(CryptoModuleParameters context) throws IOException {
     try {
       secretKeyCache.ensureSecretKeyCacheInitialized(context);
       doKeyEncryptionOperation(Cipher.WRAP_MODE, context);
     } catch (IOException e) {
       log.error("{}", e.getMessage(), e);
-      throw new RuntimeException(e);
+      throw new IOException(e);
     }
     return context;
   }
@@ -69,10 +70,11 @@ public class CachingHDFSSecretKeyEncryptionStrategy implements SecretKeyEncrypti
   }
 
   private void doKeyEncryptionOperation(int encryptionMode, CryptoModuleParameters params) throws IOException {
-    Cipher cipher = DefaultCryptoModuleUtils.getCipher(params.getAllOptions().get(Property.CRYPTO_DEFAULT_KEY_STRATEGY_CIPHER_SUITE.getKey()));
+    Cipher cipher = DefaultCryptoModuleUtils.getCipher(params.getAllOptions().get(Property.CRYPTO_DEFAULT_KEY_STRATEGY_CIPHER_SUITE.getKey()),
+        params.getSecurityProvider());
 
     try {
-      cipher.init(encryptionMode, new SecretKeySpec(secretKeyCache.getKeyEncryptionKey(), params.getAlgorithmName()));
+      cipher.init(encryptionMode, new SecretKeySpec(secretKeyCache.getKeyEncryptionKey(), params.getKeyAlgorithmName()));
     } catch (InvalidKeyException e) {
       log.error("{}", e.getMessage(), e);
       throw new RuntimeException(e);
@@ -80,25 +82,19 @@ public class CachingHDFSSecretKeyEncryptionStrategy implements SecretKeyEncrypti
 
     if (Cipher.UNWRAP_MODE == encryptionMode) {
       try {
-        Key plaintextKey = cipher.unwrap(params.getEncryptedKey(), params.getAlgorithmName(), Cipher.SECRET_KEY);
+        Key plaintextKey = cipher.unwrap(params.getEncryptedKey(), params.getKeyAlgorithmName(), Cipher.SECRET_KEY);
         params.setPlaintextKey(plaintextKey.getEncoded());
-      } catch (InvalidKeyException e) {
-        log.error("{}", e.getMessage(), e);
-        throw new RuntimeException(e);
-      } catch (NoSuchAlgorithmException e) {
+      } catch (InvalidKeyException | NoSuchAlgorithmException e) {
         log.error("{}", e.getMessage(), e);
         throw new RuntimeException(e);
       }
     } else {
-      Key plaintextKey = new SecretKeySpec(params.getPlaintextKey(), params.getAlgorithmName());
+      Key plaintextKey = new SecretKeySpec(params.getPlaintextKey(), params.getKeyAlgorithmName());
       try {
         byte[] encryptedSecretKey = cipher.wrap(plaintextKey);
         params.setEncryptedKey(encryptedSecretKey);
         params.setOpaqueKeyEncryptionKeyID(secretKeyCache.getPathToKeyName());
-      } catch (InvalidKeyException e) {
-        log.error("{}", e.getMessage(), e);
-        throw new RuntimeException(e);
-      } catch (IllegalBlockSizeException e) {
+      } catch (InvalidKeyException | IllegalBlockSizeException e) {
         log.error("{}", e.getMessage(), e);
         throw new RuntimeException(e);
       }
@@ -127,11 +123,14 @@ public class CachingHDFSSecretKeyEncryptionStrategy implements SecretKeyEncrypti
         pathToKeyName = Property.CRYPTO_DEFAULT_KEY_STRATEGY_KEY_LOCATION.getDefaultValue();
       }
 
-      // TODO ACCUMULO-2530 Ensure volumes a properly supported
+      // TODO ACCUMULO-2530 Ensure volumes are properly supported
       Path pathToKey = new Path(pathToKeyName);
       FileSystem fs = FileSystem.get(CachedConfiguration.getInstance());
 
       DataInputStream in = null;
+      boolean invalidFile = false;
+      int keyEncryptionKeyLength = 0;
+
       try {
         if (!fs.exists(pathToKey)) {
           initializeKeyEncryptionKey(fs, pathToKey, context);
@@ -139,14 +138,29 @@ public class CachingHDFSSecretKeyEncryptionStrategy implements SecretKeyEncrypti
 
         in = fs.open(pathToKey);
 
-        int keyEncryptionKeyLength = in.readInt();
+        keyEncryptionKeyLength = in.readInt();
+        // If the file length does not correctly relate to the expected key size, there is an inconsistency and
+        // we have no way of knowing the correct key length.
+        // The keyEncryptionKeyLength+4 accounts for the integer read from the file.
+        if (fs.getFileStatus(pathToKey).getLen() != keyEncryptionKeyLength + 4) {
+          invalidFile = true;
+          // Passing this exception forward so we can provide the more useful error message
+          throw new IOException();
+        }
         keyEncryptionKey = new byte[keyEncryptionKeyLength];
         in.readFully(keyEncryptionKey);
 
         initialized = true;
 
+      } catch (EOFException e) {
+        throw new IOException("Could not initialize key encryption cache, malformed key encryption key file", e);
       } catch (IOException e) {
-        log.error("Could not initialize key encryption cache", e);
+        if (invalidFile) {
+          throw new IOException("Could not initialize key encryption cache, malformed key encryption key file. Expected key of lengh " + keyEncryptionKeyLength
+              + " but file contained " + (fs.getFileStatus(pathToKey).getLen() - 4) + "bytes for key encryption key.");
+        } else {
+          throw new IOException("Could not initialize key encryption cache, unable to access or find key encryption key file", e);
+        }
       } finally {
         IOUtils.closeQuietly(in);
       }

@@ -18,6 +18,9 @@ package org.apache.accumulo.master.tableOps;
 
 import java.io.Serializable;
 
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.client.impl.Table;
+
 class ImportedTableInfo implements Serializable {
 
   private static final long serialVersionUID = 1L;
@@ -25,7 +28,7 @@ class ImportedTableInfo implements Serializable {
   public String exportDir;
   public String user;
   public String tableName;
-  public String tableId;
+  public Table.ID tableId;
   public String importDir;
-  public String namespaceId;
+  public Namespace.ID namespaceId;
 }

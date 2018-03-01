@@ -64,14 +64,13 @@ import org.apache.accumulo.core.trace.Span;
 import org.apache.accumulo.core.trace.Trace;
 import org.apache.accumulo.core.trace.Tracer;
 import org.apache.accumulo.core.trace.thrift.TInfo;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.core.util.OpTimer;
 import org.apache.hadoop.io.Text;
 import org.apache.thrift.TApplicationException;
 import org.apache.thrift.TException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.google.common.net.HostAndPort;
 
 public class ThriftScanner {
   private static final Logger log = LoggerFactory.getLogger(ThriftScanner.class);
@@ -80,7 +79,7 @@ public class ThriftScanner {
 
   static {
     for (TabletType ttype : TabletType.values()) {
-      serversWaitedForWrites.put(ttype, Collections.synchronizedSet(new HashSet<String>()));
+      serversWaitedForWrites.put(ttype, Collections.synchronizedSet(new HashSet<>()));
     }
   }
 
@@ -137,7 +136,7 @@ public class ThriftScanner {
   public static class ScanState {
 
     boolean isolated;
-    String tableId;
+    Table.ID tableId;
     Text startRow;
     boolean skipStartRow;
     long readaheadThreshold;
@@ -164,11 +163,10 @@ public class ThriftScanner {
 
     SamplerConfiguration samplerConfig;
 
-    public ScanState(ClientContext context, String tableId, Authorizations authorizations, Range range, SortedSet<Column> fetchedColumns, int size,
+    public ScanState(ClientContext context, Table.ID tableId, Authorizations authorizations, Range range, SortedSet<Column> fetchedColumns, int size,
         List<IterInfo> serverSideIteratorList, Map<String,Map<String,String>> serverSideIteratorOptions, boolean isolated, long readaheadThreshold,
         SamplerConfiguration samplerConfig, long batchTimeOut, String classLoaderContext) {
       this.context = context;
-
       this.authorizations = authorizations;
       this.classLoaderContext = classLoaderContext;
 
@@ -248,9 +246,9 @@ public class ThriftScanner {
 
             if (loc == null) {
               if (!Tables.exists(instance, scanState.tableId))
-                throw new TableDeletedException(scanState.tableId);
+                throw new TableDeletedException(scanState.tableId.canonicalID());
               else if (Tables.getTableState(instance, scanState.tableId) == TableState.OFFLINE)
-                throw new TableOfflineException(instance, scanState.tableId);
+                throw new TableOfflineException(instance, scanState.tableId.canonicalID());
 
               error = "Failed to locate tablet for table : " + scanState.tableId + " row : " + scanState.startRow;
               if (!error.equals(lastError))
@@ -299,7 +297,7 @@ public class ThriftScanner {
         } catch (AccumuloSecurityException e) {
           Tables.clearCache(instance);
           if (!Tables.exists(instance, scanState.tableId))
-            throw new TableDeletedException(scanState.tableId);
+            throw new TableDeletedException(scanState.tableId.canonicalID());
           e.setTableInfo(Tables.getPrintableTableInfoFromId(instance, scanState.tableId));
           throw e;
         } catch (TApplicationException tae) {
@@ -416,11 +414,11 @@ public class ThriftScanner {
       scanState.prevLoc = loc;
 
       if (scanState.scanID == null) {
-        String msg = "Starting scan tserver=" + loc.tablet_location + " tablet=" + loc.tablet_extent + " range=" + scanState.range + " ssil="
-            + scanState.serverSideIteratorList + " ssio=" + scanState.serverSideIteratorOptions + " context=" + scanState.classLoaderContext;
-        Thread.currentThread().setName(msg);
+        Thread.currentThread().setName("Starting scan tserver=" + loc.tablet_location + " tableId=" + loc.tablet_extent.getTableId());
 
         if (log.isTraceEnabled()) {
+          String msg = "Starting scan tserver=" + loc.tablet_location + " tablet=" + loc.tablet_extent + " range=" + scanState.range + " ssil="
+              + scanState.serverSideIteratorList + " ssio=" + scanState.serverSideIteratorOptions + " context=" + scanState.classLoaderContext;
           log.trace("tid={} {}", Thread.currentThread().getId(), msg);
           timer = new OpTimer().start();
         }

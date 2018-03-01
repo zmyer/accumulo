@@ -16,6 +16,7 @@
  */
 package org.apache.accumulo.test.functional;
 
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 
 import java.util.Map.Entry;
@@ -44,8 +45,6 @@ import org.apache.hadoop.fs.RawLocalFileSystem;
 import org.apache.hadoop.io.Text;
 import org.junit.Test;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
-
 public class MetadataMaxFilesIT extends ConfigurableMacBase {
 
   @Override
@@ -73,7 +72,7 @@ public class MetadataMaxFilesIT extends ConfigurableMacBase {
     sleepUninterruptibly(5, TimeUnit.SECONDS);
     for (int i = 0; i < 5; i++) {
       String tableName = "table" + i;
-      log.info("Creating " + tableName);
+      log.info("Creating {}", tableName);
       c.tableOperations().create(tableName);
       log.info("adding splits");
       c.tableOperations().addSplits(tableName, splits);

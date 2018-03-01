@@ -23,6 +23,8 @@ import org.apache.accumulo.core.client.mapreduce.lib.impl.FileOutputConfigurator
 import org.apache.accumulo.core.client.rfile.RFile;
 import org.apache.accumulo.core.client.rfile.RFileWriter;
 import org.apache.accumulo.core.client.sample.SamplerConfiguration;
+import org.apache.accumulo.core.client.summary.Summarizer;
+import org.apache.accumulo.core.client.summary.SummarizerConfiguration;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.Key;
@@ -30,7 +32,6 @@ import org.apache.accumulo.core.data.Value;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapreduce.Job;
-import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.RecordWriter;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
@@ -50,21 +51,6 @@ public class AccumuloFileOutputFormat extends FileOutputFormat<Key,Value> {
 
   private static final Class<?> CLASS = AccumuloFileOutputFormat.class;
   protected static final Logger log = Logger.getLogger(CLASS);
-
-  /**
-   * This helper method provides an AccumuloConfiguration object constructed from the Accumulo defaults, and overridden with Accumulo properties that have been
-   * stored in the Job's configuration.
-   *
-   * @param context
-   *          the Hadoop context for the configured job
-   * @since 1.5.0
-   * @deprecated since 1.7.0 This method returns a type that is not part of the public API and is not guaranteed to be stable. The method was deprecated to
-   *             discourage its use.
-   */
-  @Deprecated
-  protected static AccumuloConfiguration getAccumuloConfiguration(JobContext context) {
-    return FileOutputConfigurator.getAccumuloConfiguration(CLASS, context.getConfiguration());
-  }
 
   /**
    * Sets the compression type to use for data blocks. Specifying a compression may require additional libraries to be available to your Job.
@@ -148,6 +134,20 @@ public class AccumuloFileOutputFormat extends FileOutputFormat<Key,Value> {
 
   public static void setSampler(Job job, SamplerConfiguration samplerConfig) {
     FileOutputConfigurator.setSampler(CLASS, job.getConfiguration(), samplerConfig);
+  }
+
+  /**
+   * Specifies a list of summarizer configurations to create summary data in the output file. Each Key Value written will be passed to the configured
+   * {@link Summarizer}'s.
+   *
+   * @param job
+   *          The Hadoop job instance to be configured
+   * @param sumarizerConfigs
+   *          summarizer configurations
+   * @since 2.0.0
+   */
+  public static void setSummarizers(Job job, SummarizerConfiguration... sumarizerConfigs) {
+    FileOutputConfigurator.setSummarizers(CLASS, job.getConfiguration(), sumarizerConfigs);
   }
 
   @Override

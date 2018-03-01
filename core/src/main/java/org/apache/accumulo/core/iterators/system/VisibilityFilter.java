@@ -16,54 +16,56 @@
  */
 package org.apache.accumulo.core.iterators.system;
 
+import org.apache.accumulo.core.data.ArrayByteSequence;
+import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Value;
-import org.apache.accumulo.core.iterators.Filter;
 import org.apache.accumulo.core.iterators.IteratorEnvironment;
 import org.apache.accumulo.core.iterators.SortedKeyValueIterator;
+import org.apache.accumulo.core.iterators.SynchronizedServerFilter;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.security.ColumnVisibility;
 import org.apache.accumulo.core.security.VisibilityEvaluator;
 import org.apache.accumulo.core.security.VisibilityParseException;
 import org.apache.accumulo.core.util.BadArgumentException;
-import org.apache.accumulo.core.util.TextUtil;
 import org.apache.commons.collections.map.LRUMap;
-import org.apache.hadoop.io.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class VisibilityFilter extends Filter {
+/**
+ * A SortedKeyValueIterator that filters based on ColumnVisibility and optimized for use with system iterators. Prior to 2.0, this class extended
+ * {@link org.apache.accumulo.core.iterators.Filter} and all system iterators where wrapped with a <code>SynchronizedIterator</code> during creation of the
+ * iterator stack in {@link org.apache.accumulo.core.iterators.IteratorUtil} .loadIterators(). For performance reasons, the synchronization was pushed down the
+ * stack to this class.
+ */
+public class VisibilityFilter extends SynchronizedServerFilter {
   protected VisibilityEvaluator ve;
-  protected Text defaultVisibility;
+  protected ByteSequence defaultVisibility;
   protected LRUMap cache;
-  protected Text tmpVis;
   protected Authorizations authorizations;
 
   private static final Logger log = LoggerFactory.getLogger(VisibilityFilter.class);
 
-  public VisibilityFilter() {}
-
-  public VisibilityFilter(SortedKeyValueIterator<Key,Value> iterator, Authorizations authorizations, byte[] defaultVisibility) {
-    setSource(iterator);
+  private VisibilityFilter(SortedKeyValueIterator<Key,Value> iterator, Authorizations authorizations, byte[] defaultVisibility) {
+    super(iterator);
     this.ve = new VisibilityEvaluator(authorizations);
     this.authorizations = authorizations;
-    this.defaultVisibility = new Text(defaultVisibility);
+    this.defaultVisibility = new ArrayByteSequence(defaultVisibility);
     this.cache = new LRUMap(1000);
-    this.tmpVis = new Text();
   }
 
   @Override
-  public SortedKeyValueIterator<Key,Value> deepCopy(IteratorEnvironment env) {
-    return new VisibilityFilter(getSource().deepCopy(env), authorizations, TextUtil.getBytes(defaultVisibility));
+  public synchronized SortedKeyValueIterator<Key,Value> deepCopy(IteratorEnvironment env) {
+    return new VisibilityFilter(source.deepCopy(env), authorizations, defaultVisibility.toArray());
   }
 
   @Override
-  public boolean accept(Key k, Value v) {
-    Text testVis = k.getColumnVisibility(tmpVis);
+  protected boolean accept(Key k, Value v) {
+    ByteSequence testVis = k.getColumnVisibilityData();
 
-    if (testVis.getLength() == 0 && defaultVisibility.getLength() == 0)
+    if (testVis.length() == 0 && defaultVisibility.length() == 0)
       return true;
-    else if (testVis.getLength() == 0)
+    else if (testVis.length() == 0)
       testVis = defaultVisibility;
 
     Boolean b = (Boolean) cache.get(testVis);
@@ -71,15 +73,37 @@ public class VisibilityFilter extends Filter {
       return b;
 
     try {
-      Boolean bb = ve.evaluate(new ColumnVisibility(testVis));
-      cache.put(new Text(testVis), bb);
+      Boolean bb = ve.evaluate(new ColumnVisibility(testVis.toArray()));
+      cache.put(testVis, bb);
       return bb;
-    } catch (VisibilityParseException e) {
+    } catch (VisibilityParseException | BadArgumentException e) {
       log.error("Parse Error", e);
       return false;
-    } catch (BadArgumentException e) {
-      log.error("Parse Error", e);
-      return false;
+    }
+  }
+
+  private static class EmptyAuthsVisibilityFilter extends SynchronizedServerFilter {
+
+    public EmptyAuthsVisibilityFilter(SortedKeyValueIterator<Key,Value> source) {
+      super(source);
+    }
+
+    @Override
+    public synchronized SortedKeyValueIterator<Key,Value> deepCopy(IteratorEnvironment env) {
+      return new EmptyAuthsVisibilityFilter(source.deepCopy(env));
+    }
+
+    @Override
+    protected boolean accept(Key k, Value v) {
+      return k.getColumnVisibilityData().length() == 0;
+    }
+  }
+
+  public static SortedKeyValueIterator<Key,Value> wrap(SortedKeyValueIterator<Key,Value> source, Authorizations authorizations, byte[] defaultVisibility) {
+    if (authorizations.isEmpty() && defaultVisibility.length == 0) {
+      return new EmptyAuthsVisibilityFilter(source);
+    } else {
+      return new VisibilityFilter(source, authorizations, defaultVisibility);
     }
   }
 }

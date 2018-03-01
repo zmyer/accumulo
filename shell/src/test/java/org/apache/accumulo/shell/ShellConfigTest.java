@@ -26,16 +26,9 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
-import java.util.HashMap;
-import java.util.Map;
-
-import jline.console.ConsoleReader;
 
 import org.apache.accumulo.core.client.ClientConfiguration;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
-import org.apache.accumulo.core.conf.ConfigurationCopy;
-import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.shell.ShellTest.TestOutputStream;
 import org.apache.log4j.Level;
 import org.junit.After;
@@ -45,6 +38,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.beust.jcommander.ParameterException;
+
+import jline.console.ConsoleReader;
 
 public class ShellConfigTest {
   TestOutputStream output;
@@ -99,7 +94,9 @@ public class ShellConfigTest {
   @Test
   public void testBadArg() throws IOException {
     assertFalse(shell.config(args("--bogus")));
-    assertTrue("Did not print usage", output.get().startsWith("Usage"));
+    // JCommander versions after 1.60 will cause the Shell to detect the arg as Unrecognized option
+    assertTrue("Did not print Error", output.get().startsWith("ERROR"));
+    assertTrue("Did not print usage", output.get().contains("Usage"));
   }
 
   @Test
@@ -119,32 +116,28 @@ public class ShellConfigTest {
     assertTrue(output.get().contains(ParameterException.class.getName()));
   }
 
+  /**
+   * Tests getting the ZK hosts config value will fail on String parameter, client config and then fall back to Site configuration. SiteConfiguration will get
+   * the accumulo-site.xml from the classpath in src/test/resources
+   */
   @Test
   public void testZooKeeperHostFallBackToSite() throws Exception {
-    ClientConfiguration clientConfig = new ClientConfiguration();
-    Map<String,String> data = new HashMap<>();
-    data.put(Property.INSTANCE_ZK_HOST.getKey(), "site_hostname");
-    AccumuloConfiguration conf = new ConfigurationCopy(data);
-    assertEquals("site_hostname", Shell.getZooKeepers(null, clientConfig, conf));
+    ClientConfiguration clientConfig = ClientConfiguration.create();
+    assertFalse("Client config contains zk hosts", clientConfig.containsKey(ClientConfiguration.ClientProperty.INSTANCE_ZK_HOST.getKey()));
+    assertEquals("ShellConfigTestZKHostValue", Shell.getZooKeepers(null, clientConfig));
   }
 
   @Test
   public void testZooKeeperHostFromClientConfig() throws Exception {
-    ClientConfiguration clientConfig = new ClientConfiguration();
+    ClientConfiguration clientConfig = ClientConfiguration.create();
     clientConfig.withZkHosts("cc_hostname");
-    Map<String,String> data = new HashMap<>();
-    data.put(Property.INSTANCE_ZK_HOST.getKey(), "site_hostname");
-    AccumuloConfiguration conf = new ConfigurationCopy(data);
-    assertEquals("cc_hostname", Shell.getZooKeepers(null, clientConfig, conf));
+    assertEquals("cc_hostname", Shell.getZooKeepers(null, clientConfig));
   }
 
   @Test
   public void testZooKeeperHostFromOption() throws Exception {
-    ClientConfiguration clientConfig = new ClientConfiguration();
+    ClientConfiguration clientConfig = ClientConfiguration.create();
     clientConfig.withZkHosts("cc_hostname");
-    Map<String,String> data = new HashMap<>();
-    data.put(Property.INSTANCE_ZK_HOST.getKey(), "site_hostname");
-    AccumuloConfiguration conf = new ConfigurationCopy(data);
-    assertEquals("opt_hostname", Shell.getZooKeepers("opt_hostname", clientConfig, conf));
+    assertEquals("opt_hostname", Shell.getZooKeepers("opt_hostname", clientConfig));
   }
 }

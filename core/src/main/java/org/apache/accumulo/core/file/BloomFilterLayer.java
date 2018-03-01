@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.accumulo.core.bloomfilter.DynamicBloomFilter;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigurationCopy;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.PartialKey;
@@ -97,12 +98,12 @@ public class BloomFilterLayer {
     private boolean closed = false;
     private long length = -1;
 
-    Writer(FileSKVWriter writer, AccumuloConfiguration acuconf) {
+    Writer(FileSKVWriter writer, AccumuloConfiguration acuconf, boolean useAccumuloStart) {
       this.writer = writer;
-      initBloomFilter(acuconf);
+      initBloomFilter(acuconf, useAccumuloStart);
     }
 
-    private synchronized void initBloomFilter(AccumuloConfiguration acuconf) {
+    private synchronized void initBloomFilter(AccumuloConfiguration acuconf, boolean useAccumuloStart) {
 
       numKeys = acuconf.getCount(Property.TABLE_BLOOM_SIZE);
       // vector size should be <code>-kn / (ln(1 - c^(1/k)))</code> bits for
@@ -121,7 +122,9 @@ public class BloomFilterLayer {
         String context = acuconf.get(Property.TABLE_CLASSPATH);
         String classname = acuconf.get(Property.TABLE_BLOOM_KEY_FUNCTOR);
         Class<? extends KeyFunctor> clazz;
-        if (context != null && !context.equals(""))
+        if (!useAccumuloStart)
+          clazz = Writer.class.getClassLoader().loadClass(classname).asSubclass(KeyFunctor.class);
+        else if (context != null && !context.equals(""))
           clazz = AccumuloVFSClassLoader.getContextManager().loadClass(context, classname, KeyFunctor.class);
         else
           clazz = AccumuloVFSClassLoader.loadClass(classname, KeyFunctor.class);
@@ -446,7 +449,7 @@ public class BloomFilterLayer {
     ArrayList<Integer> vals = new ArrayList<>(valsSet);
     Collections.sort(vals);
 
-    ConfigurationCopy acuconf = new ConfigurationCopy(AccumuloConfiguration.getDefaultConfiguration());
+    ConfigurationCopy acuconf = new ConfigurationCopy(DefaultConfiguration.getInstance());
     acuconf.set(Property.TABLE_BLOOM_ENABLED, "true");
     acuconf.set(Property.TABLE_BLOOM_KEY_FUNCTOR, "accumulo.core.file.keyfunctor.ColumnFamilyFunctor");
     acuconf.set(Property.TABLE_FILE_TYPE, RFile.EXTENSION);
@@ -489,7 +492,7 @@ public class BloomFilterLayer {
       String fi = String.format("%010d", row);
       // bmfr.seek(new Range(new Text("r"+fi)));
       org.apache.accumulo.core.data.Key k1 = new org.apache.accumulo.core.data.Key(new Text("r" + fi), new Text("cf1"));
-      bmfr.seek(new Range(k1, true, k1.followingKey(PartialKey.ROW_COLFAM), false), new ArrayList<ByteSequence>(), false);
+      bmfr.seek(new Range(k1, true, k1.followingKey(PartialKey.ROW_COLFAM), false), new ArrayList<>(), false);
       if (valsSet.contains(row)) {
         hits++;
         if (!bmfr.hasTop()) {
@@ -512,7 +515,7 @@ public class BloomFilterLayer {
       // bmfr.seek(new Range(new Text("r"+fi)));
 
       org.apache.accumulo.core.data.Key k1 = new org.apache.accumulo.core.data.Key(new Text("r" + fi), new Text("cf1"));
-      bmfr.seek(new Range(k1, true, k1.followingKey(PartialKey.ROW_COLFAM), false), new ArrayList<ByteSequence>(), false);
+      bmfr.seek(new Range(k1, true, k1.followingKey(PartialKey.ROW_COLFAM), false), new ArrayList<>(), false);
 
       if (!bmfr.hasTop()) {
         out.println("ERROR 2 " + row);

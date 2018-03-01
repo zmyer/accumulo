@@ -72,7 +72,7 @@ public class LogicalTimeIT extends AccumuloClusterHarness {
 
   private void runMergeTest(Connector conn, String table, String[] splits, String[] inserts, String start, String end, String last, long expected)
       throws Exception {
-    log.info("table " + table);
+    log.info("table {}", table);
     conn.tableOperations().create(table, new NewTableConfiguration().setTimeType(TimeType.LOGICAL));
     TreeSet<Text> splitSet = new TreeSet<>();
     for (String split : splits) {
@@ -96,14 +96,16 @@ public class LogicalTimeIT extends AccumuloClusterHarness {
     bw.addMutation(m);
     bw.flush();
 
-    Scanner scanner = conn.createScanner(table, Authorizations.EMPTY);
-    scanner.setRange(new Range(last));
+    try (Scanner scanner = conn.createScanner(table, Authorizations.EMPTY)) {
+      scanner.setRange(new Range(last));
 
-    bw.close();
+      bw.close();
 
-    long time = scanner.iterator().next().getKey().getTimestamp();
-    if (time != expected)
-      throw new RuntimeException("unexpected time " + time + " " + expected);
+      long time = scanner.iterator().next().getKey().getTimestamp();
+      if (time != expected) {
+        throw new RuntimeException("unexpected time " + time + " " + expected);
+      }
+    }
   }
 
 }

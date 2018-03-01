@@ -32,9 +32,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.apache.accumulo.cluster.AccumuloCluster;
+import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.cli.BatchWriterOpts;
 import org.apache.accumulo.core.client.Connector;
+import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.Scanner;
+import org.apache.accumulo.core.client.impl.Table;
+import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Range;
@@ -42,57 +47,66 @@ import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.metadata.MetadataTable;
 import org.apache.accumulo.core.metadata.schema.MetadataSchema;
 import org.apache.accumulo.core.security.Authorizations;
+import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.AdminUtil;
+import org.apache.accumulo.fate.AdminUtil.FateStatus;
+import org.apache.accumulo.fate.ZooStore;
+import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
 import org.apache.accumulo.minicluster.impl.MiniAccumuloClusterImpl;
 import org.apache.accumulo.minicluster.impl.MiniAccumuloClusterImpl.LogWriter;
+import org.apache.accumulo.server.zookeeper.ZooReaderWriterFactory;
 import org.apache.accumulo.test.TestIngest;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
+import org.apache.zookeeper.KeeperException;
+import org.junit.Assert;
 
 import com.google.common.collect.Iterators;
 
 public class FunctionalTestUtils {
 
   public static int countRFiles(Connector c, String tableName) throws Exception {
-    Scanner scanner = c.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
-    String tableId = c.tableOperations().tableIdMap().get(tableName);
-    scanner.setRange(MetadataSchema.TabletsSection.getRange(tableId));
-    scanner.fetchColumnFamily(MetadataSchema.TabletsSection.DataFileColumnFamily.NAME);
-
-    return Iterators.size(scanner.iterator());
+    try (Scanner scanner = c.createScanner(MetadataTable.NAME, Authorizations.EMPTY)) {
+      Table.ID tableId = Table.ID.of(c.tableOperations().tableIdMap().get(tableName));
+      scanner.setRange(MetadataSchema.TabletsSection.getRange(tableId));
+      scanner.fetchColumnFamily(MetadataSchema.TabletsSection.DataFileColumnFamily.NAME);
+      return Iterators.size(scanner.iterator());
+    }
   }
 
   static void checkRFiles(Connector c, String tableName, int minTablets, int maxTablets, int minRFiles, int maxRFiles) throws Exception {
-    Scanner scanner = c.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
-    String tableId = c.tableOperations().tableIdMap().get(tableName);
-    scanner.setRange(new Range(new Text(tableId + ";"), true, new Text(tableId + "<"), true));
-    scanner.fetchColumnFamily(MetadataSchema.TabletsSection.DataFileColumnFamily.NAME);
-    MetadataSchema.TabletsSection.TabletColumnFamily.PREV_ROW_COLUMN.fetch(scanner);
+    try (Scanner scanner = c.createScanner(MetadataTable.NAME, Authorizations.EMPTY)) {
+      String tableId = c.tableOperations().tableIdMap().get(tableName);
+      scanner.setRange(new Range(new Text(tableId + ";"), true, new Text(tableId + "<"), true));
+      scanner.fetchColumnFamily(MetadataSchema.TabletsSection.DataFileColumnFamily.NAME);
+      MetadataSchema.TabletsSection.TabletColumnFamily.PREV_ROW_COLUMN.fetch(scanner);
 
-    HashMap<Text,Integer> tabletFileCounts = new HashMap<>();
+      HashMap<Text,Integer> tabletFileCounts = new HashMap<>();
 
-    for (Entry<Key,Value> entry : scanner) {
+      for (Entry<Key,Value> entry : scanner) {
 
-      Text row = entry.getKey().getRow();
+        Text row = entry.getKey().getRow();
 
-      Integer count = tabletFileCounts.get(row);
-      if (count == null)
-        count = 0;
-      if (entry.getKey().getColumnFamily().equals(MetadataSchema.TabletsSection.DataFileColumnFamily.NAME)) {
-        count = count + 1;
+        Integer count = tabletFileCounts.get(row);
+        if (count == null)
+          count = 0;
+        if (entry.getKey().getColumnFamily().equals(MetadataSchema.TabletsSection.DataFileColumnFamily.NAME)) {
+          count = count + 1;
+        }
+
+        tabletFileCounts.put(row, count);
       }
 
-      tabletFileCounts.put(row, count);
-    }
+      if (tabletFileCounts.size() < minTablets || tabletFileCounts.size() > maxTablets) {
+        throw new Exception("Did not find expected number of tablets " + tabletFileCounts.size());
+      }
 
-    if (tabletFileCounts.size() < minTablets || tabletFileCounts.size() > maxTablets) {
-      throw new Exception("Did not find expected number of tablets " + tabletFileCounts.size());
-    }
-
-    Set<Entry<Text,Integer>> es = tabletFileCounts.entrySet();
-    for (Entry<Text,Integer> entry : es) {
-      if (entry.getValue() > maxRFiles || entry.getValue() < minRFiles) {
-        throw new Exception("tablet " + entry.getKey() + " has " + entry.getValue() + " map files");
+      Set<Entry<Text,Integer>> es = tabletFileCounts.entrySet();
+      for (Entry<Text,Integer> entry : es) {
+        if (entry.getValue() > maxRFiles || entry.getValue() < minRFiles) {
+          throw new Exception("tablet " + entry.getKey() + " has " + entry.getValue() + " map files");
+        }
       }
     }
   }
@@ -183,4 +197,22 @@ public class FunctionalTestUtils {
     return result;
   }
 
+  public static void assertNoDanglingFateLocks(Instance instance, AccumuloCluster cluster) {
+    FateStatus fateStatus = getFateStatus(instance, cluster);
+    Assert.assertEquals("Dangling FATE locks : " + fateStatus.getDanglingHeldLocks(), 0, fateStatus.getDanglingHeldLocks().size());
+    Assert.assertEquals("Dangling FATE locks : " + fateStatus.getDanglingWaitingLocks(), 0, fateStatus.getDanglingWaitingLocks().size());
+  }
+
+  private static FateStatus getFateStatus(Instance instance, AccumuloCluster cluster) {
+    try {
+      AdminUtil<String> admin = new AdminUtil<>(false);
+      String secret = cluster.getSiteConfiguration().get(Property.INSTANCE_SECRET);
+      IZooReaderWriter zk = new ZooReaderWriterFactory().getZooReaderWriter(instance.getZooKeepers(), instance.getZooKeepersSessionTimeOut(), secret);
+      ZooStore<String> zs = new ZooStore<>(ZooUtil.getRoot(instance) + Constants.ZFATE, zk);
+      FateStatus fateStatus = admin.getStatus(zs, zk, ZooUtil.getRoot(instance) + Constants.ZTABLE_LOCKS, null, null);
+      return fateStatus;
+    } catch (KeeperException | InterruptedException e) {
+      throw new RuntimeException(e);
+    }
+  }
 }

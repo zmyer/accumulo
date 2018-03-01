@@ -16,22 +16,56 @@
  */
 package org.apache.accumulo.server.fs;
 
-import java.util.Optional;
+import java.util.Objects;
+
+import org.apache.accumulo.core.client.impl.Table;
 
 public class VolumeChooserEnvironment {
 
-  private final Optional<String> tableId;
-
-  public VolumeChooserEnvironment(Optional<String> tableId) {
-    this.tableId = tableId;
+  /**
+   * A scope the volume chooser environment; a TABLE scope should be accompanied by a tableId.
+   *
+   * @since 2.0.0
+   */
+  public static enum ChooserScope {
+    DEFAULT, TABLE, INIT, LOGGER
   }
 
-  public boolean hasTableId() {
-    return tableId.isPresent();
+  private final ChooserScope scope;
+  private final Table.ID tableId;
+
+  public VolumeChooserEnvironment(ChooserScope scope) {
+    this.scope = Objects.requireNonNull(scope);
+    this.tableId = null;
   }
 
-  public String getTableId() {
-    return tableId.get();
+  public VolumeChooserEnvironment(Table.ID tableId) {
+    this.scope = ChooserScope.TABLE;
+    this.tableId = Objects.requireNonNull(tableId);
   }
 
+  public Table.ID getTableId() {
+    return tableId;
+  }
+
+  public ChooserScope getScope() {
+    return this.scope;
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    if (obj == this) {
+      return true;
+    }
+    if (obj == null || !(obj instanceof VolumeChooserEnvironment)) {
+      return false;
+    }
+    VolumeChooserEnvironment other = (VolumeChooserEnvironment) obj;
+    return getScope() == other.getScope() && Objects.equals(getTableId(), other.getTableId());
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hashCode(scope) * 31 + Objects.hashCode(tableId);
+  }
 }

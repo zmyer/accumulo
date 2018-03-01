@@ -27,8 +27,9 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Instance;
-import org.apache.accumulo.core.client.impl.Namespaces;
+import org.apache.accumulo.core.client.impl.Namespace;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.harness.AccumuloClusterHarness;
 import org.apache.accumulo.server.conf.NamespaceConfiguration;
@@ -54,8 +55,7 @@ public class TableConfigurationUpdateIT extends AccumuloClusterHarness {
     String table = getUniqueNames(1)[0];
     conn.tableOperations().create(table);
 
-    final NamespaceConfiguration defaultConf = new NamespaceConfiguration(Namespaces.DEFAULT_NAMESPACE_ID, inst,
-        AccumuloConfiguration.getDefaultConfiguration());
+    final NamespaceConfiguration defaultConf = new NamespaceConfiguration(Namespace.ID.DEFAULT, inst, DefaultConfiguration.getInstance());
 
     // Cache invalidates 25% of the time
     int randomMax = 4;
@@ -63,7 +63,7 @@ public class TableConfigurationUpdateIT extends AccumuloClusterHarness {
     int numThreads = 2;
     // Number of iterations per thread
     int iterations = 100000;
-    AccumuloConfiguration tableConf = new TableConfiguration(inst, table, defaultConf);
+    AccumuloConfiguration tableConf = new TableConfiguration(inst, org.apache.accumulo.core.client.impl.Table.ID.of(table), defaultConf);
 
     long start = System.currentTimeMillis();
     ExecutorService svc = Executors.newFixedThreadPool(numThreads);
@@ -85,8 +85,8 @@ public class TableConfigurationUpdateIT extends AccumuloClusterHarness {
     }
 
     long end = System.currentTimeMillis();
-    log.debug(tableConf + " with " + iterations + " iterations and " + numThreads + " threads and cache invalidates " + ((1. / randomMax) * 100.) + "% took "
-        + (end - start) / 1000 + " second(s)");
+    log.debug("{} with {} iterations and {} threads and cache invalidates {}% took {} second(s)", tableConf, iterations, numThreads, ((1. / randomMax) * 100.),
+        (end - start) / 1000);
   }
 
   public static class TableConfRunner implements Callable<Exception> {

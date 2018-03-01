@@ -22,7 +22,8 @@ import static org.apache.accumulo.core.client.impl.Tables.qualify;
 import java.util.Arrays;
 import java.util.List;
 
-import org.apache.accumulo.core.client.impl.Namespaces;
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.metadata.MetadataTable;
 import org.apache.accumulo.core.metadata.RootTable;
 import org.apache.accumulo.core.replication.ReplicationTable;
@@ -47,15 +48,16 @@ public class TableValidators {
     }
   };
 
-  public static final Validator<String> VALID_ID = new Validator<String>() {
+  public static final Validator<Table.ID> VALID_ID = new Validator<Table.ID>() {
     @Override
-    public boolean test(String tableId) {
+    public boolean test(Table.ID tableId) {
       return tableId != null
-          && (RootTable.ID.equals(tableId) || MetadataTable.ID.equals(tableId) || ReplicationTable.ID.equals(tableId) || tableId.matches(VALID_ID_REGEX));
+          && (RootTable.ID.equals(tableId) || MetadataTable.ID.equals(tableId) || ReplicationTable.ID.equals(tableId) || tableId.canonicalID().matches(
+              VALID_ID_REGEX));
     }
 
     @Override
-    public String invalidMessage(String tableId) {
+    public String invalidMessage(Table.ID tableId) {
       if (tableId == null)
         return "Table id cannot be null";
       return "Table IDs are base-36 numbers, represented with lowercase alphanumeric digits: " + tableId;
@@ -81,12 +83,12 @@ public class TableValidators {
 
     @Override
     public boolean test(String tableName) {
-      return !Namespaces.ACCUMULO_NAMESPACE.equals(qualify(tableName).getFirst());
+      return !Namespace.ACCUMULO.equals(qualify(tableName).getFirst());
     }
 
     @Override
     public String invalidMessage(String tableName) {
-      return "Table cannot be in the " + Namespaces.ACCUMULO_NAMESPACE + " namespace";
+      return "Table cannot be in the " + Namespace.ACCUMULO + " namespace";
     }
   };
 
@@ -103,15 +105,15 @@ public class TableValidators {
     }
   };
 
-  public static final Validator<String> NOT_ROOT_ID = new Validator<String>() {
+  public static final Validator<Table.ID> NOT_ROOT_ID = new Validator<Table.ID>() {
 
     @Override
-    public boolean test(String tableId) {
+    public boolean test(Table.ID tableId) {
       return !RootTable.ID.equals(tableId);
     }
 
     @Override
-    public String invalidMessage(String tableId) {
+    public String invalidMessage(Table.ID tableId) {
       return "Table cannot be the " + RootTable.NAME + "(Id: " + RootTable.ID + ") table";
     }
   };

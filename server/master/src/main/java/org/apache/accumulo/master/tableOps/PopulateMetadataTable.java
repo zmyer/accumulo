@@ -25,7 +25,6 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -46,6 +45,7 @@ import org.apache.accumulo.core.util.FastFormat;
 import org.apache.accumulo.fate.Repo;
 import org.apache.accumulo.master.Master;
 import org.apache.accumulo.server.ServerConstants;
+import org.apache.accumulo.server.fs.VolumeChooserEnvironment;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.util.MetadataTableUtil;
 import org.apache.hadoop.fs.Path;
@@ -133,7 +133,7 @@ class PopulateMetadataTable extends MasterRepo {
               String newName = fileNameMappings.get(oldName);
 
               if (newName == null) {
-                throw new AcceptableThriftTableOperationException(tableInfo.tableId, tableInfo.tableName, TableOperation.IMPORT,
+                throw new AcceptableThriftTableOperationException(tableInfo.tableId.canonicalID(), tableInfo.tableName, TableOperation.IMPORT,
                     TableOperationExceptionType.OTHER, "File " + oldName + " does not exist in import dir");
               }
 
@@ -182,8 +182,8 @@ class PopulateMetadataTable extends MasterRepo {
       return new MoveExportedFiles(tableInfo);
     } catch (IOException ioe) {
       log.warn("{}", ioe.getMessage(), ioe);
-      throw new AcceptableThriftTableOperationException(tableInfo.tableId, tableInfo.tableName, TableOperation.IMPORT, TableOperationExceptionType.OTHER,
-          "Error reading " + path + " " + ioe.getMessage());
+      throw new AcceptableThriftTableOperationException(tableInfo.tableId.canonicalID(), tableInfo.tableName, TableOperation.IMPORT,
+          TableOperationExceptionType.OTHER, "Error reading " + path + " " + ioe.getMessage());
     } finally {
       if (zis != null) {
         try {
@@ -206,7 +206,8 @@ class PopulateMetadataTable extends MasterRepo {
    */
   protected String getClonedTabletDir(Master master, String[] tableDirs, String tabletDir) {
     // We can try to spread out the tablet dirs across all volumes
-    String tableDir = master.getFileSystem().choose(Optional.of(tableInfo.tableId), tableDirs);
+    VolumeChooserEnvironment chooserEnv = new VolumeChooserEnvironment(tableInfo.tableId);
+    String tableDir = master.getFileSystem().choose(chooserEnv, tableDirs);
 
     // Build up a full hdfs://localhost:8020/accumulo/tables/$id/c-XXXXXXX
     return tableDir + "/" + tableInfo.tableId + "/" + tabletDir;

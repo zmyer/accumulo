@@ -16,6 +16,8 @@
  */
 package org.apache.accumulo.core.client.mock;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -29,6 +31,7 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.function.Predicate;
 
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
@@ -41,11 +44,13 @@ import org.apache.accumulo.core.client.admin.DiskUsage;
 import org.apache.accumulo.core.client.admin.FindMax;
 import org.apache.accumulo.core.client.admin.Locations;
 import org.apache.accumulo.core.client.admin.NewTableConfiguration;
+import org.apache.accumulo.core.client.admin.SummaryRetriever;
 import org.apache.accumulo.core.client.admin.TimeType;
 import org.apache.accumulo.core.client.impl.TableOperationsHelper;
 import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.sample.SamplerConfiguration;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.client.summary.SummarizerConfiguration;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Range;
@@ -65,7 +70,6 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import static com.google.common.base.Preconditions.checkArgument;
 
 /**
  * @deprecated since 1.8.0; use MiniAccumuloCluster or a standard mock framework instead.
@@ -289,7 +293,7 @@ class MockTableOperations extends TableOperationsHelper {
     for (FileStatus importStatus : fs.listStatus(importPath)) {
       try {
         FileSKVIterator importIterator = FileOperations.getInstance().newReaderBuilder().forFile(importStatus.getPath().toString(), fs, fs.getConf())
-            .withTableConfiguration(AccumuloConfiguration.getDefaultConfiguration()).seekToBeginning().build();
+            .withTableConfiguration(DefaultConfiguration.getInstance()).seekToBeginning().build();
         while (importIterator.hasTop()) {
           Key key = importIterator.getTopKey();
           Value value = importIterator.getTopValue();
@@ -363,9 +367,9 @@ class MockTableOperations extends TableOperationsHelper {
     for (Entry<String,MockTable> entry : acu.tables.entrySet()) {
       String table = entry.getKey();
       if (RootTable.NAME.equals(table))
-        result.put(table, RootTable.ID);
+        result.put(table, RootTable.ID.canonicalID());
       else if (MetadataTable.NAME.equals(table))
-        result.put(table, MetadataTable.ID);
+        result.put(table, MetadataTable.ID.canonicalID());
       else
         result.put(table, entry.getValue().getTableId());
     }
@@ -500,6 +504,30 @@ class MockTableOperations extends TableOperationsHelper {
 
   @Override
   public Locations locate(String tableName, Collection<Range> ranges) throws AccumuloException, AccumuloSecurityException, TableNotFoundException {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public SummaryRetriever summaries(String tableName) throws TableNotFoundException, AccumuloException, AccumuloSecurityException {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void addSummarizers(String tableName, SummarizerConfiguration... summarizerConf) throws TableNotFoundException, AccumuloException,
+      AccumuloSecurityException {
+    throw new UnsupportedOperationException();
+
+  }
+
+  @Override
+  public void removeSummarizers(String tableName, Predicate<SummarizerConfiguration> predicate) throws AccumuloException, TableNotFoundException,
+      AccumuloSecurityException {
+    throw new UnsupportedOperationException();
+
+  }
+
+  @Override
+  public List<SummarizerConfiguration> listSummarizers(String tableName) throws AccumuloException, TableNotFoundException, AccumuloSecurityException {
     throw new UnsupportedOperationException();
   }
 }

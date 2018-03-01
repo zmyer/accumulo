@@ -17,6 +17,7 @@
 package org.apache.accumulo.tracer;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -29,12 +30,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.accumulo.core.Constants;
+import org.apache.accumulo.core.client.AccumuloException;
+import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.BatchWriter;
 import org.apache.accumulo.core.client.BatchWriterConfig;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.IteratorSetting;
 import org.apache.accumulo.core.client.MutationsRejectedException;
+import org.apache.accumulo.core.client.TableExistsException;
+import org.apache.accumulo.core.client.TableNotFoundException;
 import org.apache.accumulo.core.client.security.tokens.AuthenticationToken;
 import org.apache.accumulo.core.client.security.tokens.AuthenticationToken.Properties;
 import org.apache.accumulo.core.client.security.tokens.KerberosToken;
@@ -53,6 +58,7 @@ import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfigurationFactory;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.fs.VolumeManagerImpl;
+import org.apache.accumulo.server.metrics.MetricsSystemHelper;
 import org.apache.accumulo.server.security.SecurityUtil;
 import org.apache.accumulo.server.util.time.SimpleTimer;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
@@ -78,12 +84,11 @@ import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
-
 public class TraceServer implements Watcher {
 
   final private static Logger log = LoggerFactory.getLogger(TraceServer.class);
   final private ServerConfigurationFactory serverConfiguration;
+  final private Instance instance;
   final private TServer server;
   final private AtomicReference<BatchWriter> writer;
   final private Connector connector;
@@ -178,12 +183,55 @@ public class TraceServer implements Watcher {
 
   }
 
-  public TraceServer(ServerConfigurationFactory serverConfiguration, String hostname) throws Exception {
+  public TraceServer(Instance instance, ServerConfigurationFactory serverConfiguration, String hostname) throws Exception {
     this.serverConfiguration = serverConfiguration;
-    log.info("Version " + Constants.VERSION);
-    log.info("Instance " + serverConfiguration.getInstance().getInstanceID());
-    AccumuloConfiguration conf = serverConfiguration.getConfiguration();
+    this.instance = instance;
+    log.info("Version {}", Constants.VERSION);
+    log.info("Instance {}", instance.getInstanceID());
+    AccumuloConfiguration conf = serverConfiguration.getSystemConfiguration();
     tableName = conf.get(Property.TRACE_TABLE);
+    connector = ensureTraceTableExists(conf);
+
+    int ports[] = conf.getPort(Property.TRACE_PORT);
+    ServerSocket sock = null;
+    for (int port : ports) {
+      ServerSocket s = ServerSocketChannel.open().socket();
+      s.setReuseAddress(true);
+      try {
+        s.bind(new InetSocketAddress(hostname, port));
+        sock = s;
+        break;
+      } catch (Exception e) {
+        log.warn("Unable to start trace server on port {}", port);
+      }
+    }
+    if (null == sock) {
+      throw new RuntimeException("Unable to start trace server on configured ports: " + Arrays.toString(ports));
+    }
+    final TServerTransport transport = new TServerSocket(sock);
+    TThreadPoolServer.Args options = new TThreadPoolServer.Args(transport);
+    options.processor(new Processor<Iface>(new Receiver()));
+    server = new TThreadPoolServer(options);
+    registerInZooKeeper(sock.getInetAddress().getHostAddress() + ":" + sock.getLocalPort(), conf.get(Property.TRACE_ZK_PATH));
+    writer = new AtomicReference<>(this.connector.createBatchWriter(tableName,
+        new BatchWriterConfig().setMaxLatency(BATCH_WRITER_MAX_LATENCY, TimeUnit.SECONDS)));
+  }
+
+  /**
+   * Exceptions thrown out of here should be things that cause service failure (e.g. misconfigurations that aren't likely to change on retry).
+   *
+   * @return a working Connection that can be reused
+   * @throws ClassNotFoundException
+   *           if TRACE_TOKEN_TYPE is set to a class that we can't load.
+   * @throws InstantiationException
+   *           if we fail to create an instance of TRACE_TOKEN_TYPE.
+   * @throws IllegalAccessException
+   *           if the class pointed to by TRACE_TOKEN_TYPE is private.
+   * @throws AccumuloSecurityException
+   *           if the trace user has the wrong permissions
+   */
+  private Connector ensureTraceTableExists(final AccumuloConfiguration conf) throws AccumuloSecurityException, ClassNotFoundException, InstantiationException,
+      IllegalAccessException {
     Connector connector = null;
     while (true) {
       try {
@@ -214,7 +262,7 @@ public class TraceServer implements Watcher {
           at = token;
         }
 
-        connector = serverConfiguration.getInstance().getConnector(principal, at);
+        connector = instance.getConnector(principal, at);
         if (!connector.tableOperations().exists(tableName)) {
           connector.tableOperations().create(tableName);
           IteratorSetting setting = new IteratorSetting(10, "ageoff", AgeOffFilter.class.getName());
@@ -223,42 +271,16 @@ public class TraceServer implements Watcher {
         }
         connector.tableOperations().setProperty(tableName, Property.TABLE_FORMATTER_CLASS.getKey(), TraceFormatter.class.getName());
         break;
-      } catch (RuntimeException ex) {
+      } catch (AccumuloException | TableExistsException | TableNotFoundException | IOException | RuntimeException ex) {
         log.info("Waiting to checking/create the trace table.", ex);
         sleepUninterruptibly(1, TimeUnit.SECONDS);
       }
     }
-    this.connector = connector;
-    // make sure we refer to the final variable from now on.
-    connector = null;
-
-    int ports[] = conf.getPort(Property.TRACE_PORT);
-    ServerSocket sock = null;
-    for (int port : ports) {
-      ServerSocket s = ServerSocketChannel.open().socket();
-      s.setReuseAddress(true);
-      try {
-        s.bind(new InetSocketAddress(hostname, port));
-        sock = s;
-        break;
-      } catch (Exception e) {
-        log.warn("Unable to start trace server on port {}", port);
-      }
-    }
-    if (null == sock) {
-      throw new RuntimeException("Unable to start trace server on configured ports: " + Arrays.toString(ports));
-    }
-    final TServerTransport transport = new TServerSocket(sock);
-    TThreadPoolServer.Args options = new TThreadPoolServer.Args(transport);
-    options.processor(new Processor<Iface>(new Receiver()));
-    server = new TThreadPoolServer(options);
-    registerInZooKeeper(sock.getInetAddress().getHostAddress() + ":" + sock.getLocalPort(), conf.get(Property.TRACE_ZK_PATH));
-    writer = new AtomicReference<>(this.connector.createBatchWriter(tableName,
-        new BatchWriterConfig().setMaxLatency(BATCH_WRITER_MAX_LATENCY, TimeUnit.SECONDS)));
+    return connector;
   }
 
   public void run() throws Exception {
-    SimpleTimer.getInstance(serverConfiguration.getConfiguration()).schedule(new Runnable() {
+    SimpleTimer.getInstance(serverConfiguration.getSystemConfiguration()).schedule(new Runnable() {
       @Override
       public void run() {
         flush();
@@ -278,15 +300,11 @@ public class TraceServer implements Watcher {
           resetWriter();
         }
       }
-    } catch (MutationsRejectedException exception) {
+    } catch (MutationsRejectedException | RuntimeException exception) {
       log.warn("Problem flushing traces, resetting writer. Set log level to DEBUG to see stacktrace. cause: " + exception);
       log.debug("flushing traces failed due to exception", exception);
       resetWriter();
       /* XXX e.g. if the writer was closed between when we grabbed it and when we called flush. */
-    } catch (RuntimeException exception) {
-      log.warn("Problem flushing traces, resetting writer. Set log level to DEBUG to see stacktrace. cause: " + exception);
-      log.debug("flushing traces failed due to exception", exception);
-      resetWriter();
     }
   }
 
@@ -314,7 +332,7 @@ public class TraceServer implements Watcher {
   private void registerInZooKeeper(String name, String root) throws Exception {
     IZooReaderWriter zoo = ZooReaderWriter.getInstance();
     zoo.putPersistentData(root, new byte[0], NodeExistsPolicy.SKIP);
-    log.info("Registering tracer " + name + " at " + root);
+    log.info("Registering tracer {} at {}", name, root);
     String path = zoo.putEphemeralSequential(root + "/trace-", name.getBytes(UTF_8));
     zoo.exists(path, this);
   }
@@ -358,16 +376,16 @@ public class TraceServer implements Watcher {
 
   public static void main(String[] args) throws Exception {
     final String app = "tracer";
-    Accumulo.setupLogging(app);
-    loginTracer(SiteConfiguration.getInstance());
     ServerOpts opts = new ServerOpts();
     opts.parseArgs(app, args);
+    loginTracer(SiteConfiguration.getInstance());
     Instance instance = HdfsZooInstance.getInstance();
     ServerConfigurationFactory conf = new ServerConfigurationFactory(instance);
     VolumeManager fs = VolumeManagerImpl.get();
-    Accumulo.init(fs, conf, app);
+    MetricsSystemHelper.configure(TraceServer.class.getSimpleName());
+    Accumulo.init(fs, instance, conf, app);
     String hostname = opts.getAddress();
-    TraceServer server = new TraceServer(conf, hostname);
+    TraceServer server = new TraceServer(instance, conf, hostname);
     try {
       server.run();
     } finally {
@@ -378,12 +396,12 @@ public class TraceServer implements Watcher {
 
   @Override
   public void process(WatchedEvent event) {
-    log.debug("event " + event.getPath() + " " + event.getType() + " " + event.getState());
+    log.debug("event {} {} {}", event.getPath(), event.getType(), event.getState());
     if (event.getState() == KeeperState.Expired) {
-      log.warn("Trace server lost zookeeper registration at " + event.getPath());
+      log.warn("Trace server lost zookeeper registration at {} ", event.getPath());
       server.stop();
     } else if (event.getType() == EventType.NodeDeleted) {
-      log.warn("Trace server zookeeper entry lost " + event.getPath());
+      log.warn("Trace server zookeeper entry lost {}", event.getPath());
       server.stop();
     }
     if (event.getPath() != null) {

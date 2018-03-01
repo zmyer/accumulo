@@ -32,6 +32,9 @@ import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.ZooKeeperInstance;
 import org.apache.accumulo.core.client.security.tokens.AuthenticationToken;
+import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.ConfigurationCopy;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.master.thrift.MasterGoalState;
 import org.apache.accumulo.core.util.CachedConfiguration;
 import org.apache.accumulo.minicluster.ServerType;
@@ -40,6 +43,8 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.google.common.collect.Iterables;
 
 /**
  * AccumuloCluster implementation to connect to an existing deployment of Accumulo
@@ -56,18 +61,18 @@ public class StandaloneAccumuloCluster implements AccumuloCluster {
   private String accumuloHome, clientAccumuloConfDir, serverAccumuloConfDir, hadoopConfDir;
   private Path tmp;
   private List<ClusterUser> users;
-  private String serverUser;
+  private String clientCmdPrefix;
+  private String serverCmdPrefix;
 
-  public StandaloneAccumuloCluster(ClientConfiguration clientConf, Path tmp, List<ClusterUser> users, String serverUser) {
-    this(new ZooKeeperInstance(clientConf), clientConf, tmp, users, serverUser);
+  public StandaloneAccumuloCluster(ClientConfiguration clientConf, Path tmp, List<ClusterUser> users) {
+    this(new ZooKeeperInstance(clientConf), clientConf, tmp, users);
   }
 
-  public StandaloneAccumuloCluster(Instance instance, ClientConfiguration clientConf, Path tmp, List<ClusterUser> users, String serverUser) {
+  public StandaloneAccumuloCluster(Instance instance, ClientConfiguration clientConf, Path tmp, List<ClusterUser> users) {
     this.instance = instance;
     this.clientConf = clientConf;
     this.tmp = tmp;
     this.users = users;
-    this.serverUser = serverUser;
   }
 
   public String getAccumuloHome() {
@@ -92,6 +97,14 @@ public class StandaloneAccumuloCluster implements AccumuloCluster {
 
   public void setServerAccumuloConfDir(String accumuloConfDir) {
     this.serverAccumuloConfDir = accumuloConfDir;
+  }
+
+  public void setServerCmdPrefix(String serverCmdPrefix) {
+    this.serverCmdPrefix = serverCmdPrefix;
+  }
+
+  public void setClientCmdPrefix(String clientCmdPrefix) {
+    this.clientCmdPrefix = clientCmdPrefix;
   }
 
   public String getHadoopConfDir() {
@@ -130,9 +143,7 @@ public class StandaloneAccumuloCluster implements AccumuloCluster {
 
   @Override
   public StandaloneClusterControl getClusterControl() {
-    return new StandaloneClusterControl(serverUser, null == accumuloHome ? System.getenv("ACCUMULO_HOME") : accumuloHome,
-        null == clientAccumuloConfDir ? System.getenv("ACCUMULO_CONF_DIR") : clientAccumuloConfDir,
-        null == serverAccumuloConfDir ? System.getenv("ACCUMULO_CONF_DIR") : serverAccumuloConfDir);
+    return new StandaloneClusterControl(accumuloHome, clientAccumuloConfDir, serverAccumuloConfDir, clientCmdPrefix, serverCmdPrefix);
   }
 
   @Override
@@ -183,5 +194,13 @@ public class StandaloneAccumuloCluster implements AccumuloCluster {
   public ClusterUser getUser(int offset) {
     checkArgument(offset >= 0 && offset < users.size(), "Invalid offset, should be non-negative and less than " + users.size());
     return users.get(offset);
+  }
+
+  @Override
+  public AccumuloConfiguration getSiteConfiguration() {
+    Configuration conf = new Configuration(false);
+    Path accumuloSite = new Path(serverAccumuloConfDir, "accumulo-site.xml");
+    conf.addResource(accumuloSite);
+    return new ConfigurationCopy(Iterables.concat(DefaultConfiguration.getInstance(), conf));
   }
 }

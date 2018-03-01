@@ -23,8 +23,12 @@ import java.util.List;
 import java.util.function.Function;
 
 import org.apache.accumulo.core.client.Instance;
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.DefaultConfiguration;
+import org.apache.accumulo.core.conf.Property;
+import org.apache.accumulo.core.conf.SiteConfiguration;
 import org.apache.accumulo.core.data.impl.KeyExtent;
 import org.apache.accumulo.server.conf.NamespaceConfiguration;
 import org.apache.accumulo.server.conf.ServerConfiguration;
@@ -61,29 +65,22 @@ public class LargestFirstMemoryManagerTest {
       ServerConfigurationFactory delegate = new ServerConfigurationFactory(inst);
 
       @Override
-      public AccumuloConfiguration getConfiguration() {
-        return DefaultConfiguration.getInstance();
+      public AccumuloConfiguration getSystemConfiguration() {
+        SiteConfiguration conf = SiteConfiguration.getInstance();
+        conf.set(Property.TSERV_MAXMEM, "1g");
+        return conf;
       }
 
       @Override
-      public TableConfiguration getTableConfiguration(String tableId) {
+      public TableConfiguration getTableConfiguration(Table.ID tableId) {
         return delegate.getTableConfiguration(tableId);
       }
 
       @Override
-      public TableConfiguration getTableConfiguration(KeyExtent extent) {
-        return delegate.getTableConfiguration(extent);
-      }
-
-      @Override
-      public NamespaceConfiguration getNamespaceConfiguration(String namespaceId) {
+      public NamespaceConfiguration getNamespaceConfiguration(Namespace.ID namespaceId) {
         return delegate.getNamespaceConfiguration(namespaceId);
       }
 
-      @Override
-      public Instance getInstance() {
-        return delegate.getInstance();
-      }
     };
     mgr.init(config);
     MemoryManagementActions result;
@@ -175,40 +172,31 @@ public class LargestFirstMemoryManagerTest {
   @Test
   public void testDeletedTable() throws Exception {
     final String deletedTableId = "1";
-    Function<String,Boolean> existenceCheck = tableId -> !deletedTableId.equals(tableId);
+    Function<Table.ID,Boolean> existenceCheck = tableId -> !deletedTableId.contentEquals(tableId.canonicalID());
     LargestFirstMemoryManagerWithExistenceCheck mgr = new LargestFirstMemoryManagerWithExistenceCheck(existenceCheck);
     ServerConfiguration config = new ServerConfiguration() {
       ServerConfigurationFactory delegate = new ServerConfigurationFactory(inst);
 
       @Override
-      public AccumuloConfiguration getConfiguration() {
+      public AccumuloConfiguration getSystemConfiguration() {
         return DefaultConfiguration.getInstance();
       }
 
       @Override
-      public TableConfiguration getTableConfiguration(String tableId) {
+      public TableConfiguration getTableConfiguration(Table.ID tableId) {
         return delegate.getTableConfiguration(tableId);
       }
 
       @Override
-      public TableConfiguration getTableConfiguration(KeyExtent extent) {
-        return delegate.getTableConfiguration(extent);
-      }
-
-      @Override
-      public NamespaceConfiguration getNamespaceConfiguration(String namespaceId) {
+      public NamespaceConfiguration getNamespaceConfiguration(Namespace.ID namespaceId) {
         return delegate.getNamespaceConfiguration(namespaceId);
       }
 
-      @Override
-      public Instance getInstance() {
-        return delegate.getInstance();
-      }
     };
     mgr.init(config);
     MemoryManagementActions result;
     // one tablet is really big and the other is for a nonexistent table
-    KeyExtent extent = new KeyExtent("2", new Text("j"), null);
+    KeyExtent extent = new KeyExtent(Table.ID.of("2"), new Text("j"), null);
     result = mgr.getMemoryManagementActions(tablets(t(extent, ZERO, ONE_GIG, 0), t(k("j"), ZERO, ONE_GIG, 0)));
     assertEquals(1, result.tabletsToMinorCompact.size());
     assertEquals(extent, result.tabletsToMinorCompact.get(0));
@@ -229,28 +217,28 @@ public class LargestFirstMemoryManagerTest {
     }
 
     @Override
-    protected boolean tableExists(Instance instance, String tableId) {
+    protected boolean tableExists(Instance instance, Table.ID tableId) {
       return true;
     }
   }
 
   private static class LargestFirstMemoryManagerWithExistenceCheck extends LargestFirstMemoryManagerUnderTest {
 
-    Function<String,Boolean> existenceCheck;
+    Function<Table.ID,Boolean> existenceCheck;
 
-    public LargestFirstMemoryManagerWithExistenceCheck(Function<String,Boolean> existenceCheck) {
+    public LargestFirstMemoryManagerWithExistenceCheck(Function<Table.ID,Boolean> existenceCheck) {
       super();
       this.existenceCheck = existenceCheck;
     }
 
     @Override
-    protected boolean tableExists(Instance instance, String tableId) {
+    protected boolean tableExists(Instance instance, Table.ID tableId) {
       return existenceCheck.apply(tableId);
     }
   }
 
   private static KeyExtent k(String endRow) {
-    return new KeyExtent("1", new Text(endRow), null);
+    return new KeyExtent(Table.ID.of("1"), new Text(endRow), null);
   }
 
   private static class TestTabletState implements TabletState {

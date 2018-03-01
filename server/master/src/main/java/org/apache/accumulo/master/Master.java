@@ -16,8 +16,8 @@
  */
 package org.apache.accumulo.master;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -29,7 +29,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Optional;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -44,9 +43,12 @@ import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.Connector;
+import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.TableNotFoundException;
+import org.apache.accumulo.core.client.impl.Namespace;
 import org.apache.accumulo.core.client.impl.Namespaces;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.impl.ThriftTransportPool;
 import org.apache.accumulo.core.client.impl.thrift.TableOperation;
@@ -100,6 +102,7 @@ import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.ServerOpts;
 import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfigurationFactory;
+import org.apache.accumulo.server.fs.VolumeChooserEnvironment;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.fs.VolumeManager.FileType;
 import org.apache.accumulo.server.fs.VolumeManagerImpl;
@@ -124,10 +127,11 @@ import org.apache.accumulo.server.master.state.TabletState;
 import org.apache.accumulo.server.master.state.ZooStore;
 import org.apache.accumulo.server.master.state.ZooTabletStateStore;
 import org.apache.accumulo.server.metrics.Metrics;
+import org.apache.accumulo.server.metrics.MetricsSystemHelper;
 import org.apache.accumulo.server.replication.ZooKeeperInitialization;
+import org.apache.accumulo.server.rpc.HighlyAvailableServiceWrapper;
 import org.apache.accumulo.server.rpc.RpcWrapper;
 import org.apache.accumulo.server.rpc.ServerAddress;
-import org.apache.accumulo.server.rpc.HighlyAvailableServiceWrapper;
 import org.apache.accumulo.server.rpc.TCredentialsUpdatingWrapper;
 import org.apache.accumulo.server.rpc.TServerUtils;
 import org.apache.accumulo.server.rpc.ThriftServerType;
@@ -217,6 +221,8 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
   volatile SortedMap<TServerInstance,TabletServerStatus> tserverStatus = Collections.unmodifiableSortedMap(new TreeMap<TServerInstance,TabletServerStatus>());
   final ServerBulkImportStatus bulkImportStatus = new ServerBulkImportStatus();
 
+  private final AtomicBoolean masterInitialized = new AtomicBoolean(false);
+
   @Override
   public synchronized MasterState getMasterState() {
     return state;
@@ -243,7 +249,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     if (state.equals(newState))
       return;
     if (!transitionOK[state.ordinal()][newState.ordinal()]) {
-      log.error("Programmer error: master should not transition from " + state + " to " + newState);
+      log.error("Programmer error: master should not transition from {} to {}", state, newState);
     }
     MasterState oldState = state;
     state = newState;
@@ -277,13 +283,14 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     if (!zoo.exists(dirZPath)) {
       Path oldPath = fs.getFullPath(FileType.TABLE, "/" + MetadataTable.ID + "/root_tablet");
       if (fs.exists(oldPath)) {
-        String newPath = fs.choose(Optional.of(RootTable.ID), ServerConstants.getBaseUris()) + Constants.HDFS_TABLES_DIR + Path.SEPARATOR + RootTable.ID;
+        VolumeChooserEnvironment chooserEnv = new VolumeChooserEnvironment(RootTable.ID);
+        String newPath = fs.choose(chooserEnv, ServerConstants.getBaseUris()) + Constants.HDFS_TABLES_DIR + Path.SEPARATOR + RootTable.ID;
         fs.mkdirs(new Path(newPath));
         if (!fs.rename(oldPath, new Path(newPath))) {
           throw new IOException("Failed to move root tablet from " + oldPath + " to " + newPath);
         }
 
-        log.info("Upgrade renamed " + oldPath + " to " + newPath);
+        log.info("Upgrade renamed {} to {}", oldPath, newPath);
       }
 
       Path location = null;
@@ -302,7 +309,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
       if (location == null)
         throw new IllegalStateException("Failed to find root tablet");
 
-      log.info("Upgrade setting root table location in zookeeper " + location);
+      log.info("Upgrade setting root table location in zookeeper {}", location);
       zoo.putPersistentData(dirZPath, location.toString().getBytes(), NodeExistsPolicy.FAIL);
     }
   }
@@ -330,7 +337,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
         IZooReaderWriter zoo = ZooReaderWriter.getInstance();
         final String zooRoot = ZooUtil.getRoot(getInstance());
 
-        log.debug("Handling updates for version " + accumuloPersistentVersion);
+        log.debug("Handling updates for version {}", accumuloPersistentVersion);
 
         log.debug("Cleaning out remnants of logger role.");
         zoo.recursiveDelete(zooRoot + "/loggers", NodeMissingPolicy.SKIP);
@@ -341,7 +348,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
         zoo.putPersistentData(zooRoot + Constants.ZRECOVERY, zero, NodeExistsPolicy.SKIP);
 
         for (String id : zoo.getChildren(zooRoot + Constants.ZTABLES)) {
-          log.debug("Prepping table " + id + " for compaction cancellations.");
+          log.debug("Prepping table {} for compaction cancellations.", id);
           zoo.putPersistentData(zooRoot + Constants.ZTABLES + "/" + id + Constants.ZTABLE_COMPACT_CANCEL_ID, zero, NodeExistsPolicy.SKIP);
         }
 
@@ -358,7 +365,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
           // skip
         }
         for (String id : zoo.getChildren(zooRoot + Constants.ZTABLES)) {
-          log.debug("Converting table " + id + " WALog setting to Durability");
+          log.debug("Converting table {} WALog setting to Durability", id);
           try {
             @SuppressWarnings("deprecation")
             String path = zooRoot + Constants.ZTABLES + "/" + id + Constants.ZTABLE_CONF + "/" + Property.TABLE_WALOG_ENABLED.getKey();
@@ -383,41 +390,40 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
         // create initial namespaces
         String namespaces = ZooUtil.getRoot(getInstance()) + Constants.ZNAMESPACES;
         zoo.putPersistentData(namespaces, new byte[0], NodeExistsPolicy.SKIP);
-        for (Pair<String,String> namespace : Iterables.concat(
-            Collections.singleton(new Pair<>(Namespaces.ACCUMULO_NAMESPACE, Namespaces.ACCUMULO_NAMESPACE_ID)),
-            Collections.singleton(new Pair<>(Namespaces.DEFAULT_NAMESPACE, Namespaces.DEFAULT_NAMESPACE_ID)))) {
+        for (Pair<String,Namespace.ID> namespace : Iterables.concat(Collections.singleton(new Pair<>(Namespace.ACCUMULO, Namespace.ID.ACCUMULO)),
+            Collections.singleton(new Pair<>(Namespace.DEFAULT, Namespace.ID.DEFAULT)))) {
           String ns = namespace.getFirst();
-          String id = namespace.getSecond();
-          log.debug("Upgrade creating namespace \"" + ns + "\" (ID: " + id + ")");
+          Namespace.ID id = namespace.getSecond();
+          log.debug("Upgrade creating namespace \"{}\" (ID: {})", ns, id);
           if (!Namespaces.exists(getInstance(), id))
             TableManager.prepareNewNamespaceState(getInstance().getInstanceID(), id, ns, NodeExistsPolicy.SKIP);
         }
 
         // create replication table in zk
-        log.debug("Upgrade creating table " + ReplicationTable.NAME + " (ID: " + ReplicationTable.ID + ")");
-        TableManager.prepareNewTableState(getInstance().getInstanceID(), ReplicationTable.ID, Namespaces.ACCUMULO_NAMESPACE_ID, ReplicationTable.NAME,
-            TableState.OFFLINE, NodeExistsPolicy.SKIP);
+        log.debug("Upgrade creating table {} (ID: {})", ReplicationTable.NAME, ReplicationTable.ID);
+        TableManager.prepareNewTableState(getInstance().getInstanceID(), ReplicationTable.ID, Namespace.ID.ACCUMULO, ReplicationTable.NAME, TableState.OFFLINE,
+            NodeExistsPolicy.SKIP);
 
         // create root table
-        log.debug("Upgrade creating table " + RootTable.NAME + " (ID: " + RootTable.ID + ")");
-        TableManager.prepareNewTableState(getInstance().getInstanceID(), RootTable.ID, Namespaces.ACCUMULO_NAMESPACE_ID, RootTable.NAME, TableState.ONLINE,
+        log.debug("Upgrade creating table {} (ID: {})", RootTable.NAME, RootTable.ID);
+        TableManager.prepareNewTableState(getInstance().getInstanceID(), RootTable.ID, Namespace.ID.ACCUMULO, RootTable.NAME, TableState.ONLINE,
             NodeExistsPolicy.SKIP);
         Initialize.initSystemTablesConfig();
         // ensure root user can flush root table
-        security.grantTablePermission(rpcCreds(), security.getRootUsername(), RootTable.ID, TablePermission.ALTER_TABLE, Namespaces.ACCUMULO_NAMESPACE_ID);
+        security.grantTablePermission(rpcCreds(), security.getRootUsername(), RootTable.ID, TablePermission.ALTER_TABLE, Namespace.ID.ACCUMULO);
 
         // put existing tables in the correct namespaces
         String tables = ZooUtil.getRoot(getInstance()) + Constants.ZTABLES;
         for (String tableId : zoo.getChildren(tables)) {
-          String targetNamespace = (MetadataTable.ID.equals(tableId) || RootTable.ID.equals(tableId)) ? Namespaces.ACCUMULO_NAMESPACE_ID
-              : Namespaces.DEFAULT_NAMESPACE_ID;
-          log.debug("Upgrade moving table " + new String(zoo.getData(tables + "/" + tableId + Constants.ZTABLE_NAME, null), UTF_8) + " (ID: " + tableId
-              + ") into namespace with ID " + targetNamespace);
-          zoo.putPersistentData(tables + "/" + tableId + Constants.ZTABLE_NAMESPACE, targetNamespace.getBytes(UTF_8), NodeExistsPolicy.SKIP);
+          Namespace.ID targetNamespace = (MetadataTable.ID.canonicalID().equals(tableId) || RootTable.ID.canonicalID().equals(tableId)) ? Namespace.ID.ACCUMULO
+              : Namespace.ID.DEFAULT;
+          log.debug("Upgrade moving table {} (ID: {}) into namespace with ID {}", new String(zoo.getData(tables + "/" + tableId + Constants.ZTABLE_NAME, null),
+              UTF_8), tableId, targetNamespace);
+          zoo.putPersistentData(tables + "/" + tableId + Constants.ZTABLE_NAMESPACE, targetNamespace.getUtf8(), NodeExistsPolicy.SKIP);
         }
 
         // rename metadata table
-        log.debug("Upgrade renaming table " + MetadataTable.OLD_NAME + " (ID: " + MetadataTable.ID + ") to " + MetadataTable.NAME);
+        log.debug("Upgrade renaming table {} (ID: {}) to {}", MetadataTable.OLD_NAME, MetadataTable.ID, MetadataTable.NAME);
         zoo.putPersistentData(tables + "/" + MetadataTable.ID + Constants.ZTABLE_NAME, Tables.qualify(MetadataTable.NAME).getSecond().getBytes(UTF_8),
             NodeExistsPolicy.OVERWRITE);
 
@@ -429,9 +435,9 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
         String users = ZooUtil.getRoot(getInstance()) + "/users";
         for (String user : zoo.getChildren(users)) {
           zoo.putPersistentData(users + "/" + user + "/Namespaces", new byte[0], NodeExistsPolicy.SKIP);
-          perm.grantNamespacePermission(user, Namespaces.ACCUMULO_NAMESPACE_ID, NamespacePermission.READ);
+          perm.grantNamespacePermission(user, Namespace.ID.ACCUMULO, NamespacePermission.READ);
         }
-        perm.grantNamespacePermission("root", Namespaces.ACCUMULO_NAMESPACE_ID, NamespacePermission.ALTER_TABLE);
+        perm.grantNamespacePermission("root", Namespace.ID.ACCUMULO, NamespacePermission.ALTER_TABLE);
 
         // add the currlog location for root tablet current logs
         zoo.putPersistentData(ZooUtil.getRoot(getInstance()) + RootTable.ZROOT_TABLET_CURRENT_LOGS, new byte[0], NodeExistsPolicy.SKIP);
@@ -514,7 +520,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     }
   }
 
-  private int assignedOrHosted(String tableId) {
+  private int assignedOrHosted(Table.ID tableId) {
     int result = 0;
     for (TabletGroupWatcher watcher : watchers) {
       TableCounts count = watcher.getStats(tableId);
@@ -555,8 +561,8 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
         // Count offline tablets for online tables
         for (TabletGroupWatcher watcher : watchers) {
           TableManager manager = TableManager.getInstance();
-          for (Entry<String,TableCounts> entry : watcher.getStats().entrySet()) {
-            String tableId = entry.getKey();
+          for (Entry<Table.ID,TableCounts> entry : watcher.getStats().entrySet()) {
+            Table.ID tableId = entry.getKey();
             TableCounts counts = entry.getValue();
             TableState tableState = manager.getTableState(tableId);
             if (tableState != null && tableState.equals(TableState.ONLINE)) {
@@ -585,36 +591,35 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     return result;
   }
 
-  public void mustBeOnline(final String tableId) throws ThriftTableOperationException {
+  public void mustBeOnline(final Table.ID tableId) throws ThriftTableOperationException {
     Tables.clearCache(getInstance());
     if (!Tables.getTableState(getInstance(), tableId).equals(TableState.ONLINE))
-      throw new ThriftTableOperationException(tableId, null, TableOperation.MERGE, TableOperationExceptionType.OFFLINE, "table is not online");
+      throw new ThriftTableOperationException(tableId.canonicalID(), null, TableOperation.MERGE, TableOperationExceptionType.OFFLINE, "table is not online");
   }
 
-  public Master(ServerConfigurationFactory config, VolumeManager fs, String hostname) throws IOException {
-    super(config);
+  public Master(Instance instance, ServerConfigurationFactory config, VolumeManager fs, String hostname) throws IOException {
+    super(instance, config);
     this.serverConfig = config;
     this.fs = fs;
     this.hostname = hostname;
 
-    AccumuloConfiguration aconf = serverConfig.getConfiguration();
+    AccumuloConfiguration aconf = serverConfig.getSystemConfiguration();
 
-    log.info("Version " + Constants.VERSION);
-    log.info("Instance " + getInstance().getInstanceID());
+    log.info("Version {}", Constants.VERSION);
+    log.info("Instance {}", getInstance().getInstanceID());
     timeKeeper = new MasterTime(this);
-
     ThriftTransportPool.getInstance().setIdleTime(aconf.getTimeInMillis(Property.GENERAL_RPC_TIMEOUT));
     tserverSet = new LiveTServerSet(this, this);
-    this.tabletBalancer = aconf.instantiateClassProperty(Property.MASTER_TABLET_BALANCER, TabletBalancer.class, new DefaultLoadBalancer());
-    this.tabletBalancer.init(serverConfig);
+    this.tabletBalancer = Property.createInstanceFromPropertyName(aconf, Property.MASTER_TABLET_BALANCER, TabletBalancer.class, new DefaultLoadBalancer());
+    this.tabletBalancer.init(this);
 
     try {
-      AccumuloVFSClassLoader.getContextManager().setContextConfig(new ContextManager.DefaultContextsConfig(new Iterable<Entry<String,String>>() {
+      AccumuloVFSClassLoader.getContextManager().setContextConfig(new ContextManager.DefaultContextsConfig() {
         @Override
-        public Iterator<Entry<String,String>> iterator() {
-          return getConfiguration().iterator();
+        public Map<String,String> getVfsContextClasspathProperties() {
+          return getConfiguration().getAllPropertiesWithPrefix(Property.VFS_CONTEXT_CLASSPATH_PROPERTY);
         }
-      }));
+      });
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
@@ -645,7 +650,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     return tserverSet.getConnection(server);
   }
 
-  public MergeInfo getMergeInfo(String tableId) {
+  public MergeInfo getMergeInfo(Table.ID tableId) {
     synchronized (mergeLock) {
       try {
         String path = ZooUtil.getRoot(getInstance().getInstanceID()) + Constants.ZTABLES + "/" + tableId + "/merge";
@@ -688,7 +693,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     nextEvent.event("Merge state of %s set to %s", info.getExtent(), state);
   }
 
-  public void clearMergeState(String tableId) throws IOException, KeeperException, InterruptedException {
+  public void clearMergeState(Table.ID tableId) throws IOException, KeeperException, InterruptedException {
     synchronized (mergeLock) {
       String path = ZooUtil.getRoot(getInstance().getInstanceID()) + Constants.ZTABLES + "/" + tableId + "/merge";
       ZooReaderWriter.getInstance().recursiveDelete(path, NodeMissingPolicy.SKIP);
@@ -712,7 +717,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
         byte[] data = ZooReaderWriter.getInstance().getData(ZooUtil.getRoot(getInstance()) + Constants.ZMASTER_GOAL_STATE, null);
         return MasterGoalState.valueOf(new String(data));
       } catch (Exception e) {
-        log.error("Problem getting real goal state from zookeeper: " + e);
+        log.error("Problem getting real goal state from zookeeper: ", e);
         sleepUninterruptibly(1, TimeUnit.SECONDS);
       }
   }
@@ -726,7 +731,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     return true;
   }
 
-  public void clearMigrations(String tableId) {
+  public void clearMigrations(Table.ID tableId) {
     synchronized (migrations) {
       Iterator<KeyExtent> iterator = migrations.keySet().iterator();
       while (iterator.hasNext()) {
@@ -751,7 +756,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     public TUnloadTabletGoal howUnload() {
       return unloadGoal;
     }
-  };
+  }
 
   TabletGoalState getSystemGoalState(TabletLocationState tls) {
     switch (getMasterState()) {
@@ -801,7 +806,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
       }
       // Handle merge transitions
       if (mergeInfo.getExtent() != null) {
-        log.debug("mergeInfo overlaps: " + extent + " " + mergeInfo.overlaps(extent));
+        log.debug("mergeInfo overlaps: {} {}", extent, mergeInfo.overlaps(extent));
         if (mergeInfo.overlaps(extent)) {
           switch (mergeInfo.getState()) {
             case NONE:
@@ -881,7 +886,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
      */
     private void cleanupOfflineMigrations() {
       TableManager manager = TableManager.getInstance();
-      for (String tableId : Tables.getIdToNameMap(getInstance()).keySet()) {
+      for (Table.ID tableId : Tables.getIdToNameMap(getInstance()).keySet()) {
         TableState state = manager.getTableState(tableId);
         if (TableState.OFFLINE == state) {
           clearMigrations(tableId);
@@ -907,7 +912,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
       for (int i = start; i < watchers.size(); i++) {
         TabletGroupWatcher watcher = watchers.get(i);
         if (watcher.stats.getLastMasterState() != getMasterState()) {
-          log.debug(watcher.getName() + ": " + watcher.stats.getLastMasterState() + " != " + getMasterState());
+          log.debug("{}: {} != {}", watcher.getName(), watcher.stats.getLastMasterState(), getMasterState());
           return false;
         }
       }
@@ -963,7 +968,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
                     log.debug("The root tablet is still assigned or hosted");
                   if (count + root_count == 0 && goodStats()) {
                     Set<TServerInstance> currentServers = tserverSet.getCurrentServers();
-                    log.debug("stopping " + currentServers.size() + " tablet servers");
+                    log.debug("stopping {} tablet servers", currentServers.size());
                     for (TServerInstance server : currentServers) {
                       try {
                         serversToShutdown.add(server);
@@ -991,7 +996,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
           wait = updateStatus();
           eventListener.waitForEvents(wait);
         } catch (Throwable t) {
-          log.error("Error balancing tablets, will wait for " + WAIT_BETWEEN_ERRORS / ONE_SECOND + " (seconds) and then retry", t);
+          log.error("Error balancing tablets, will wait for {} (seconds) and then retry ", WAIT_BETWEEN_ERRORS / ONE_SECOND, t);
           sleepUninterruptibly(WAIT_BETWEEN_ERRORS, TimeUnit.MILLISECONDS);
         }
       }
@@ -1003,13 +1008,13 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
       checkForHeldServer(tserverStatus);
 
       if (!badServers.isEmpty()) {
-        log.debug("not balancing because the balance information is out-of-date " + badServers.keySet());
+        log.debug("not balancing because the balance information is out-of-date {}", badServers.keySet());
       } else if (notHosted() > 0) {
-        log.debug("not balancing because there are unhosted tablets: " + notHosted());
+        log.debug("not balancing because there are unhosted tablets: {}", notHosted());
       } else if (getMasterGoalState() == MasterGoalState.CLEAN_STOP) {
         log.debug("not balancing because the master is attempting to stop cleanly");
       } else if (!serversToShutdown.isEmpty()) {
-        log.debug("not balancing while shutting down servers " + serversToShutdown);
+        log.debug("not balancing while shutting down servers {}", serversToShutdown);
       } else {
         for (TabletGroupWatcher tgw : watchers) {
           if (!tgw.isSameTserversAsLastScan(currentServers)) {
@@ -1037,7 +1042,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
         }
       }
       if (crazyHoldTime == 1 && someHoldTime == 1 && tserverStatus.size() > 1) {
-        log.warn("Tablet server " + instance + " exceeded maximum hold time: attempting to kill it");
+        log.warn("Tablet server {} exceeded maximum hold time: attempting to kill it", instance);
         try {
           TServerConnection connection = tserverSet.getConnection(instance);
           if (connection != null)
@@ -1055,11 +1060,11 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
 
       for (TabletMigration m : TabletBalancer.checkMigrationSanity(tserverStatus.keySet(), migrationsOut)) {
         if (migrations.containsKey(m.tablet)) {
-          log.warn("balancer requested migration more than once, skipping " + m);
+          log.warn("balancer requested migration more than once, skipping {}", m);
           continue;
         }
         migrations.put(m.tablet, m.newServer);
-        log.debug("migration " + m);
+        log.debug("migration {}", m);
       }
       if (migrationsOut.size() > 0) {
         nextEvent.event("Migrating %d more tablets, %d total", migrationsOut.size(), migrations.size());
@@ -1097,10 +1102,10 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
               t.setName(oldName);
             }
           } catch (Exception ex) {
-            log.error("unable to get tablet server status " + server + " " + ex.toString());
-            log.debug("unable to get tablet server status " + server, ex);
+            log.error("unable to get tablet server status {} {}", server, ex.toString());
+            log.debug("unable to get tablet server status {}", server, ex);
             if (badServers.get(server).incrementAndGet() > MAX_BAD_STATUS_COUNT) {
-              log.warn("attempting to stop " + server);
+              log.warn("attempting to stop {}", server);
               try {
                 TServerConnection connection = tserverSet.getConnection(server);
                 if (connection != null) {
@@ -1109,7 +1114,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
               } catch (TTransportException e) {
                 // ignore: it's probably down
               } catch (Exception e) {
-                log.info("error talking to troublesome tablet server ", e);
+                log.info("error talking to troublesome tablet server", e);
               }
               badServers.remove(server);
             }
@@ -1140,7 +1145,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     clientHandler = new MasterClientServiceHandler(this);
     // Ensure that calls before the master gets the lock fail
     Iface haProxy = HighlyAvailableServiceWrapper.service(clientHandler, this);
-    Iface rpcProxy = RpcWrapper.service(haProxy, new Processor<Iface>(clientHandler));
+    Iface rpcProxy = RpcWrapper.service(haProxy);
     final Processor<Iface> processor;
     if (ThriftServerType.SASL == getThriftServerType()) {
       Iface tcredsProxy = TCredentialsUpdatingWrapper.service(rpcProxy, clientHandler.getClass(), getConfiguration());
@@ -1156,8 +1161,8 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     // Start the replication coordinator which assigns tservers to service replication requests
     MasterReplicationCoordinator impl = new MasterReplicationCoordinator(this);
     ReplicationCoordinator.Iface haReplicationProxy = HighlyAvailableServiceWrapper.service(impl, this);
-    ReplicationCoordinator.Processor<ReplicationCoordinator.Iface> replicationCoordinatorProcessor = new ReplicationCoordinator.Processor<>(RpcWrapper.service(
-        impl, new ReplicationCoordinator.Processor<ReplicationCoordinator.Iface>(haReplicationProxy)));
+    ReplicationCoordinator.Processor<ReplicationCoordinator.Iface> replicationCoordinatorProcessor = new ReplicationCoordinator.Processor<>(
+        RpcWrapper.service(haReplicationProxy));
     ServerAddress replAddress = TServerUtils.startServer(this, hostname, Property.MASTER_REPLICATION_COORDINATOR_PORT, replicationCoordinatorProcessor,
         "Master Replication Coordinator", "Replication Coordinator", null, Property.MASTER_REPLICATION_COORDINATOR_MINTHREADS,
         Property.MASTER_REPLICATION_COORDINATOR_THREADCHECK, Property.GENERAL_MAX_MESSAGE_SIZE);
@@ -1241,9 +1246,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
           store.ageOff();
         }
       }, 63000, 63000);
-    } catch (KeeperException e) {
-      throw new IOException(e);
-    } catch (InterruptedException e) {
+    } catch (KeeperException | InterruptedException e) {
       throw new IOException(e);
     }
 
@@ -1269,7 +1272,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     }
 
     String address = sa.address.toString();
-    log.info("Setting master lock data to " + address);
+    log.info("Setting master lock data to {}", address);
     masterLock.replaceLockData(address.getBytes());
 
     while (!clientService.isServing()) {
@@ -1301,6 +1304,9 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     } catch (Exception e) {
       log.error("Failed to register replication metrics", e);
     }
+
+    // The master is fully initialized. Clients are allowed to connect now.
+    masterInitialized.set(true);
 
     while (clientService.isServing()) {
       sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
@@ -1374,11 +1380,11 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
 
     @Override
     public synchronized void failedToAcquireLock(Exception e) {
-      log.warn("Failed to get master lock " + e);
+      log.warn("Failed to get master lock", e);
 
       if (e instanceof NoAuthException) {
         String msg = "Failed to acquire master lock due to incorrect ZooKeeper authentication.";
-        log.error(msg + " Ensure instance.secret is consistent across Accumulo configuration", e);
+        log.error("{} Ensure instance.secret is consistent across Accumulo configuration", msg, e);
         Halt.halt(msg, -1);
       }
 
@@ -1431,17 +1437,17 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
   public static void main(String[] args) throws Exception {
     try {
       final String app = "master";
-      Accumulo.setupLogging(app);
-      SecurityUtil.serverLogin(SiteConfiguration.getInstance());
-
       ServerOpts opts = new ServerOpts();
       opts.parseArgs(app, args);
+      SecurityUtil.serverLogin(SiteConfiguration.getInstance());
       String hostname = opts.getAddress();
-      ServerConfigurationFactory conf = new ServerConfigurationFactory(HdfsZooInstance.getInstance());
+      Instance instance = HdfsZooInstance.getInstance();
+      ServerConfigurationFactory conf = new ServerConfigurationFactory(instance);
       VolumeManager fs = VolumeManagerImpl.get();
-      Accumulo.init(fs, conf, app);
-      Master master = new Master(conf, fs, hostname);
-      DistributedTrace.enable(hostname, app, conf.getConfiguration());
+      MetricsSystemHelper.configure(Master.class.getSimpleName());
+      Accumulo.init(fs, instance, conf, app);
+      Master master = new Master(instance, conf, fs, hostname);
+      DistributedTrace.enable(hostname, app, conf.getSystemConfiguration());
       master.run();
     } catch (Exception ex) {
       log.error("Unexpected exception, exiting", ex);
@@ -1455,7 +1461,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
   public void update(LiveTServerSet current, Set<TServerInstance> deleted, Set<TServerInstance> added) {
     DeadServerList obit = new DeadServerList(ZooUtil.getRoot(getInstance()) + Constants.ZDEADTSERVERS);
     if (added.size() > 0) {
-      log.info("New servers: " + added);
+      log.info("New servers: {}", added);
       for (TServerInstance up : added)
         obit.delete(up.hostPort());
     }
@@ -1471,7 +1477,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     unexpected.removeAll(this.serversToShutdown);
     if (unexpected.size() > 0) {
       if (stillMaster() && !getMasterGoalState().equals(MasterGoalState.CLEAN_STOP)) {
-        log.warn("Lost servers " + unexpected);
+        log.warn("Lost servers {}", unexpected);
       }
     }
     serversToShutdown.removeAll(deleted);
@@ -1489,7 +1495,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
       while (iter.hasNext()) {
         Entry<KeyExtent,TServerInstance> entry = iter.next();
         if (deleted.contains(entry.getValue())) {
-          log.info("Canceling migration of " + entry.getKey() + " to " + entry.getValue());
+          log.info("Canceling migration of {} to {}", entry.getKey(), entry.getValue());
           iter.remove();
         }
       }
@@ -1517,7 +1523,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
   }
 
   @Override
-  public void stateChanged(String tableId, TableState state) {
+  public void stateChanged(Table.ID tableId, TableState state) {
     nextEvent.event("Table state in zookeeper changed for %s to %s", tableId, state);
     if (TableState.OFFLINE == state) {
       clearMigrations(tableId);
@@ -1525,14 +1531,14 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
   }
 
   @Override
-  public void initialize(Map<String,TableState> tableIdToStateMap) {}
+  public void initialize(Map<Table.ID,TableState> tableIdToStateMap) {}
 
   @Override
   public void sessionExpired() {}
 
   @Override
-  public Set<String> onlineTables() {
-    Set<String> result = new HashSet<>();
+  public Set<Table.ID> onlineTables() {
+    Set<Table.ID> result = new HashSet<>();
     if (getMasterState() != MasterState.NORMAL) {
       if (getMasterState() != MasterState.UNLOAD_METADATA_TABLETS)
         result.add(MetadataTable.ID);
@@ -1542,7 +1548,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
     }
     TableManager manager = TableManager.getInstance();
 
-    for (String tableId : Tables.getIdToNameMap(getInstance()).keySet()) {
+    for (Table.ID tableId : Tables.getIdToNameMap(getInstance()).keySet()) {
       TableState state = manager.getTableState(tableId);
       if (state != null) {
         if (state == TableState.ONLINE)
@@ -1560,7 +1566,7 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
   @Override
   public Collection<MergeInfo> merges() {
     List<MergeInfo> result = new ArrayList<>();
-    for (String tableId : Tables.getIdToNameMap(getInstance()).keySet()) {
+    for (Table.ID tableId : Tables.getIdToNameMap(getInstance()).keySet()) {
       result.add(getMergeInfo(tableId));
     }
     return result;
@@ -1694,9 +1700,6 @@ public class Master extends AccumuloServerContext implements LiveTServerSet.List
 
   @Override
   public boolean isActiveService() {
-    if (null != masterLock) {
-      return masterLock.isLocked();
-    }
-    return false;
+    return masterInitialized.get();
   }
 }

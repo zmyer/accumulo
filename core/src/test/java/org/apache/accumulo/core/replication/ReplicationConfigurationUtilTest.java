@@ -19,6 +19,7 @@ package org.apache.accumulo.core.replication;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigurationCopy;
 import org.apache.accumulo.core.conf.Property;
@@ -59,26 +60,24 @@ public class ReplicationConfigurationUtilTest {
   @Test
   public void rootTableExtentEmptyConf() {
     KeyExtent extent = new KeyExtent(RootTable.ID, null, null);
-    Assert.assertFalse("The root table should never be replicated",
-        ReplicationConfigurationUtil.isEnabled(extent, new ConfigurationCopy(new HashMap<String,String>())));
+    Assert.assertFalse("The root table should never be replicated", ReplicationConfigurationUtil.isEnabled(extent, new ConfigurationCopy(new HashMap<>())));
   }
 
   @Test
   public void metadataTableExtentEmptyConf() {
     KeyExtent extent = new KeyExtent(MetadataTable.ID, null, null);
-    Assert.assertFalse("The metadata table should never be replicated",
-        ReplicationConfigurationUtil.isEnabled(extent, new ConfigurationCopy(new HashMap<String,String>())));
+    Assert.assertFalse("The metadata table should never be replicated", ReplicationConfigurationUtil.isEnabled(extent, new ConfigurationCopy(new HashMap<>())));
   }
 
   @Test
   public void regularTable() {
-    KeyExtent extent = new KeyExtent("1", new Text("b"), new Text("a"));
+    KeyExtent extent = new KeyExtent(Table.ID.of("1"), new Text("b"), new Text("a"));
     Assert.assertTrue("Table should be replicated", ReplicationConfigurationUtil.isEnabled(extent, conf));
   }
 
   @Test
   public void regularNonEnabledTable() {
-    KeyExtent extent = new KeyExtent("1", new Text("b"), new Text("a"));
-    Assert.assertFalse("Table should not be replicated", ReplicationConfigurationUtil.isEnabled(extent, new ConfigurationCopy(new HashMap<String,String>())));
+    KeyExtent extent = new KeyExtent(Table.ID.of("1"), new Text("b"), new Text("a"));
+    Assert.assertFalse("Table should not be replicated", ReplicationConfigurationUtil.isEnabled(extent, new ConfigurationCopy(new HashMap<>())));
   }
 }

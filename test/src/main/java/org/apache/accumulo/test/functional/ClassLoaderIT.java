@@ -16,6 +16,7 @@
  */
 package org.apache.accumulo.test.functional;
 
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -41,8 +42,8 @@ import org.apache.accumulo.core.iterators.IteratorUtil.IteratorScope;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.harness.AccumuloClusterHarness;
 import org.apache.accumulo.minicluster.impl.MiniAccumuloClusterImpl;
-import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.accumulo.test.categories.MiniClusterOnlyTests;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.hamcrest.CoreMatchers;
@@ -50,8 +51,6 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 @Category(MiniClusterOnlyTests.class)
 public class ClassLoaderIT extends AccumuloClusterHarness {
@@ -113,12 +112,13 @@ public class ClassLoaderIT extends AccumuloClusterHarness {
   }
 
   private void scanCheck(Connector c, String tableName, String expected) throws Exception {
-    Scanner bs = c.createScanner(tableName, Authorizations.EMPTY);
-    Iterator<Entry<Key,Value>> iterator = bs.iterator();
-    assertTrue(iterator.hasNext());
-    Entry<Key,Value> next = iterator.next();
-    assertFalse(iterator.hasNext());
-    assertEquals(expected, next.getValue().toString());
+    try (Scanner bs = c.createScanner(tableName, Authorizations.EMPTY)) {
+      Iterator<Entry<Key,Value>> iterator = bs.iterator();
+      assertTrue(iterator.hasNext());
+      Entry<Key,Value> next = iterator.next();
+      assertFalse(iterator.hasNext());
+      assertEquals(expected, next.getValue().toString());
+    }
   }
 
 }

@@ -35,7 +35,6 @@ import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.BatchWriter;
 import org.apache.accumulo.core.client.BatchWriterConfig;
 import org.apache.accumulo.core.client.ClientConfiguration;
-import org.apache.accumulo.core.client.ClientConfiguration.ClientProperty;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.MutationsRejectedException;
 import org.apache.accumulo.core.client.Scanner;
@@ -44,6 +43,7 @@ import org.apache.accumulo.core.client.TableNotFoundException;
 import org.apache.accumulo.core.client.security.SecurityErrorCode;
 import org.apache.accumulo.core.client.security.tokens.AuthenticationToken;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
+import org.apache.accumulo.core.client.summary.Summary;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
@@ -55,6 +55,7 @@ import org.apache.accumulo.core.security.TablePermission;
 import org.apache.accumulo.harness.AccumuloClusterHarness;
 import org.apache.accumulo.test.categories.MiniClusterOnlyTests;
 import org.apache.hadoop.io.Text;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -113,7 +114,7 @@ public class PermissionsIT extends AccumuloClusterHarness {
 
     // test each permission
     for (SystemPermission perm : SystemPermission.values()) {
-      log.debug("Verifying the " + perm + " permission");
+      log.debug("Verifying the {} permission", perm);
 
       // test permission before and after granting it
       String tableNamePrefix = getUniqueNames(1)[0];
@@ -140,7 +141,7 @@ public class PermissionsIT extends AccumuloClusterHarness {
       SystemPermission perm) throws Exception {
     String tableName, user, password = "password", namespace;
     boolean passwordBased = testUser.getPassword() != null;
-    log.debug("Confirming that the lack of the " + perm + " permission properly restricts the user");
+    log.debug("Confirming that the lack of the {} permission properly restricts the user", perm);
 
     // test permission prior to granting it
     switch (perm) {
@@ -233,7 +234,7 @@ public class PermissionsIT extends AccumuloClusterHarness {
         } catch (AccumuloSecurityException e) {
           loginAs(rootUser);
           if (e.getSecurityErrorCode() != SecurityErrorCode.PERMISSION_DENIED || !root_conn.securityOperations().listLocalUsers().contains(user)) {
-            log.info("Failed to authenticate as " + user);
+            log.info("Failed to authenticate as {}", user);
             throw e;
           }
         }
@@ -321,7 +322,7 @@ public class PermissionsIT extends AccumuloClusterHarness {
         break;
       case OBTAIN_DELEGATION_TOKEN:
         ClientConfiguration clientConf = cluster.getClientConfig();
-        if (clientConf.getBoolean(ClientProperty.INSTANCE_RPC_SASL_ENABLED.getKey(), false)) {
+        if (clientConf.hasSasl()) {
           // TODO Try to obtain a delegation token without the permission
         }
         break;
@@ -345,7 +346,7 @@ public class PermissionsIT extends AccumuloClusterHarness {
       SystemPermission perm) throws Exception {
     String tableName, user, password = "password", namespace;
     boolean passwordBased = testUser.getPassword() != null;
-    log.debug("Confirming that the presence of the " + perm + " permission properly permits the user");
+    log.debug("Confirming that the presence of the {} permission properly permits the user", perm);
 
     // test permission after granting it
     switch (perm) {
@@ -464,7 +465,7 @@ public class PermissionsIT extends AccumuloClusterHarness {
         break;
       case OBTAIN_DELEGATION_TOKEN:
         ClientConfiguration clientConf = cluster.getClientConfig();
-        if (clientConf.getBoolean(ClientProperty.INSTANCE_RPC_SASL_ENABLED.getKey(), false)) {
+        if (clientConf.hasSasl()) {
           // TODO Try to obtain a delegation token with the permission
         }
         break;
@@ -531,7 +532,7 @@ public class PermissionsIT extends AccumuloClusterHarness {
 
     // test each permission
     for (TablePermission perm : TablePermission.values()) {
-      log.debug("Verifying the " + perm + " permission");
+      log.debug("Verifying the {} permission", perm);
 
       // test permission before and after granting it
       createTestTable(c, principal, tableName);
@@ -569,21 +570,20 @@ public class PermissionsIT extends AccumuloClusterHarness {
   }
 
   private void testMissingTablePermission(Connector test_user_conn, ClusterUser testUser, TablePermission perm, String tableName) throws Exception {
-    Scanner scanner;
     BatchWriter writer;
     Mutation m;
-    log.debug("Confirming that the lack of the " + perm + " permission properly restricts the user");
+    log.debug("Confirming that the lack of the {} permission properly restricts the user", perm);
 
     // test permission prior to granting it
     switch (perm) {
       case READ:
-        try {
-          scanner = test_user_conn.createScanner(tableName, Authorizations.EMPTY);
+        try (Scanner scanner = test_user_conn.createScanner(tableName, Authorizations.EMPTY)) {
           int i = 0;
           for (Entry<Key,Value> entry : scanner)
             i += 1 + entry.getKey().getRowData().length();
-          if (i != 0)
+          if (i != 0) {
             throw new IllegalStateException("Should NOT be able to read from the table");
+          }
         } catch (RuntimeException e) {
           AccumuloSecurityException se = (AccumuloSecurityException) e.getCause();
           if (se.getSecurityErrorCode() != SecurityErrorCode.PERMISSION_DENIED)
@@ -640,6 +640,15 @@ public class PermissionsIT extends AccumuloClusterHarness {
             throw e;
         }
         break;
+      case GET_SUMMARIES:
+        try {
+          test_user_conn.tableOperations().summaries(tableName).retrieve();
+          throw new IllegalStateException("User should not be able to get table summaries");
+        } catch (AccumuloSecurityException e) {
+          if (e.getSecurityErrorCode() != SecurityErrorCode.PERMISSION_DENIED)
+            throw e;
+        }
+        break;
       default:
         throw new IllegalArgumentException("Unrecognized table Permission: " + perm);
     }
@@ -647,18 +656,18 @@ public class PermissionsIT extends AccumuloClusterHarness {
 
   private void testGrantedTablePermission(Connector test_user_conn, ClusterUser normalUser, TablePermission perm, String tableName) throws AccumuloException,
       TableExistsException, AccumuloSecurityException, TableNotFoundException, MutationsRejectedException {
-    Scanner scanner;
     BatchWriter writer;
     Mutation m;
-    log.debug("Confirming that the presence of the " + perm + " permission properly permits the user");
+    log.debug("Confirming that the presence of the {} permission properly permits the user", perm);
 
     // test permission after granting it
     switch (perm) {
       case READ:
-        scanner = test_user_conn.createScanner(tableName, Authorizations.EMPTY);
-        Iterator<Entry<Key,Value>> iter = scanner.iterator();
-        while (iter.hasNext())
-          iter.next();
+        try (Scanner scanner = test_user_conn.createScanner(tableName, Authorizations.EMPTY)) {
+          Iterator<Entry<Key,Value>> iter = scanner.iterator();
+          while (iter.hasNext())
+            iter.next();
+        }
         break;
       case WRITE:
         writer = test_user_conn.createBatchWriter(tableName, new BatchWriterConfig());
@@ -679,6 +688,11 @@ public class PermissionsIT extends AccumuloClusterHarness {
         break;
       case GRANT:
         test_user_conn.securityOperations().grantTablePermission(getAdminPrincipal(), tableName, TablePermission.GRANT);
+        break;
+      case GET_SUMMARIES:
+        List<Summary> summaries = test_user_conn.tableOperations().summaries(tableName).retrieve();
+        // just make sure it's not blocked by permissions, the actual summaries are tested in SummaryIT
+        Assert.assertTrue(summaries.isEmpty());
         break;
       default:
         throw new IllegalArgumentException("Unrecognized table Permission: " + perm);

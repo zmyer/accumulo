@@ -16,7 +16,8 @@
  */
 package org.apache.accumulo.master.tableOps;
 
-import org.apache.accumulo.core.client.impl.Tables;
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.fate.Repo;
 import org.apache.accumulo.master.Master;
 import org.apache.accumulo.server.master.state.MergeInfo;
@@ -41,10 +42,12 @@ class TableRangeOpWait extends MasterRepo {
   private static final Logger log = LoggerFactory.getLogger(TableRangeOpWait.class);
 
   private static final long serialVersionUID = 1L;
-  private String tableId;
+  private Table.ID tableId;
+  private Namespace.ID namespaceId;
 
-  public TableRangeOpWait(String tableId) {
+  public TableRangeOpWait(Namespace.ID namespaceId, Table.ID tableId) {
     this.tableId = tableId;
+    this.namespaceId = namespaceId;
   }
 
   @Override
@@ -57,12 +60,11 @@ class TableRangeOpWait extends MasterRepo {
 
   @Override
   public Repo<Master> call(long tid, Master master) throws Exception {
-    String namespaceId = Tables.getNamespaceId(master.getInstance(), tableId);
     MergeInfo mergeInfo = master.getMergeInfo(tableId);
     log.info("removing merge information " + mergeInfo);
     master.clearMergeState(tableId);
-    Utils.unreserveNamespace(namespaceId, tid, false);
     Utils.unreserveTable(tableId, tid, true);
+    Utils.unreserveNamespace(namespaceId, tid, false);
     return null;
   }
 

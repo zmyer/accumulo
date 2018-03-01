@@ -16,7 +16,7 @@
  */
 package org.apache.accumulo.test;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -34,27 +34,31 @@ import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.ClientConfiguration;
-import org.apache.accumulo.core.client.ClientConfiguration.ClientProperty;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.IteratorSetting;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.TableNotFoundException;
 import org.apache.accumulo.core.client.admin.TableOperations;
-import org.apache.accumulo.core.client.impl.Namespaces;
+import org.apache.accumulo.core.client.impl.Namespace;
 import org.apache.accumulo.core.client.sample.RowSampler;
 import org.apache.accumulo.core.client.security.tokens.AuthenticationToken;
 import org.apache.accumulo.core.client.security.tokens.KerberosToken;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
+import org.apache.accumulo.core.client.summary.summarizers.DeletesSummarizer;
+import org.apache.accumulo.core.client.summary.summarizers.FamilySummarizer;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Value;
@@ -72,7 +76,6 @@ import org.apache.accumulo.test.categories.MiniClusterOnlyTests;
 import org.apache.accumulo.test.categories.SunnyDayTests;
 import org.apache.accumulo.test.functional.SlowIterator;
 import org.apache.accumulo.tracer.TraceServer;
-import org.apache.commons.configuration.ConfigurationException;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -158,17 +161,13 @@ public class ShellServerIT extends SharedMiniClusterBase {
 
     TestShell(String user, String rootPass, String instanceName, String zookeepers, File configFile) throws IOException {
       ClientConfiguration clientConf;
-      try {
-        clientConf = new ClientConfiguration(configFile);
-      } catch (ConfigurationException e) {
-        throw new IOException(e);
-      }
+      clientConf = ClientConfiguration.fromFile(configFile);
       // start the shell
       output = new TestOutputStream();
       input = new StringInputStream();
       shell = new Shell(new ConsoleReader(input, output));
       shell.setLogErrorsToConsole();
-      if (clientConf.getBoolean(ClientProperty.INSTANCE_RPC_SASL_ENABLED.getKey(), false)) {
+      if (clientConf.hasSasl()) {
         // Pull the kerberos principal out when we're using SASL
         shell.config("-u", user, "-z", instanceName, zookeepers, "--config-file", configFile.getAbsolutePath());
       } else {
@@ -262,6 +261,10 @@ public class ShellServerIT extends SharedMiniClusterBase {
     public void configureMiniCluster(MiniAccumuloConfigImpl cfg, Configuration coreSite) {
       // Only one tserver to avoid race conditions on ZK propagation (auths and configuration)
       cfg.setNumTservers(1);
+      // Set the min span to 0 so we will definitely get all the traces back. See ACCUMULO-4365
+      Map<String,String> siteConf = cfg.getSiteConfig();
+      siteConf.put(Property.TRACE_SPAN_RECEIVER_PREFIX.getKey() + "tracer.span.min.ms", "0");
+      cfg.setSiteConfig(siteConf);
     }
   }
 
@@ -304,7 +307,7 @@ public class ShellServerIT extends SharedMiniClusterBase {
   public void deleteTables() throws Exception {
     Connector c = getConnector();
     for (String table : c.tableOperations().list()) {
-      if (!table.startsWith(Namespaces.ACCUMULO_NAMESPACE + ".") && !table.equals("trace"))
+      if (!table.startsWith(Namespace.ACCUMULO + ".") && !table.equals("trace"))
         try {
           c.tableOperations().delete(table);
         } catch (TableNotFoundException e) {
@@ -339,7 +342,7 @@ public class ShellServerIT extends SharedMiniClusterBase {
     ts.exec("exporttable -t " + table + " " + exportUri, true);
     DistCp cp = newDistCp(new Configuration(false));
     String import_ = "file://" + new File(rootPath, "ShellServerIT.import").toString();
-    if (getCluster().getClientConfig().getBoolean(ClientProperty.INSTANCE_RPC_SASL_ENABLED.getKey(), false)) {
+    if (getCluster().getClientConfig().hasSasl()) {
       // DistCp bugs out trying to get a fs delegation token to perform the cp. Just copy it ourselves by hand.
       FileSystem fs = getCluster().getFileSystem();
       FileSystem localFs = FileSystem.getLocal(new Configuration(false));
@@ -357,10 +360,10 @@ public class ShellServerIT extends SharedMiniClusterBase {
         for (String line; (line = reader.readLine()) != null;) {
           Path exportedFile = new Path(line);
           // There isn't a cp on FileSystem??
-          log.info("Copying " + line + " to " + localTmpPath);
+          log.info("Copying {} to {}", line, localTmpPath);
           fs.copyToLocalFile(exportedFile, localTmpPath);
           Path tmpFile = new Path(localTmpPath, exportedFile.getName());
-          log.info("Moving " + tmpFile + " to the import directory " + importDir);
+          log.info("Moving {} to the import directory {}", tmpFile, importDir);
           fs.moveFromLocalFile(tmpFile, importDir);
         }
       }
@@ -1342,7 +1345,7 @@ public class ShellServerIT extends SharedMiniClusterBase {
     File errorsDir = new File(rootPath, "errors");
     assertTrue(errorsDir.mkdir());
     fs.mkdirs(new Path(errorsDir.toString()));
-    AccumuloConfiguration aconf = AccumuloConfiguration.getDefaultConfiguration();
+    AccumuloConfiguration aconf = DefaultConfiguration.getInstance();
     FileSKVWriter evenWriter = FileOperations.getInstance().newWriterBuilder().forFile(even, fs, conf).withTableConfiguration(aconf).build();
     evenWriter.startDefaultLocalityGroup();
     FileSKVWriter oddWriter = FileOperations.getInstance().newWriterBuilder().forFile(odd, fs, conf).withTableConfiguration(aconf).build();
@@ -1487,7 +1490,7 @@ public class ShellServerIT extends SharedMiniClusterBase {
     ts.exec("systempermissions");
     assertEquals(12, ts.output.get().split("\n").length - 1);
     ts.exec("tablepermissions", true);
-    assertEquals(6, ts.output.get().split("\n").length - 1);
+    assertEquals(7, ts.output.get().split("\n").length - 1);
   }
 
   @Test
@@ -1501,62 +1504,62 @@ public class ShellServerIT extends SharedMiniClusterBase {
       ts.exec("insert " + i + " cf cq value", true);
     }
     Connector connector = getConnector();
-    final Scanner s = connector.createScanner(table, Authorizations.EMPTY);
-    IteratorSetting cfg = new IteratorSetting(30, SlowIterator.class);
-    SlowIterator.setSleepTime(cfg, 500);
-    s.addScanIterator(cfg);
+    try (Scanner s = connector.createScanner(table, Authorizations.EMPTY)) {
+      IteratorSetting cfg = new IteratorSetting(30, SlowIterator.class);
+      SlowIterator.setSleepTime(cfg, 500);
+      s.addScanIterator(cfg);
 
-    Thread thread = new Thread() {
-      @Override
-      public void run() {
-        try {
-          Iterators.size(s.iterator());
-        } catch (Exception ex) {
-          throw new RuntimeException(ex);
+      Thread thread = new Thread() {
+        @Override
+        public void run() {
+          try {
+            Iterators.size(s.iterator());
+          } catch (Exception ex) {
+            throw new RuntimeException(ex);
+          }
         }
-      }
-    };
-    thread.start();
+      };
+      thread.start();
 
-    List<String> scans = new ArrayList<>();
-    // Try to find the active scan for about 15seconds
-    for (int i = 0; i < 50 && scans.isEmpty(); i++) {
-      String currentScans = ts.exec("listscans", true);
-      log.info("Got output from listscans:\n" + currentScans);
-      String[] lines = currentScans.split("\n");
-      for (int scanOffset = 2; scanOffset < lines.length; scanOffset++) {
-        String currentScan = lines[scanOffset];
-        if (currentScan.contains(table)) {
-          log.info("Retaining scan: " + currentScan);
-          scans.add(currentScan);
-        } else {
-          log.info("Ignoring scan because of wrong table: " + currentScan);
+      List<String> scans = new ArrayList<>();
+      // Try to find the active scan for about 15seconds
+      for (int i = 0; i < 50 && scans.isEmpty(); i++) {
+        String currentScans = ts.exec("listscans", true);
+        log.info("Got output from listscans:\n{}", currentScans);
+        String[] lines = currentScans.split("\n");
+        for (int scanOffset = 2; scanOffset < lines.length; scanOffset++) {
+          String currentScan = lines[scanOffset];
+          if (currentScan.contains(table)) {
+            log.info("Retaining scan: {}", currentScan);
+            scans.add(currentScan);
+          } else {
+            log.info("Ignoring scan because of wrong table: {}", currentScan);
+          }
         }
+        sleepUninterruptibly(300, TimeUnit.MILLISECONDS);
       }
-      sleepUninterruptibly(300, TimeUnit.MILLISECONDS);
-    }
-    thread.join();
+      thread.join();
 
-    assertFalse("Could not find any active scans over table " + table, scans.isEmpty());
+      assertFalse("Could not find any active scans over table " + table, scans.isEmpty());
 
-    for (String scan : scans) {
-      if (!scan.contains("RUNNING")) {
-        log.info("Ignoring scan because it doesn't contain 'RUNNING': " + scan);
-        continue;
+      for (String scan : scans) {
+        if (!scan.contains("RUNNING")) {
+          log.info("Ignoring scan because it doesn't contain 'RUNNING': {}", scan);
+          continue;
+        }
+        String parts[] = scan.split("\\|");
+        assertEquals("Expected 14 colums, but found " + parts.length + " instead for '" + Arrays.toString(parts) + "'", 14, parts.length);
+        String tserver = parts[0].trim();
+        // TODO: any way to tell if the client address is accurate? could be local IP, host, loopback...?
+        String hostPortPattern = ".+:\\d+";
+        assertTrue(tserver.matches(hostPortPattern));
+        assertTrue(getConnector().instanceOperations().getTabletServers().contains(tserver));
+        String client = parts[1].trim();
+        assertTrue(client + " does not match " + hostPortPattern, client.matches(hostPortPattern));
+        // Scan ID should be a long (throwing an exception if it fails to parse)
+        Long.parseLong(parts[11].trim());
       }
-      String parts[] = scan.split("\\|");
-      assertEquals("Expected 14 colums, but found " + parts.length + " instead for '" + Arrays.toString(parts) + "'", 14, parts.length);
-      String tserver = parts[0].trim();
-      // TODO: any way to tell if the client address is accurate? could be local IP, host, loopback...?
-      String hostPortPattern = ".+:\\d+";
-      assertTrue(tserver.matches(hostPortPattern));
-      assertTrue(getConnector().instanceOperations().getTabletServers().contains(tserver));
-      String client = parts[1].trim();
-      assertTrue(client + " does not match " + hostPortPattern, client.matches(hostPortPattern));
-      // Scan ID should be a long (throwing an exception if it fails to parse)
-      Long.parseLong(parts[11].trim());
     }
-
     ts.exec("deletetable -f " + table, true);
   }
 
@@ -1636,7 +1639,7 @@ public class ShellServerIT extends SharedMiniClusterBase {
   @Test
   public void namespaces() throws Exception {
     ts.exec("namespaces", true, "\"\"", true); // default namespace, displayed as quoted empty string
-    ts.exec("namespaces", true, Namespaces.ACCUMULO_NAMESPACE, true);
+    ts.exec("namespaces", true, Namespace.ACCUMULO, true);
     ts.exec("createnamespace thing1", true);
     String namespaces = ts.exec("namespaces");
     assertTrue(namespaces.contains("thing1"));
@@ -1692,7 +1695,7 @@ public class ShellServerIT extends SharedMiniClusterBase {
     ts.exec("tables", true, "thing2.thingy", false);
 
     // put constraints on a namespace
-    ts.exec("constraint -ns thing3 -a org.apache.accumulo.examples.simple.constraints.NumericValueConstraint", true);
+    ts.exec("constraint -ns thing3 -a org.apache.accumulo.test.constraints.NumericValueConstraint", true);
     ts.exec("createtable thing3.constrained", true);
     ts.exec("table thing3.constrained", true);
     ts.exec("constraint -d 1");
@@ -1861,7 +1864,7 @@ public class ShellServerIT extends SharedMiniClusterBase {
 
     ts.exec("scan -t " + MetadataTable.NAME + " -np -c file -b " + tableId + " -e " + tableId + "~");
 
-    log.debug("countFiles(): " + ts.output.get());
+    log.debug("countFiles(): {}", ts.output.get());
 
     String[] lines = StringUtils.split(ts.output.get(), "\n");
     ts.output.clear();
@@ -1894,4 +1897,285 @@ public class ShellServerIT extends SharedMiniClusterBase {
     return null;
   }
 
+  private static void assertMatches(String output, String pattern) {
+    Assert.assertTrue("Pattern " + pattern + " did not match output : " + output, output.matches(pattern));
+  }
+
+  private static void assertNotContains(String output, String subsequence) {
+    Assert.assertFalse("Expected '" + subsequence + "' would not occur in output : " + output, output.contains(subsequence));
+  }
+
+  @Test
+  public void testSummaries() throws Exception {
+    ts.exec("createtable summary");
+    ts.exec("config -t summary -s table.summarizer.del=" + DeletesSummarizer.class.getName());
+    ts.exec("config -t summary -s table.summarizer.fam=" + FamilySummarizer.class.getName());
+
+    ts.exec("addsplits -t summary r1 r2");
+    ts.exec("insert r1 f1 q1 v1");
+    ts.exec("insert r2 f2 q1 v3");
+    ts.exec("insert r2 f2 q2 v4");
+    ts.exec("insert r3 f3 q1 v5");
+    ts.exec("insert r3 f3 q2 v6");
+    ts.exec("insert r3 f3 q3 v7");
+    ts.exec("flush -t summary -w");
+
+    String output = ts.exec("summaries");
+    assertMatches(output, "(?sm).*^.*deletes\\s+=\\s+0.*$.*");
+    assertMatches(output, "(?sm).*^.*total\\s+=\\s+6.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f1\\s+=\\s+1.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f2\\s+=\\s+2.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f3\\s+=\\s+3.*$.*");
+
+    ts.exec("delete r1 f1 q2");
+    ts.exec("delete r2 f2 q1");
+    ts.exec("flush -t summary -w");
+
+    output = ts.exec("summaries");
+    assertMatches(output, "(?sm).*^.*deletes\\s+=\\s+2.*$.*");
+    assertMatches(output, "(?sm).*^.*total\\s+=\\s+8.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f1\\s+=\\s+1.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f2\\s+=\\s+2.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f3\\s+=\\s+3.*$.*");
+
+    output = ts.exec("summaries -e r2");
+    assertMatches(output, "(?sm).*^.*deletes\\s+=\\s+2.*$.*");
+    assertMatches(output, "(?sm).*^.*total\\s+=\\s+5.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f1\\s+=\\s+1.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f2\\s+=\\s+2.*$.*");
+    assertNotContains(output, "c:f3");
+
+    output = ts.exec("summaries -b r2");
+    assertMatches(output, "(?sm).*^.*deletes\\s+=\\s+0.*$.*");
+    assertMatches(output, "(?sm).*^.*total\\s+=\\s+3.*$.*");
+    assertNotContains(output, "c:f1");
+    assertNotContains(output, "c:f2");
+    assertMatches(output, "(?sm).*^.*c:f3\\s+=\\s+3.*$.*");
+
+    output = ts.exec("summaries -b r1 -e r2");
+    assertMatches(output, "(?sm).*^.*deletes\\s+=\\s+1.*$.*");
+    assertMatches(output, "(?sm).*^.*total\\s+=\\s+3.*$.*");
+    assertNotContains(output, "c:f1");
+    assertMatches(output, "(?sm).*^.*c:f2\\s+=\\s+2.*$.*");
+    assertNotContains(output, "c:f3");
+
+    output = ts.exec("summaries -sr .*Family.*");
+    assertNotContains(output, "deletes ");
+    assertMatches(output, "(?sm).*^.*c:f1\\s+=\\s+1.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f2\\s+=\\s+2.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f3\\s+=\\s+3.*$.*");
+
+    output = ts.exec("summaries -b r1 -e r2 -sr .*Family.*");
+    assertNotContains(output, "deletes ");
+    assertNotContains(output, "c:f1");
+    assertMatches(output, "(?sm).*^.*c:f2\\s+=\\s+2.*$.*");
+    assertNotContains(output, "c:f3");
+  }
+
+  @Test
+  public void testSummarySelection() throws Exception {
+    ts.exec("createtable summary2");
+    // will create a few files and do not want them compacted
+    ts.exec("config -t summary2 -s " + Property.TABLE_MAJC_RATIO + "=10");
+
+    ts.exec("insert r1 f1 q1 v1");
+    ts.exec("insert r2 f2 q1 v2");
+    ts.exec("flush -t summary2 -w");
+
+    ts.exec("config -t summary2 -s table.summarizer.fam=" + FamilySummarizer.class.getName());
+
+    ts.exec("insert r1 f2 q1 v3");
+    ts.exec("insert r3 f3 q1 v4");
+    ts.exec("flush -t summary2 -w");
+
+    String output = ts.exec("summaries");
+    assertNotContains(output, "c:f1");
+    assertMatches(output, "(?sm).*^.*c:f2\\s+=\\s+1.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f3\\s+=\\s+1.*$.*");
+    // check that there are two files, with one missing summary info
+    assertMatches(output, "(?sm).*^.*total[:]2[,]\\s+missing[:]1[,]\\s+extra[:]0.*$.*");
+
+    // compact only the file missing summary info
+    ts.exec("compact -t summary2 --sf-no-summary -w");
+    output = ts.exec("summaries");
+    assertMatches(output, "(?sm).*^.*c:f1\\s+=\\s+1.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f2\\s+=\\s+2.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f3\\s+=\\s+1.*$.*");
+    // check that there are two files, with none missing summary info
+    assertMatches(output, "(?sm).*^.*total[:]2[,]\\s+missing[:]0[,]\\s+extra[:]0.*$.*");
+
+    // create a situation where files has summary data outside of tablet
+    ts.exec("addsplits -t summary2 r2");
+    output = ts.exec("summaries -e r2");
+    assertMatches(output, "(?sm).*^.*c:f1\\s+=\\s+1.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f2\\s+=\\s+2.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f3\\s+=\\s+1.*$.*");
+    // check that there are two files, with one having extra summary info
+    assertMatches(output, "(?sm).*^.*total[:]2[,]\\s+missing[:]0[,]\\s+extra[:]1.*$.*");
+
+    // compact only the files with extra summary info
+    ts.exec("compact -t summary2 --sf-extra-summary -w");
+    output = ts.exec("summaries -e r2");
+    assertMatches(output, "(?sm).*^.*c:f1\\s+=\\s+1.*$.*");
+    assertMatches(output, "(?sm).*^.*c:f2\\s+=\\s+2.*$.*");
+    assertNotContains(output, "c:f3");
+    // check that there are two files, with none having extra summary info
+    assertMatches(output, "(?sm).*^.*total[:]2[,]\\s+missing[:]0[,]\\s+extra[:]0.*$.*");
+  }
+
+  @Test
+  public void testCreateTableWithLocalityGroups() throws Exception {
+    final String table = name.getMethodName();
+    ts.exec("createtable " + table + " -l locg1=fam1,fam2", true);
+    Connector connector = getConnector();
+    Map<String,Set<Text>> lMap = connector.tableOperations().getLocalityGroups(table);
+    Set<Text> expectedColFams = new HashSet<>(Arrays.asList(new Text("fam1"), new Text("fam2")));
+    for (Entry<String,Set<Text>> entry : lMap.entrySet()) {
+      Assert.assertTrue(entry.getKey().equals("locg1"));
+      Assert.assertTrue(entry.getValue().containsAll(expectedColFams));
+    }
+    ts.exec("deletetable -f " + table);
+  }
+
+  /**
+   * Due to the existing complexity of the createtable command, the createtable help only displays an example of setting one locality group. It is possible to
+   * set multiple groups if needed. This test verifies that capability.
+   */
+  @Test
+  public void testCreateTableWithMultipleLocalityGroups() throws Exception {
+    final String table = name.getMethodName();
+    ts.exec("createtable " + table + " -l locg1=fam1,fam2 locg2=colfam1", true);
+    Connector connector = getConnector();
+    Map<String,Set<Text>> lMap = connector.tableOperations().getLocalityGroups(table);
+    Assert.assertTrue(lMap.keySet().contains("locg1"));
+    Assert.assertTrue(lMap.keySet().contains("locg2"));
+    Set<Text> expectedColFams1 = new HashSet<>(Arrays.asList(new Text("fam1"), new Text("fam2")));
+    Set<Text> expectedColFams2 = new HashSet<>(Arrays.asList(new Text("colfam1")));
+    Assert.assertTrue(lMap.get("locg1").containsAll(expectedColFams1));
+    Assert.assertTrue(lMap.get("locg2").containsAll(expectedColFams2));
+    ts.exec("deletetable -f " + table);
+  }
+
+  @Test
+  public void testCreateTableWithLocalityGroupsBadArguments() throws IOException {
+    final String table = name.getMethodName();
+    ts.exec("createtable " + table + " -l locg1 fam1,fam2", false);
+    ts.exec("createtable " + table + "-l", false);
+    ts.exec("createtable " + table + " -l locg1 = fam1,fam2", false);
+    ts.exec("createtable " + table + " -l locg1=fam1 ,fam2", false);
+    ts.exec("createtable " + table + " -l locg1=fam1,fam2 locg1=fam3,fam4", false);
+    ts.exec("createtable " + table + " -l locg1=fam1,fam2 locg2=fam1", false);
+    ts.exec("createtable " + table + " -l locg1", false);
+    ts.exec("createtable " + table + " group=fam1", false);
+    ts.exec("createtable " + table + "-l fam1,fam2", false);
+    ts.exec("createtable " + table + " -local locg1=fam1,fam2", false);
+  }
+
+  @Test
+  public void testCreateTableWithIterators() throws Exception {
+    final String tmpTable = "tmpTable";
+    final String table = name.getMethodName();
+
+    // create iterator profile
+    // Will use tmpTable for creating profile since setshelliter is requiring a table
+    // even though its command line help indicates that it is optional. Likely due to
+    // the fact that setshelliter extends setiter, which does require a table argument.
+    ts.exec("createtable " + tmpTable, true);
+    String output = ts.exec("tables");
+    Assert.assertTrue(output.contains(tmpTable));
+
+    ts.input.set("\n5000\n\n");
+    ts.exec("setshelliter -n itname -p 10 -pn profile1 -ageoff -t " + tmpTable, true);
+    output = ts.exec("listshelliter");
+    Assert.assertTrue(output.contains("Profile : profile1"));
+
+    // create table making use of the iterator profile
+    ts.exec("createtable " + table + " -i profile1:scan,minc", true);
+    ts.exec("insert foo a b c", true);
+    ts.exec("scan", true, "foo a:b []    c");
+    ts.exec("sleep 6", true);
+    ts.exec("scan", true, "", true);
+    ts.exec("deletetable -f " + table);
+    ts.exec("deletetable -f " + tmpTable);
+  }
+
+  /**
+   * Due to the existing complexity of the createtable command, the createtable help only displays an example of setting one iterator upon table creation. It is
+   * possible to set multiple if needed. This test verifies that capability.
+   */
+  @Test
+  public void testCreateTableWithMultipleIterators() throws Exception {
+    final String tmpTable = "tmpTable";
+    final String table = name.getMethodName();
+
+    // create iterator profile
+    // Will use tmpTable for creating profile since setshelliter is requiring a table
+    // even though its command line help indicates that it is optional. Likely due to
+    // the fact that setshelliter extends setiter, which does require a table argument.
+    ts.exec("createtable " + tmpTable, true);
+    String output = ts.exec("tables");
+    Assert.assertTrue(output.contains(tmpTable));
+
+    ts.input.set("\n5000\n\n");
+    ts.exec("setshelliter -n itname -p 10 -pn profile1 -ageoff -t " + tmpTable, true);
+    output = ts.exec("listshelliter");
+    Assert.assertTrue(output.contains("Profile : profile1"));
+
+    ts.input.set("2\n");
+    ts.exec("setshelliter -n iter2 -p 11 -pn profile2 -vers -t " + tmpTable, true);
+    output = ts.exec("listshelliter");
+    Assert.assertTrue(output.contains("Profile : profile2"));
+
+    // create table making use of the iterator profiles
+    ts.exec("createtable " + table + " -i profile1:scan,minc profile2:all ", true);
+    ts.exec("insert foo a b c", true);
+    ts.exec("scan", true, "foo a:b []    c");
+    ts.exec("sleep 6", true);
+    ts.exec("scan", true, "", true);
+    output = ts.exec("listiter -t " + table + " -all");
+    Assert.assertTrue(output.contains("Iterator itname, scan scope options"));
+    Assert.assertTrue(output.contains("Iterator itname, minc scope options"));
+    Assert.assertFalse(output.contains("Iterator itname, majc scope options"));
+    Assert.assertTrue(output.contains("Iterator iter2, scan scope options"));
+    Assert.assertTrue(output.contains("Iterator iter2, minc scope options"));
+    Assert.assertTrue(output.contains("Iterator iter2, majc scope options"));
+    ts.exec("deletetable -f " + table);
+    ts.exec("deletetable -f " + tmpTable);
+  }
+
+  @Test
+  public void testCreateTableWithIteratorsBadArguments() throws IOException {
+    final String tmpTable = "tmpTable";
+    final String table = name.getMethodName();
+    ts.exec("createtable " + tmpTable, true);
+    String output = ts.exec("tables");
+    Assert.assertTrue(output.contains(tmpTable));
+    ts.input.set("\n5000\n\n");
+    ts.exec("setshelliter -n itname -p 10 -pn profile1 -ageoff -t " + tmpTable, true);
+    output = ts.exec("listshelliter");
+    Assert.assertTrue(output.contains("Profile : profile1"));
+    // test various bad argument calls
+    ts.exec("createtable " + table + " -i noprofile:scan,minc", false);
+    ts.exec("createtable " + table + " -i profile1:scan,minc,all,majc", false);
+    ts.exec("createtable " + table + " -i profile1:scan,all,majc", false);
+    ts.exec("createtable " + table + " -i profile1:scan,min,majc", false);
+    ts.exec("createtable " + table + " -i profile1:scan,max,all", false);
+    ts.exec("createtable " + table + " -i profile1:", false);
+    ts.exec("createtable " + table + " -i profile1: ", false);
+    ts.exec("createtable " + table + " -i profile1:-scan", false);
+    ts.exec("createtable " + table + " profile1:majc", false);
+    ts.exec("createtable " + table + " -i profile1: all", false);
+    ts.exec("createtable " + table + " -i profile1: All", false);
+    ts.exec("createtable " + table + " -i profile1: scan", false);
+    ts.exec("createtable " + table + " -i profile1:minc scan", false);
+    ts.exec("createtable " + table + " -i profile1:minc,Scan", false);
+    ts.exec("createtable " + table + " -i profile1:minc, scan", false);
+    ts.exec("createtable " + table + " -i profile1:minc,,scan", false);
+    ts.exec("createtable " + table + " -i profile1:minc,minc", false);
+    ts.exec("createtable " + table + " -i profile1:minc,Minc", false);
+    ts.exec("createtable " + table + " -i profile1:minc, ,scan", false);
+    ts.exec("createtable " + table + "-i", false);
+    ts.exec("createtable " + table + "-i ", false);
+    ts.exec("deletetable -f " + tmpTable);
+  }
 }

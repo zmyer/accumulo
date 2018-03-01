@@ -17,6 +17,7 @@
 package org.apache.accumulo.monitor;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.util.Collection;
 import java.util.Objects;
@@ -27,13 +28,11 @@ import java.util.concurrent.TimeUnit;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.conf.SiteConfiguration;
 import org.apache.accumulo.core.rpc.TTimeoutTransport;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.thrift.transport.TTransport;
 import org.apache.thrift.transport.TTransportException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.google.common.net.HostAndPort;
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class ZooKeeperStatus implements Runnable {
 

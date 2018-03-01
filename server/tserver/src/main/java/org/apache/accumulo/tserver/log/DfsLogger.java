@@ -36,7 +36,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -56,6 +55,8 @@ import org.apache.accumulo.core.util.Daemon;
 import org.apache.accumulo.core.util.Pair;
 import org.apache.accumulo.fate.util.LoggingRunnable;
 import org.apache.accumulo.server.ServerConstants;
+import org.apache.accumulo.server.fs.VolumeChooserEnvironment;
+import org.apache.accumulo.server.fs.VolumeChooserEnvironment.ChooserScope;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.tserver.TabletMutations;
 import org.apache.accumulo.tserver.logger.LogFileKey;
@@ -337,8 +338,7 @@ public class DfsLogger implements Comparable<DfsLogger> {
     metaReference = meta;
   }
 
-  public static DFSLoggerInputStreams readHeaderAndReturnStream(VolumeManager fs, Path path, AccumuloConfiguration conf) throws IOException {
-    FSDataInputStream input = fs.open(path);
+  public static DFSLoggerInputStreams readHeaderAndReturnStream(FSDataInputStream input, AccumuloConfiguration conf) throws IOException {
     DataInputStream decryptingInput = null;
 
     byte[] magic = DfsLogger.LOG_FILE_HEADER_V3.getBytes(UTF_8);
@@ -414,7 +414,7 @@ public class DfsLogger implements Comparable<DfsLogger> {
 
       }
     } catch (EOFException e) {
-      log.warn("Got EOFException trying to read WAL header information, assuming the rest of the file (" + path + ") has no data.");
+      log.warn("Got EOFException trying to read WAL header information, assuming the rest of the file has no data.");
       // A TabletServer might have died before the (complete) header was written
       throw new LogHeaderIncompleteException(e);
     }
@@ -432,14 +432,15 @@ public class DfsLogger implements Comparable<DfsLogger> {
    */
   public synchronized void open(String address) throws IOException {
     String filename = UUID.randomUUID().toString();
-    log.debug("Address is " + address);
+    log.debug("Address is {}", address);
     String logger = Joiner.on("+").join(address.split(":"));
 
     log.debug("DfsLogger.open() begin");
     VolumeManager fs = conf.getFileSystem();
 
-    logPath = fs.choose(Optional.<String> empty(), ServerConstants.getBaseUris()) + Path.SEPARATOR + ServerConstants.WAL_DIR + Path.SEPARATOR + logger
-        + Path.SEPARATOR + filename;
+    VolumeChooserEnvironment chooserEnv = new VolumeChooserEnvironment(ChooserScope.LOGGER);
+    logPath = fs.choose(chooserEnv, ServerConstants.getBaseUris()) + Path.SEPARATOR + ServerConstants.WAL_DIR + Path.SEPARATOR + logger + Path.SEPARATOR
+        + filename;
 
     metaReference = toString();
     LoggerOperation op = null;
@@ -447,9 +448,9 @@ public class DfsLogger implements Comparable<DfsLogger> {
       short replication = (short) conf.getConfiguration().getCount(Property.TSERV_WAL_REPLICATION);
       if (replication == 0)
         replication = fs.getDefaultReplication(new Path(logPath));
-      long blockSize = conf.getConfiguration().getMemoryInBytes(Property.TSERV_WAL_BLOCKSIZE);
+      long blockSize = conf.getConfiguration().getAsBytes(Property.TSERV_WAL_BLOCKSIZE);
       if (blockSize == 0)
-        blockSize = (long) (conf.getConfiguration().getMemoryInBytes(Property.TSERV_WALOG_MAX_SIZE) * 1.1);
+        blockSize = (long) (conf.getConfiguration().getAsBytes(Property.TSERV_WALOG_MAX_SIZE) * 1.1);
       if (conf.getConfiguration().getBoolean(Property.TSERV_WAL_SYNC))
         logFile = fs.createSyncable(new Path(logPath), 0, replication, blockSize);
       else
@@ -465,6 +466,11 @@ public class DfsLogger implements Comparable<DfsLogger> {
       logFile.write(LOG_FILE_HEADER_V3.getBytes(UTF_8));
 
       CryptoModuleParameters params = CryptoModuleFactory.createParamsObjectFromAccumuloConfiguration(conf.getConfiguration());
+      // Immediately update to the correct cipher. Doing this here keeps the CryptoModule independent of the writers using it
+      if (params.getAllOptions().get(Property.CRYPTO_WAL_CIPHER_SUITE.getKey()) != null
+          && !params.getAllOptions().get(Property.CRYPTO_WAL_CIPHER_SUITE.getKey()).equals("")) {
+        params.setCipherSuite(params.getAllOptions().get(Property.CRYPTO_WAL_CIPHER_SUITE.getKey()));
+      }
 
       NoFlushOutputStream nfos = new NoFlushOutputStream(logFile);
       params.setPlaintextOutputStream(nfos);
@@ -504,7 +510,7 @@ public class DfsLogger implements Comparable<DfsLogger> {
     syncThread.setName("Accumulo WALog thread " + toString());
     syncThread.start();
     op.await();
-    log.debug("Got new write-ahead log: " + this);
+    log.debug("Got new write-ahead log: {}", this);
   }
 
   @Override
@@ -571,7 +577,7 @@ public class DfsLogger implements Comparable<DfsLogger> {
       }
   }
 
-  public synchronized void defineTablet(int seq, int tid, KeyExtent tablet) throws IOException {
+  public synchronized void defineTablet(long seq, int tid, KeyExtent tablet) throws IOException {
     // write this log to the METADATA table
     final LogFileKey key = new LogFileKey();
     key.event = DEFINE_TABLET;
@@ -592,7 +598,7 @@ public class DfsLogger implements Comparable<DfsLogger> {
     encryptingLogFile.flush();
   }
 
-  public LoggerOperation log(int seq, int tid, Mutation mutation, Durability durability) throws IOException {
+  public LoggerOperation log(long seq, int tid, Mutation mutation, Durability durability) throws IOException {
     return logManyTablets(Collections.singletonList(new TabletMutations(tid, seq, Collections.singletonList(mutation), durability)));
   }
 
@@ -654,7 +660,7 @@ public class DfsLogger implements Comparable<DfsLogger> {
     return result;
   }
 
-  public LoggerOperation minorCompactionFinished(int seq, int tid, String fqfn, Durability durability) throws IOException {
+  public LoggerOperation minorCompactionFinished(long seq, int tid, String fqfn, Durability durability) throws IOException {
     LogFileKey key = new LogFileKey();
     key.event = COMPACTION_FINISH;
     key.seq = seq;
@@ -662,7 +668,7 @@ public class DfsLogger implements Comparable<DfsLogger> {
     return logFileData(Collections.singletonList(new Pair<>(key, EMPTY)), durability);
   }
 
-  public LoggerOperation minorCompactionStarted(int seq, int tid, String fqfn, Durability durability) throws IOException {
+  public LoggerOperation minorCompactionStarted(long seq, int tid, String fqfn, Durability durability) throws IOException {
     LogFileKey key = new LogFileKey();
     key.event = COMPACTION_START;
     key.seq = seq;

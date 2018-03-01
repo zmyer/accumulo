@@ -17,6 +17,7 @@
 package org.apache.accumulo.test.functional;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 
 import java.util.Map;
@@ -26,7 +27,7 @@ import org.apache.accumulo.core.client.BatchWriter;
 import org.apache.accumulo.core.client.BatchWriterConfig;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Scanner;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.ConfigurationTypeHelper;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Range;
@@ -42,7 +43,6 @@ import org.junit.Test;
 
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class DeleteEverythingIT extends AccumuloClusterHarness {
 
@@ -67,7 +67,7 @@ public class DeleteEverythingIT extends AccumuloClusterHarness {
     c.instanceOperations().setProperty(Property.TSERV_MAJC_DELAY.getKey(), "1s");
     if (getClusterType() == ClusterType.STANDALONE) {
       // Gotta wait for the cluster to get out of the default sleep value
-      Thread.sleep(AccumuloConfiguration.getTimeInMillis(majcDelay));
+      Thread.sleep(ConfigurationTypeHelper.getTimeInMillis(majcDelay));
     }
   }
 
@@ -97,22 +97,24 @@ public class DeleteEverythingIT extends AccumuloClusterHarness {
     bw.addMutation(m);
     bw.flush();
 
-    Scanner scanner = getConnector().createScanner(tableName, Authorizations.EMPTY);
-    scanner.setRange(new Range());
-    int count = Iterators.size(scanner.iterator());
-    assertEquals("count == " + count, 0, count);
-    getConnector().tableOperations().flush(tableName, null, null, true);
+    try (Scanner scanner = getConnector().createScanner(tableName, Authorizations.EMPTY)) {
+      scanner.setRange(new Range());
+      int count = Iterators.size(scanner.iterator());
+      assertEquals("count == " + count, 0, count);
+      getConnector().tableOperations().flush(tableName, null, null, true);
 
-    getConnector().tableOperations().setProperty(tableName, Property.TABLE_MAJC_RATIO.getKey(), "1.0");
-    sleepUninterruptibly(4, TimeUnit.SECONDS);
+      getConnector().tableOperations().setProperty(tableName, Property.TABLE_MAJC_RATIO.getKey(), "1.0");
+      sleepUninterruptibly(4, TimeUnit.SECONDS);
 
-    FunctionalTestUtils.checkRFiles(c, tableName, 1, 1, 0, 0);
+      FunctionalTestUtils.checkRFiles(c, tableName, 1, 1, 0, 0);
 
-    bw.close();
+      bw.close();
 
-    count = Iterables.size(scanner);
+      count = Iterables.size(scanner);
 
-    if (count != 0)
-      throw new Exception("count == " + count);
+      if (count != 0) {
+        throw new Exception("count == " + count);
+      }
+    }
   }
 }

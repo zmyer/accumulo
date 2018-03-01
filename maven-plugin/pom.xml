@@ -26,6 +26,9 @@
   <packaging>maven-plugin</packaging>
   <name>Apache Accumulo Maven Plugin</name>
   <description>An Apache Maven plugin for testing software against a test Apache Accumulo instance.</description>
+  <prerequisites>
+    <maven>${maven.plugin-version}</maven>
+  </prerequisites>
   <dependencies>
     <dependency>
       <groupId>commons-io</groupId>
@@ -73,6 +76,23 @@
   </dependencies>
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>analyze</id>
+            <goals>
+              <goal>analyze-only</goal>
+            </goals>
+            <configuration>
+              <ignoredUnusedDeclaredDependencies combine.children="append">
+                <unusedDeclaredDependency>junit:junit:jar:4.12</unusedDeclaredDependency>
+              </ignoredUnusedDeclaredDependencies>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-plugin-plugin</artifactId>

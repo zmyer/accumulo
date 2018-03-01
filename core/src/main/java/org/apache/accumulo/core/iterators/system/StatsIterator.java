@@ -25,27 +25,27 @@ import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.iterators.IteratorEnvironment;
+import org.apache.accumulo.core.iterators.ServerWrappingIterator;
 import org.apache.accumulo.core.iterators.SortedKeyValueIterator;
-import org.apache.accumulo.core.iterators.WrappingIterator;
 
 /**
  *
  */
-public class StatsIterator extends WrappingIterator {
+public class StatsIterator extends ServerWrappingIterator {
 
   private int numRead = 0;
   private AtomicLong seekCounter;
   private AtomicLong readCounter;
 
   public StatsIterator(SortedKeyValueIterator<Key,Value> source, AtomicLong seekCounter, AtomicLong readCounter) {
-    super.setSource(source);
+    super(source);
     this.seekCounter = seekCounter;
     this.readCounter = readCounter;
   }
 
   @Override
   public void next() throws IOException {
-    super.next();
+    source.next();
     numRead++;
 
     if (numRead % 23 == 0) {
@@ -56,12 +56,12 @@ public class StatsIterator extends WrappingIterator {
 
   @Override
   public SortedKeyValueIterator<Key,Value> deepCopy(IteratorEnvironment env) {
-    return new StatsIterator(getSource().deepCopy(env), seekCounter, readCounter);
+    return new StatsIterator(source.deepCopy(env), seekCounter, readCounter);
   }
 
   @Override
   public void seek(Range range, Collection<ByteSequence> columnFamilies, boolean inclusive) throws IOException {
-    super.seek(range, columnFamilies, inclusive);
+    source.seek(range, columnFamilies, inclusive);
     seekCounter.incrementAndGet();
     readCounter.addAndGet(numRead);
     numRead = 0;

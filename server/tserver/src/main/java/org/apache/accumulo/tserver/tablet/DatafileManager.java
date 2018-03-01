@@ -16,7 +16,7 @@
  */
 package org.apache.accumulo.tserver.tablet;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -31,7 +31,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.ConfigurationTypeHelper;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.impl.KeyExtent;
 import org.apache.accumulo.core.metadata.schema.DataFileValue;
@@ -50,12 +50,12 @@ import org.apache.accumulo.server.util.MasterMetadataUtil;
 import org.apache.accumulo.server.util.MetadataTableUtil;
 import org.apache.accumulo.server.util.ReplicationTableUtil;
 import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
-import org.apache.accumulo.tserver.TLevel;
 import org.apache.hadoop.fs.Path;
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 class DatafileManager {
-  private final Logger log = Logger.getLogger(DatafileManager.class);
+  private final Logger log = LoggerFactory.getLogger(DatafileManager.class);
   // access to datafilesizes needs to be synchronized: see CompactionRunner#getNumFiles
   private final Map<FileRef,DataFileValue> datafileSizes = Collections.synchronizedMap(new TreeMap<FileRef,DataFileValue>());
   private final Tablet tablet;
@@ -93,7 +93,7 @@ class DatafileManager {
         try {
           tablet.wait(50);
         } catch (InterruptedException e) {
-          log.warn(e, e);
+          log.warn("{}", e.getMessage(), e);
         }
       }
 
@@ -140,7 +140,7 @@ class DatafileManager {
     }
 
     if (filesToDelete.size() > 0) {
-      log.debug("Removing scan refs from metadata " + tablet.getExtent() + " " + filesToDelete);
+      log.debug("Removing scan refs from metadata {} {}", tablet.getExtent(), filesToDelete);
       MetadataTableUtil.removeScanFiles(tablet.getExtent(), filesToDelete, tablet.getTabletServer(), tablet.getTabletServer().getLock());
     }
   }
@@ -161,7 +161,7 @@ class DatafileManager {
     }
 
     if (filesToDelete.size() > 0) {
-      log.debug("Removing scan refs from metadata " + tablet.getExtent() + " " + filesToDelete);
+      log.debug("Removing scan refs from metadata {} {}", tablet.getExtent(), filesToDelete);
       MetadataTableUtil.removeScanFiles(tablet.getExtent(), filesToDelete, tablet.getTabletServer(), tablet.getTabletServer().getLock());
     }
   }
@@ -185,7 +185,7 @@ class DatafileManager {
             try {
               tablet.wait(100);
             } catch (InterruptedException e) {
-              log.warn(e, e);
+              log.warn("{}", e.getMessage(), e);
             }
           }
         }
@@ -220,7 +220,7 @@ class DatafileManager {
       boolean inTheRightDirectory = false;
       Path parent = tpath.path().getParent().getParent();
       for (String tablesDir : ServerConstants.getTablesDirs()) {
-        if (parent.equals(new Path(tablesDir, tablet.getExtent().getTableId()))) {
+        if (parent.equals(new Path(tablesDir, tablet.getExtent().getTableId().canonicalID()))) {
           inTheRightDirectory = true;
           break;
         }
@@ -261,7 +261,7 @@ class DatafileManager {
     synchronized (tablet) {
       for (Entry<FileRef,DataFileValue> tpath : paths.entrySet()) {
         if (datafileSizes.containsKey(tpath.getKey())) {
-          log.error("Adding file that is already in set " + tpath.getKey());
+          log.error("Adding file that is already in set {}", tpath.getKey());
         }
         datafileSizes.put(tpath.getKey(), tpath.getValue());
 
@@ -273,7 +273,7 @@ class DatafileManager {
     }
 
     for (Entry<FileRef,DataFileValue> entry : paths.entrySet()) {
-      log.log(TLevel.TABLET_HIST, tablet.getExtent() + " import " + entry.getKey() + " " + entry.getValue());
+      log.debug("TABLET_HIST {} import {} {}", tablet.getExtent(), entry.getKey(), entry.getValue());
     }
   }
 
@@ -299,7 +299,8 @@ class DatafileManager {
       // find the smallest file
 
       long maxFileSize = Long.MAX_VALUE;
-      maxMergingMinorCompactionFileSize = AccumuloConfiguration.getMemoryInBytes(tablet.getTableConfiguration().get(Property.TABLE_MINC_MAX_MERGE_FILE_SIZE));
+      maxMergingMinorCompactionFileSize = ConfigurationTypeHelper.getFixedMemoryAsBytes(tablet.getTableConfiguration().get(
+          Property.TABLE_MINC_MAX_MERGE_FILE_SIZE));
       if (maxMergingMinorCompactionFileSize > 0) {
         maxFileSize = maxMergingMinorCompactionFileSize;
       }
@@ -353,7 +354,7 @@ class DatafileManager {
           tablet.getTabletServer().getFileSystem().deleteRecursively(tmpDatafile.path());
         } else {
           if (tablet.getTabletServer().getFileSystem().exists(newDatafile.path())) {
-            log.warn("Target map file already exist " + newDatafile);
+            log.warn("Target map file already exist {}", newDatafile);
             tablet.getTabletServer().getFileSystem().deleteRecursively(newDatafile.path());
           }
 
@@ -416,7 +417,7 @@ class DatafileManager {
       // tablet is online and thus these WALs are referenced by that tablet. Therefore, the WAL replication status cannot be 'closed'.
       if (replicate) {
         if (log.isDebugEnabled()) {
-          log.debug("Recording that data has been ingested into " + tablet.getExtent() + " using " + logFileOnly);
+          log.debug("Recording that data has been ingested into {} using {}", tablet.getExtent(), logFileOnly);
         }
         for (String logFile : logFileOnly) {
           ReplicationTableUtil.updateFiles(tablet.getTabletServer(), tablet.getExtent(), logFile, StatusUtil.openWithUnknownLength());
@@ -443,7 +444,7 @@ class DatafileManager {
       t1 = System.currentTimeMillis();
 
       if (datafileSizes.containsKey(newDatafile)) {
-        log.error("Adding file that is already in set " + newDatafile);
+        log.error("Adding file that is already in set {}", newDatafile);
       }
 
       if (dfv.getNumEntries() > 0) {
@@ -465,11 +466,11 @@ class DatafileManager {
     removeFilesAfterScan(filesInUseByScans);
 
     if (absMergeFile != null)
-      log.log(TLevel.TABLET_HIST, tablet.getExtent() + " MinC [" + absMergeFile + ",memory] -> " + newDatafile);
+      log.debug("TABLET_HIST {} MinC [{},memory] -> {}", tablet.getExtent(), absMergeFile, newDatafile);
     else
-      log.log(TLevel.TABLET_HIST, tablet.getExtent() + " MinC [memory] -> " + newDatafile);
+      log.debug("TABLET_HIST {} MinC [memory] -> {}", tablet.getExtent(), newDatafile);
     log.debug(String.format("MinC finish lock %.2f secs %s", (t2 - t1) / 1000.0, tablet.getExtent().toString()));
-    long splitSize = tablet.getTableConfiguration().getMemoryInBytes(Property.TABLE_SPLIT_THRESHOLD);
+    long splitSize = tablet.getTableConfiguration().getAsBytes(Property.TABLE_SPLIT_THRESHOLD);
     if (dfv.getSize() > splitSize) {
       log.debug(String.format("Minor Compaction wrote out file larger than split threshold.  split threshold = %,d  file size = %,d", splitSize, dfv.getSize()));
     }
@@ -542,14 +543,14 @@ class DatafileManager {
       // atomically remove old files and add new file
       for (FileRef oldDatafile : oldDatafiles) {
         if (!datafileSizes.containsKey(oldDatafile)) {
-          log.error("file does not exist in set " + oldDatafile);
+          log.error("file does not exist in set {}", oldDatafile);
         }
         datafileSizes.remove(oldDatafile);
         majorCompactingFiles.remove(oldDatafile);
       }
 
       if (datafileSizes.containsKey(newDatafile)) {
-        log.error("Adding file that is already in set " + newDatafile);
+        log.error("Adding file that is already in set {}", newDatafile);
       }
 
       if (dfv.getNumEntries() > 0) {
@@ -570,14 +571,14 @@ class DatafileManager {
     if (!extent.isRootTablet()) {
       Set<FileRef> filesInUseByScans = waitForScansToFinish(oldDatafiles, false, 10000);
       if (filesInUseByScans.size() > 0)
-        log.debug("Adding scan refs to metadata " + extent + " " + filesInUseByScans);
+        log.debug("Adding scan refs to metadata {} {}", extent, filesInUseByScans);
       MasterMetadataUtil.replaceDatafiles(tablet.getTabletServer(), extent, oldDatafiles, filesInUseByScans, newDatafile, compactionId, dfv, tablet
           .getTabletServer().getClientAddressString(), lastLocation, tablet.getTabletServer().getLock());
       removeFilesAfterScan(filesInUseByScans);
     }
 
     log.debug(String.format("MajC finish lock %.2f secs", (t2 - t1) / 1000.0));
-    log.log(TLevel.TABLET_HIST, extent + " MajC " + oldDatafiles + " --> " + newDatafile);
+    log.debug("TABLET_HIST {} MajC  --> {}", oldDatafiles, newDatafile);
   }
 
   public SortedMap<FileRef,DataFileValue> getDatafileSizes() {

@@ -18,15 +18,6 @@
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
 
 <configuration>
-	<!--
-  Put your site-specific accumulo configurations here.
-
-  The available configuration values along with their defaults
-  are documented in docs/config.html
-
-  Unless you are simply testing at your workstation, you will most 
-  definitely need to change the three entries below.
-	-->
 
     <property>
       <name>instance.zookeeper.host</name>
@@ -34,12 +25,6 @@
       <description>comma separated list of zookeeper servers</description>
     </property>
 
-    <property>
-      <name>logger.dir.walog</name>
-      <value>walogs</value>
-      <description>The directory used to store write-ahead logs on the local filesystem. It is possible to specify a comma-separated list of directories.</description>
-    </property>
-    
     <property>
       <name>instance.secret</name>
       <value>DEFAULT</value>
@@ -86,26 +71,4 @@
       <name>tserver.walog.max.size</name>
       <value>100M</value>
     </property>
-
-    <property>
-      <name>general.classpaths</name>
-      <value>
-    $ACCUMULO_HOME/server/target/classes/,
-    $ACCUMULO_HOME/core/target/classes/,
-    $ACCUMULO_HOME/start/target/classes/,
-    $ACCUMULO_HOME/fate/target/classes/,
-    $ACCUMULO_HOME/proxy/target/classes/,
-    $ACCUMULO_HOME/examples/target/classes/,
-	$ACCUMULO_HOME/lib/[^.].$ACCUMULO_VERSION.jar,
-	$ACCUMULO_HOME/lib/[^.].*.jar,
-	$ZOOKEEPER_HOME/zookeeper[^.].*.jar,
-	$HADOOP_CONF_DIR,
-	$HADOOP_PREFIX/[^.].*.jar,
-	$HADOOP_PREFIX/lib/[^.].*.jar,
-      </value>
-      <description>Classpaths that accumulo checks for updates and class files.
-      When using the Security Manager, please remove the ".../target/classes/" values.
-      </description>
-    </property>
-
 </configuration>

@@ -16,6 +16,7 @@
  */
 package org.apache.accumulo.test;
 
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -32,7 +33,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.accumulo.core.client.Connector;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Value;
@@ -52,7 +53,6 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
 import org.junit.Test;
 
-import com.google.common.util.concurrent.Uninterruptibles;
 import com.google.gson.Gson;
 
 // ACCUMULO-3949, ACCUMULO-3953
@@ -124,8 +124,8 @@ public class GetFileInfoBulkIT extends ConfigurableMacBase {
           fs.mkdirs(files);
           for (int i = 0; i < 100; i++) {
             FileSKVWriter writer = FileOperations.getInstance().newWriterBuilder()
-                .forFile(files.toString() + "/bulk_" + i + "." + RFile.EXTENSION, fs, fs.getConf())
-                .withTableConfiguration(AccumuloConfiguration.getDefaultConfiguration()).build();
+                .forFile(files.toString() + "/bulk_" + i + "." + RFile.EXTENSION, fs, fs.getConf()).withTableConfiguration(DefaultConfiguration.getInstance())
+                .build();
             writer.startDefaultLocalityGroup();
             for (int j = 0x100; j < 0xfff; j += 3) {
               writer.append(new Key(Integer.toHexString(j)), new Value(new byte[0]));
@@ -161,7 +161,7 @@ public class GetFileInfoBulkIT extends ConfigurableMacBase {
     es.shutdown();
     es.awaitTermination(2, TimeUnit.MINUTES);
     log.info(String.format("Completed in %.2f seconds", (System.currentTimeMillis() - now) / 1000.));
-    Uninterruptibles.sleepUninterruptibly(30, TimeUnit.SECONDS);
+    sleepUninterruptibly(30, TimeUnit.SECONDS);
     long getFileInfoOpts = getOpts() - startOps;
     log.info("# opts: {}", getFileInfoOpts);
     assertTrue("unexpected number of getFileOps", getFileInfoOpts < 2100 && getFileInfoOpts > 1000);

@@ -19,10 +19,8 @@ package org.apache.accumulo.core.file.rfile;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 
 import org.apache.accumulo.core.cli.Help;
-import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.SiteConfiguration;
 import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.Key;
@@ -31,6 +29,8 @@ import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.file.FileSKVIterator;
 import org.apache.accumulo.core.file.blockfile.impl.CachableBlockFile;
 import org.apache.accumulo.core.file.rfile.RFile.Reader;
+import org.apache.accumulo.core.summary.SummaryReader;
+import org.apache.accumulo.core.util.LocalityGroupUtil;
 import org.apache.accumulo.start.spi.KeywordExecutable;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
 import org.apache.hadoop.conf.Configuration;
@@ -56,8 +56,12 @@ public class PrintInfo implements KeywordExecutable {
     boolean hash = false;
     @Parameter(names = {"--histogram"}, description = "print a histogram of the key-value sizes")
     boolean histogram = false;
+    @Parameter(names = {"--printIndex"}, description = "prints information about all the index entries")
+    boolean printIndex = false;
     @Parameter(names = {"--useSample"}, description = "Use sample data for --dump, --vis, --histogram options")
     boolean useSample = false;
+    @Parameter(names = {"--summary"}, description = "Print summary data in file")
+    boolean printSummary = false;
     @Parameter(names = {"--keyStats"}, description = "print key length statistics for index and all data")
     boolean keyStats = false;
     @Parameter(description = " <file> { <file> ... }")
@@ -114,9 +118,14 @@ public class PrintInfo implements KeywordExecutable {
   }
 
   @Override
+  public String description() {
+    return "Prints rfile info";
+  }
+
+  @Override
   public void execute(final String[] args) throws Exception {
     Opts opts = new Opts();
-    opts.parseArgs(PrintInfo.class.getName(), args);
+    opts.parseArgs("accumulo rfile-info", args);
     if (opts.files.isEmpty()) {
       System.err.println("No files were given");
       System.exit(-1);
@@ -124,7 +133,7 @@ public class PrintInfo implements KeywordExecutable {
 
     Configuration conf = new Configuration();
     for (String confFile : opts.configFiles) {
-      log.debug("Adding Hadoop configuration file " + confFile);
+      log.debug("Adding Hadoop configuration file {}", confFile);
       conf.addResource(new Path(confFile));
     }
 
@@ -147,15 +156,14 @@ public class PrintInfo implements KeywordExecutable {
       }
       System.out.println("Reading file: " + path.makeQualified(fs.getUri(), fs.getWorkingDirectory()).toString());
 
-      CachableBlockFile.Reader _rdr = new CachableBlockFile.Reader(fs, path, conf, null, null,
-          SiteConfiguration.getInstance(DefaultConfiguration.getInstance()));
+      CachableBlockFile.Reader _rdr = new CachableBlockFile.Reader(fs, path, conf, null, null, SiteConfiguration.getInstance());
       Reader iter = new RFile.Reader(_rdr);
       MetricsGatherer<Map<String,ArrayList<VisibilityMetric>>> vmg = new VisMetricsGatherer();
 
       if (opts.vis || opts.hash)
         iter.registerMetrics(vmg);
 
-      iter.printInfo();
+      iter.printInfo(opts.printIndex);
       System.out.println();
       org.apache.accumulo.core.file.rfile.bcfile.PrintInfo.main(new String[] {arg});
 
@@ -184,9 +192,8 @@ public class PrintInfo implements KeywordExecutable {
           }
         }
 
-        for (Entry<String,ArrayList<ByteSequence>> cf : localityGroupCF.entrySet()) {
-
-          dataIter.seek(new Range((Key) null, (Key) null), cf.getValue(), true);
+        for (String lgName : localityGroupCF.keySet()) {
+          LocalityGroupUtil.seek(dataIter, new Range(), lgName, localityGroupCF);
           while (dataIter.hasTop()) {
             Key key = dataIter.getTopKey();
             Value value = dataIter.getTopValue();
@@ -204,6 +211,10 @@ public class PrintInfo implements KeywordExecutable {
             dataIter.next();
           }
         }
+      }
+
+      if (opts.printSummary) {
+        SummaryReader.print(iter, System.out);
       }
 
       iter.close();

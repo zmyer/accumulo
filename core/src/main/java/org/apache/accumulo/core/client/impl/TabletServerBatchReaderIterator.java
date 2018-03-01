@@ -64,6 +64,7 @@ import org.apache.accumulo.core.tabletserver.thrift.TSampleNotPresentException;
 import org.apache.accumulo.core.tabletserver.thrift.TabletClientService;
 import org.apache.accumulo.core.trace.Tracer;
 import org.apache.accumulo.core.util.ByteBufferUtil;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.core.util.OpTimer;
 import org.apache.htrace.wrappers.TraceRunnable;
 import org.apache.thrift.TApplicationException;
@@ -73,15 +74,13 @@ import org.apache.thrift.transport.TTransportException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.net.HostAndPort;
-
 public class TabletServerBatchReaderIterator implements Iterator<Entry<Key,Value>> {
 
   private static final Logger log = LoggerFactory.getLogger(TabletServerBatchReaderIterator.class);
 
   private final ClientContext context;
   private final Instance instance;
-  private final String tableId;
+  private final Table.ID tableId;
   private Authorizations authorizations = Authorizations.EMPTY;
   private final int numThreads;
   private final ExecutorService queryThreadPool;
@@ -107,7 +106,7 @@ public class TabletServerBatchReaderIterator implements Iterator<Entry<Key,Value
     void receive(List<Entry<Key,Value>> entries);
   }
 
-  public TabletServerBatchReaderIterator(ClientContext context, String tableId, Authorizations authorizations, ArrayList<Range> ranges, int numThreads,
+  public TabletServerBatchReaderIterator(ClientContext context, Table.ID tableId, Authorizations authorizations, ArrayList<Range> ranges, int numThreads,
       ExecutorService queryThreadPool, ScannerOptions scannerOptions, long timeout) {
 
     this.context = context;
@@ -185,8 +184,8 @@ public class TabletServerBatchReaderIterator implements Iterator<Entry<Key,Value
 
         if (queryThreadPool.isShutdown()) {
           String shortMsg = "The BatchScanner was unexpectedly closed while this Iterator was still in use.";
-          log.error(shortMsg + " Ensure that a reference to the BatchScanner is retained so that it can be closed when this Iterator is exhausted."
-              + " Not retaining a reference to the BatchScanner guarantees that you are leaking threads in your client JVM.");
+          log.error("{} Ensure that a reference to the BatchScanner is retained so that it can be closed when this Iterator is exhausted."
+              + " Not retaining a reference to the BatchScanner guarantees that you are leaking threads in your client JVM.", shortMsg);
           throw new RuntimeException(shortMsg + " Ensure proper handling of the BatchScanner.");
         }
 
@@ -242,9 +241,9 @@ public class TabletServerBatchReaderIterator implements Iterator<Entry<Key,Value
         // need to always do the check when failures occur
         if (failures.size() >= lastFailureSize)
           if (!Tables.exists(instance, tableId))
-            throw new TableDeletedException(tableId);
+            throw new TableDeletedException(tableId.canonicalID());
           else if (Tables.getTableState(instance, tableId) == TableState.OFFLINE)
-            throw new TableOfflineException(instance, tableId);
+            throw new TableOfflineException(instance, tableId.canonicalID());
 
         lastFailureSize = failures.size();
 
@@ -374,7 +373,7 @@ public class TabletServerBatchReaderIterator implements Iterator<Entry<Key,Value
 
         Tables.clearCache(instance);
         if (!Tables.exists(instance, tableId))
-          fatalException = new TableDeletedException(tableId);
+          fatalException = new TableDeletedException(tableId.canonicalID());
         else
           fatalException = e;
       } catch (SampleNotPresentException e) {
@@ -394,10 +393,7 @@ public class TabletServerBatchReaderIterator implements Iterator<Entry<Key,Value
             // there were some failures
             try {
               processFailures(failures, receiver, columns);
-            } catch (TableNotFoundException e) {
-              log.debug("{}", e.getMessage(), e);
-              fatalException = e;
-            } catch (AccumuloException e) {
+            } catch (TableNotFoundException | AccumuloException e) {
               log.debug("{}", e.getMessage(), e);
               fatalException = e;
             } catch (AccumuloSecurityException e) {
@@ -726,7 +722,7 @@ public class TabletServerBatchReaderIterator implements Iterator<Entry<Key,Value
       log.debug("Server : " + server + " msg : " + e.getMessage(), e);
       String tableInfo = "?";
       if (e.getExtent() != null) {
-        String tableId = new KeyExtent(e.getExtent()).getTableId();
+        Table.ID tableId = new KeyExtent(e.getExtent()).getTableId();
         tableInfo = Tables.getPrintableTableInfoFromId(context.getInstance(), tableId);
       }
       String message = "Table " + tableInfo + " does not have sampling configured or built";

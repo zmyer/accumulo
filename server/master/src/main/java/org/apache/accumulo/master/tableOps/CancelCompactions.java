@@ -19,7 +19,8 @@ package org.apache.accumulo.master.tableOps;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import org.apache.accumulo.core.Constants;
-import org.apache.accumulo.core.client.impl.Tables;
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.thrift.TableOperation;
 import org.apache.accumulo.fate.Repo;
 import org.apache.accumulo.fate.zookeeper.IZooReaderWriter;
@@ -30,15 +31,16 @@ import org.apache.accumulo.server.zookeeper.ZooReaderWriter;
 public class CancelCompactions extends MasterRepo {
 
   private static final long serialVersionUID = 1L;
-  private String tableId;
+  private Table.ID tableId;
+  private Namespace.ID namespaceId;
 
-  public CancelCompactions(String tableId) {
+  public CancelCompactions(Namespace.ID namespaceId, Table.ID tableId) {
     this.tableId = tableId;
+    this.namespaceId = namespaceId;
   }
 
   @Override
-  public long isReady(long tid, Master environment) throws Exception {
-    String namespaceId = Tables.getNamespaceId(environment.getInstance(), tableId);
+  public long isReady(long tid, Master env) throws Exception {
     return Utils.reserveNamespace(namespaceId, tid, false, true, TableOperation.COMPACT_CANCEL)
         + Utils.reserveTable(tableId, tid, false, true, TableOperation.COMPACT_CANCEL);
   }
@@ -69,13 +71,12 @@ public class CancelCompactions extends MasterRepo {
       }
     });
 
-    return new FinishCancelCompaction(tableId);
+    return new FinishCancelCompaction(namespaceId, tableId);
   }
 
   @Override
-  public void undo(long tid, Master environment) throws Exception {
-    String namespaceId = Tables.getNamespaceId(environment.getInstance(), tableId);
-    Utils.unreserveNamespace(namespaceId, tid, false);
+  public void undo(long tid, Master env) throws Exception {
     Utils.unreserveTable(tableId, tid, false);
+    Utils.unreserveNamespace(namespaceId, tid, false);
   }
 }

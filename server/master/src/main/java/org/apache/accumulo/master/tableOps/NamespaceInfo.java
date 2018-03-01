@@ -19,12 +19,14 @@ package org.apache.accumulo.master.tableOps;
 import java.io.Serializable;
 import java.util.Map;
 
+import org.apache.accumulo.core.client.impl.Namespace;
+
 class NamespaceInfo implements Serializable {
 
   private static final long serialVersionUID = 1L;
 
   String namespaceName;
-  String namespaceId;
+  Namespace.ID namespaceId;
   String user;
 
   public Map<String,String> props;

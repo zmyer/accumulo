@@ -1,0 +1,297 @@
+#! /usr/bin/env bash
+
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+function print_usage {
+  cat <<EOF
+Usage: accumulo-util <command> (<argument> ...)
+
+Commands:
+  build-native        Builds Accumulo native libraries
+  hadoop-jar          Runs 'hadoop jar' command with Accumulo jars
+  gen-monitor-cert    Generates Accumulo monitor certficate
+  load-jars-hdfs      Loads Accumulo jars in lib/ to HDFS for VFS classloader
+  
+EOF
+  exit 1
+}
+
+function build_native() {
+  final_native_target="$basedir/lib/native"
+  if [ -f "$final_native_target/libaccumulo.so" -o -f "$final_native_target/libaccumulo.dylib" ]; then
+    echo "Accumulo native library already exists in $final_native_target"
+    exit 0
+  fi
+
+  native_tarball="$basedir/lib/accumulo-native.tar.gz"
+  if [[ ! -f $native_tarball ]]; then
+    echo "Could not find native code artifact: ${native_tarball}" 1>&2
+    exit 1
+  fi
+
+  # Make the destination for the native library
+  mkdir -p "${final_native_target}" || exit 1
+
+  # Make a directory for us to unpack the native source into
+  TMP_DIR=$(mktemp -d /tmp/accumulo-native.XXXX) || exit 1
+
+  # Unpack the tarball to our temp directory
+  if ! tar xf "${native_tarball}" -C "${TMP_DIR}"
+  then
+      echo "Failed to unpack native tarball to ${TMP_DIR}"
+      exit 1
+  fi
+
+  # Move to the first (only) directory in our unpacked tarball
+  native_dir=$(find "${TMP_DIR}" -maxdepth 1 -mindepth 1 -type d)
+
+  cd "${native_dir}" || exit 1
+
+  # Make the native library
+  export USERFLAGS="$*"
+  make || { echo 'Make failed!'; exit 1; }
+
+  # "install" the artifact
+  cp libaccumulo.* "${final_native_target}" || exit 1
+
+  # Clean up our temp directory
+  rm -rf "${TMP_DIR}"
+
+  echo "Successfully installed native library"
+}
+
+function gen_monitor_cert() {
+  if [[ -z "$JAVA_HOME" || ! -d "$JAVA_HOME" ]]; then
+    echo "JAVA_HOME=${JAVA_HOME} must be set and exist"
+    exit 1
+  fi
+
+  ALIAS="default"
+  KEYPASS=$(LC_CTYPE=C tr -dc '#-~' < /dev/urandom | tr -d '<>&' | head -c 20)
+  STOREPASS=$(LC_CTYPE=C tr -dc '#-~' < /dev/urandom | tr -d '<>&' | head -c 20)
+  KEYSTOREPATH="${conf}/keystore.jks"
+  TRUSTSTOREPATH="${conf}/cacerts.jks"
+  CERTPATH="${conf}/server.cer"
+
+  if [[ -e "$KEYSTOREPATH" ]]; then
+     rm -i "$KEYSTOREPATH"
+     if [[ -e "$KEYSTOREPATH" ]]; then
+        echo "KeyStore already exists, exiting"
+        exit 1
+     fi
+  fi
+  if [[ -e "$TRUSTSTOREPATH" ]]; then
+     rm -i "$TRUSTSTOREPATH"
+     if [[ -e "$TRUSTSTOREPATH" ]]; then
+        echo "TrustStore already exists, exiting"
+        exit 2
+     fi
+  fi
+  if [[ -e "$CERTPATH" ]]; then
+     rm -i "$CERTPATH"
+     if [[ -e "$CERTPATH" ]]; then
+        echo "Certificate already exists, exiting"
+        exit 3
+    fi
+  fi
+
+  "${JAVA_HOME}/bin/keytool" -genkey -alias "$ALIAS" -keyalg RSA -keypass "$KEYPASS" -storepass "$KEYPASS" -keystore "$KEYSTOREPATH"
+  "${JAVA_HOME}/bin/keytool" -export -alias "$ALIAS" -storepass "$KEYPASS" -file "$CERTPATH" -keystore "$KEYSTOREPATH"
+  "${JAVA_HOME}/bin/keytool" -import -v -trustcacerts -alias "$ALIAS" -file "$CERTPATH" -keystore "$TRUSTSTOREPATH" -storepass "$STOREPASS" <<< "yes"
+
+  echo
+  echo "keystore and truststore generated.  now add the following to accumulo-site.xml:"
+  echo
+  echo "    <property>"
+  echo "      <name>monitor.ssl.keyStore</name>"
+  echo "      <value>$KEYSTOREPATH</value>"
+  echo "    </property>"
+  echo "    <property>"
+  echo "      <name>monitor.ssl.keyStorePassword</name>"
+  echo "      <value>$KEYPASS</value>"
+  echo "    </property>"
+  echo "    <property>"
+  echo "      <name>monitor.ssl.trustStore</name>"
+  echo "      <value>$TRUSTSTOREPATH</value>"
+  echo "    </property>"
+  echo "    <property>"
+  echo "      <name>monitor.ssl.trustStorePassword</name>"
+  echo "      <value>$STOREPASS</value>"
+  echo "    </property>"
+  echo
+}
+
+function load_jars_hdfs() {
+
+  if [ -x "$HADOOP_PREFIX/bin/hadoop" ]; then
+    HADOOP="$HADOOP_PREFIX/bin/hadoop"
+  else
+    HADOOP=$(which hadoop)
+  fi
+  if [ ! -x "$HADOOP" ]; then
+    echo "Could not find 'hadoop' command. Please set hadoop on your PATH or set HADOOP_PREFIX"
+    exit 1
+  fi
+
+  # Find the system context directory in HDFS
+  SYSTEM_CONTEXT_HDFS_DIR=$(grep -A1 "general.vfs.classpaths" "$conf/accumulo-site.xml" | tail -1 | perl -pe 's/\s+<value>//; s/<\/value>//; s/,.+$//; s|[^/]+$||; print $ARGV[1]')
+
+  if [ -z "$SYSTEM_CONTEXT_HDFS_DIR" ]
+  then
+    echo "Your accumulo-site.xml file is not set up for the HDFS Classloader. Please add the following to your accumulo-site.xml file where ##CLASSPATH## is one of the following formats:"
+    echo "A single directory: hdfs://host:port/directory/"
+    echo "A single directory with a regex: hdfs://host:port/directory/.*.jar"
+    echo "Multiple directories: hdfs://host:port/directory/.*.jar,hdfs://host:port/directory2/"
+    echo ""
+    echo "<property>"
+    echo "   <name>general.vfs.classpaths</name>"
+    echo "   <value>##CLASSPATH##</value>"
+    echo "   <description>location of the jars for the default (system) context</description>"
+    echo "</property>"
+    exit 1
+  fi
+
+  # Create the system context directy in HDFS if it does not exist
+  "$HADOOP" fs -ls "$SYSTEM_CONTEXT_HDFS_DIR"  > /dev/null
+  if [[ $? != 0 ]]; then
+    "$HADOOP" fs -mkdir "$SYSTEM_CONTEXT_HDFS_DIR"  > /dev/null
+    if [[ $? != 0 ]]; then
+      echo "Unable to create classpath directory at $SYSTEM_CONTEXT_HDFS_DIR"
+      exit 1
+    fi
+  fi
+
+  # Replicate to all tservers to avoid network contention on startup
+  TSERVERS=${conf}/tservers
+  NUM_TSERVERS=$(egrep -v '(^#|^\s*$)' "$TSERVERS" | wc -l)
+
+  #let each datanode service around 50 clients
+  REP=$(( NUM_TSERVERS / 50 ))
+  (( REP < 3 )) && REP=3
+
+  # Copy all jars in lib to the system context directory
+  "$HADOOP" fs -moveFromLocal "$lib"/*.jar "$SYSTEM_CONTEXT_HDFS_DIR"  > /dev/null
+  "$HADOOP" fs -setrep -R $REP "$SYSTEM_CONTEXT_HDFS_DIR"  > /dev/null
+
+  # We need some of the jars in lib, copy them back out and remove them from the system context dir
+  "$HADOOP" fs -copyToLocal "$SYSTEM_CONTEXT_HDFS_DIR/commons-vfs2.jar" "$lib/."  > /dev/null
+  "$HADOOP" fs -rm "$SYSTEM_CONTEXT_HDFS_DIR/commons-vfs2.jar"  > /dev/null
+  "$HADOOP" fs -copyToLocal "$SYSTEM_CONTEXT_HDFS_DIR/accumulo-start.jar" "$lib/."  > /dev/null
+  "$HADOOP" fs -rm "$SYSTEM_CONTEXT_HDFS_DIR/accumulo-start.jar"  > /dev/null
+  "$HADOOP" fs -copyToLocal "$SYSTEM_CONTEXT_HDFS_DIR/slf4j*.jar" "$lib/."  > /dev/null
+  "$HADOOP" fs -rm "$SYSTEM_CONTEXT_HDFS_DIR/slf4j*.jar"  > /dev/null
+}
+
+function hadoop_jar() {
+  if [ -x "$HADOOP_PREFIX/bin/hadoop" ]; then
+    HADOOP="$HADOOP_PREFIX/bin/hadoop"
+  else
+    HADOOP=$(which hadoop)
+  fi
+  if [ ! -x "$HADOOP" ]; then
+    echo "Could not find 'hadoop' command. Please set hadoop on your PATH or set HADOOP_PREFIX"
+    exit 1
+  fi
+  if [ -z "$ZOOKEEPER_HOME" ]; then
+     echo "ZOOKEEPER_HOME must be set!"
+     exit 1
+  fi
+
+  ZOOKEEPER_CMD="ls -1 $ZOOKEEPER_HOME/zookeeper-[0-9]*[^csn].jar "
+  if [[ $(eval "$ZOOKEEPER_CMD" | wc -l) -ne 1 ]] ; then
+     echo "Not exactly one zookeeper jar in $ZOOKEEPER_HOME"
+     exit 1
+  fi
+  ZOOKEEPER_LIB=$(eval "$ZOOKEEPER_CMD")
+
+  CORE_LIB="${lib}/accumulo-core.jar"
+  FATE_LIB="${lib}/accumulo-fate.jar"
+  THRIFT_LIB="${lib}/libthrift.jar"
+  JCOMMANDER_LIB="${lib}/jcommander.jar"
+  COMMONS_VFS_LIB="${lib}/commons-vfs2.jar"
+  GUAVA_LIB="${lib}/guava.jar"
+  HTRACE_LIB="${lib}/htrace-core.jar"
+
+  USERJARS=" "
+  for arg in "$@"; do
+      if [ "$arg" != "-libjars" -a -z "$TOOLJAR" ]; then
+        TOOLJAR="$arg"
+        shift
+     elif [ "$arg" != "-libjars" -a -z "$CLASSNAME" ]; then
+        CLASSNAME="$arg"
+        shift
+     elif [ -z "$USERJARS" ]; then
+        USERJARS=$(echo "$arg" | tr "," " ")
+        shift
+     elif [ "$arg" = "-libjars" ]; then
+        USERJARS=""
+        shift
+     else
+        break
+     fi
+  done
+
+  LIB_JARS="$THRIFT_LIB,$CORE_LIB,$FATE_LIB,$ZOOKEEPER_LIB,$JCOMMANDER_LIB,$COMMONS_VFS_LIB,$GUAVA_LIB,$HTRACE_LIB"
+  H_JARS="$THRIFT_LIB:$CORE_LIB:$FATE_LIB:$ZOOKEEPER_LIB:$JCOMMANDER_LIB:$COMMONS_VFS_LIB:$GUAVA_LIB:$HTRACE_LIB"
+
+  for jar in $USERJARS; do
+     LIB_JARS="$LIB_JARS,$jar"
+     H_JARS="$H_JARS:$jar"
+  done
+  export HADOOP_CLASSPATH="$H_JARS:$HADOOP_CLASSPATH"
+
+  if [[ -z "$CLASSNAME" || -z "$TOOLJAR" ]]; then
+     echo "Usage: accumulo-util hadoop-jar path/to/myTool.jar my.tool.class.Name [-libjars my1.jar,my2.jar]" 1>&2
+     exit 1
+  fi
+
+  exec "$HADOOP" jar "$TOOLJAR" "$CLASSNAME" -libjars "$LIB_JARS" "$@"
+}
+
+function main() {
+  SOURCE="${BASH_SOURCE[0]}"
+  while [ -h "${SOURCE}" ]; do
+     bin="$( cd -P "$( dirname "${SOURCE}" )" && pwd )"
+     SOURCE="$(readlink "${SOURCE}")"
+     [[ "${SOURCE}" != /* ]] && SOURCE="${bin}/${SOURCE}"
+  done
+  bin="$( cd -P "$( dirname "${SOURCE}" )" && pwd )"
+  basedir=$( cd -P "${bin}"/.. && pwd )
+  conf="${ACCUMULO_CONF_DIR:-${basedir}/conf}"
+  lib="${basedir}/lib"
+
+  case "$1" in
+    build-native)
+      build_native "${@:2}"
+      ;;
+    hadoop-jar)
+      hadoop_jar "${@:2}"
+      ;;
+    gen-monitor-cert)
+      gen_monitor_cert
+      ;;
+    load-jars-hdfs)
+      load_jars_hdfs
+      ;;
+    *)
+      echo -e "'$1' is an invalid <command>\n"
+      print_usage 1>&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

@@ -21,7 +21,6 @@ import static org.apache.accumulo.core.metadata.schema.MetadataSchema.TabletsSec
 
 import java.io.IOException;
 import java.util.Map.Entry;
-import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.accumulo.core.cli.ClientOnRequiredTable;
@@ -29,8 +28,10 @@ import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.BatchWriter;
 import org.apache.accumulo.core.client.Connector;
+import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.TableNotFoundException;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Value;
@@ -42,6 +43,7 @@ import org.apache.accumulo.core.util.SimpleThreadPool;
 import org.apache.accumulo.server.AccumuloServerContext;
 import org.apache.accumulo.server.ServerConstants;
 import org.apache.accumulo.server.conf.ServerConfigurationFactory;
+import org.apache.accumulo.server.fs.VolumeChooserEnvironment;
 import org.apache.accumulo.server.fs.VolumeManager;
 import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.accumulo.server.tables.TableManager;
@@ -57,7 +59,8 @@ public class RandomizeVolumes {
     opts.parseArgs(RandomizeVolumes.class.getName(), args);
     Connector c;
     if (opts.getToken() == null) {
-      AccumuloServerContext context = new AccumuloServerContext(new ServerConfigurationFactory(opts.getInstance()));
+      Instance instance = opts.getInstance();
+      AccumuloServerContext context = new AccumuloServerContext(instance, new ServerConfigurationFactory(instance));
       c = context.getConnector();
     } else {
       c = opts.getConnector();
@@ -77,19 +80,20 @@ public class RandomizeVolumes {
       log.error("There are not enough volumes configured");
       return 1;
     }
-    String tableId = c.tableOperations().tableIdMap().get(tableName);
-    if (null == tableId) {
-      log.error("Could not determine the table ID for table " + tableName);
+    String tblStr = c.tableOperations().tableIdMap().get(tableName);
+    if (null == tblStr) {
+      log.error("Could not determine the table ID for table {}", tableName);
       return 2;
     }
+    Table.ID tableId = Table.ID.of(tblStr);
     TableState tableState = TableManager.getInstance().getTableState(tableId);
     if (TableState.OFFLINE != tableState) {
-      log.info("Taking " + tableName + " offline");
+      log.info("Taking {} offline", tableName);
       c.tableOperations().offline(tableName, true);
-      log.info(tableName + " offline");
+      log.info("{} offline", tableName);
     }
     SimpleThreadPool pool = new SimpleThreadPool(50, "directory maker");
-    log.info("Rewriting entries for " + tableName);
+    log.info("Rewriting entries for {}", tableName);
     Scanner scanner = c.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
     DIRECTORY_COLUMN.fetch(scanner);
     scanner.setRange(TabletsSection.getRange(tableId));
@@ -100,9 +104,9 @@ public class RandomizeVolumes {
       String directory;
       if (oldLocation.contains(":")) {
         String[] parts = oldLocation.split(Path.SEPARATOR);
-        String tableIdEntry = parts[parts.length - 2];
+        Table.ID tableIdEntry = Table.ID.of(parts[parts.length - 2]);
         if (!tableIdEntry.equals(tableId)) {
-          log.error("Unexpected table id found: " + tableIdEntry + ", expected " + tableId + "; skipping");
+          log.error("Unexpected table id found: {}, expected {}; skipping", tableIdEntry, tableId);
           continue;
         }
         directory = parts[parts.length - 1];
@@ -112,11 +116,12 @@ public class RandomizeVolumes {
       Key key = entry.getKey();
       Mutation m = new Mutation(key.getRow());
 
-      final String newLocation = vm.choose(Optional.of(tableId), ServerConstants.getBaseUris()) + Path.SEPARATOR + ServerConstants.TABLE_DIR + Path.SEPARATOR
-          + tableId + Path.SEPARATOR + directory;
+      VolumeChooserEnvironment chooserEnv = new VolumeChooserEnvironment(tableId);
+      final String newLocation = vm.choose(chooserEnv, ServerConstants.getBaseUris()) + Path.SEPARATOR + ServerConstants.TABLE_DIR + Path.SEPARATOR + tableId
+          + Path.SEPARATOR + directory;
       m.put(key.getColumnFamily(), key.getColumnQualifier(), new Value(newLocation.getBytes(UTF_8)));
       if (log.isTraceEnabled()) {
-        log.trace("Replacing " + oldLocation + " with " + newLocation);
+        log.trace("Replacing {} with {}", oldLocation, newLocation);
       }
       writer.addMutation(m);
       pool.submit(new Runnable() {
@@ -142,10 +147,10 @@ public class RandomizeVolumes {
         break;
       }
     }
-    log.info("Updated " + count + " entries for table " + tableName);
+    log.info("Updated {} entries for table {}", count, tableName);
     if (TableState.OFFLINE != tableState) {
       c.tableOperations().online(tableName, true);
-      log.info("table " + tableName + " back online");
+      log.info("table {} back online", tableName);
     }
     return 0;
   }

@@ -16,6 +16,8 @@
  */
 package org.apache.accumulo.core.client.mapreduce;
 
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
+
 import java.io.IOException;
 import java.net.InetAddress;
 import java.util.ArrayList;
@@ -33,6 +35,7 @@ import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.BatchScanner;
 import org.apache.accumulo.core.client.ClientConfiguration;
 import org.apache.accumulo.core.client.ClientSideIteratorScanner;
+import org.apache.accumulo.core.client.ConnectionInfo;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.IsolatedScanner;
@@ -46,10 +49,12 @@ import org.apache.accumulo.core.client.admin.DelegationTokenConfig;
 import org.apache.accumulo.core.client.admin.SecurityOperations;
 import org.apache.accumulo.core.client.impl.AuthenticationTokenIdentifier;
 import org.apache.accumulo.core.client.impl.ClientContext;
+import org.apache.accumulo.core.client.impl.ConnectionInfoFactory;
 import org.apache.accumulo.core.client.impl.Credentials;
 import org.apache.accumulo.core.client.impl.DelegationTokenImpl;
 import org.apache.accumulo.core.client.impl.OfflineScanner;
 import org.apache.accumulo.core.client.impl.ScannerImpl;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.impl.TabletLocator;
 import org.apache.accumulo.core.client.mapreduce.impl.BatchInputSplit;
@@ -80,8 +85,6 @@ import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.security.token.Token;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
-
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 /**
  * An abstract input format to provide shared methods common to all other input format classes. At the very least, any classes inheriting from this class will
@@ -118,6 +121,20 @@ public abstract class AbstractInputFormat<K,V> extends InputFormat<K,V> {
   }
 
   /**
+   * Sets connection information needed to communicate with Accumulo for this job
+   *
+   * @param job
+   *          Hadoop job instance to be configured
+   * @param info
+   *          Connection information for Accumulo
+   * @since 2.0.0
+   */
+  public static void setConnectionInfo(Job job, ConnectionInfo info) throws AccumuloSecurityException {
+    setConnectorInfo(job, info.getPrincipal(), info.getAuthenticationToken());
+    setZooKeeperInstance(job, ConnectionInfoFactory.getClientConfiguration(info));
+  }
+
+  /**
    * Sets the connector information needed to communicate with Accumulo in this job.
    *
    * <p>
@@ -133,7 +150,9 @@ public abstract class AbstractInputFormat<K,V> extends InputFormat<K,V> {
    * @param token
    *          the user's password
    * @since 1.5.0
+   * @deprecated since 2.0.0; use {@link #setConnectionInfo(Job, ConnectionInfo)} instead.
    */
+  @Deprecated
   public static void setConnectorInfo(Job job, String principal, AuthenticationToken token) throws AccumuloSecurityException {
     if (token instanceof KerberosToken) {
       log.info("Received KerberosToken, attempting to fetch DelegationToken");
@@ -252,11 +271,11 @@ public abstract class AbstractInputFormat<K,V> extends InputFormat<K,V> {
    * @param zooKeepers
    *          a comma-separated list of zookeeper servers
    * @since 1.5.0
-   * @deprecated since 1.6.0; Use {@link #setZooKeeperInstance(Job, ClientConfiguration)} instead.
+   * @deprecated since 1.6.0; Use {@link #setConnectionInfo(Job, ConnectionInfo)} instead.
    */
   @Deprecated
   public static void setZooKeeperInstance(Job job, String instanceName, String zooKeepers) {
-    setZooKeeperInstance(job, new ClientConfiguration().withInstance(instanceName).withZkHosts(zooKeepers));
+    setZooKeeperInstance(job, ClientConfiguration.create().withInstance(instanceName).withZkHosts(zooKeepers));
   }
 
   /**
@@ -268,7 +287,9 @@ public abstract class AbstractInputFormat<K,V> extends InputFormat<K,V> {
    * @param clientConfig
    *          client configuration containing connection options
    * @since 1.6.0
+   * @deprecated since 2.0.0; Use {@link #setConnectionInfo(Job, ConnectionInfo)} instead.
    */
+  @Deprecated
   public static void setZooKeeperInstance(Job job, ClientConfiguration clientConfig) {
     InputConfigurator.setZooKeeperInstance(CLASS, job.getConfiguration(), clientConfig);
   }
@@ -379,25 +400,6 @@ public abstract class AbstractInputFormat<K,V> extends InputFormat<K,V> {
    */
   protected static InputTableConfig getInputTableConfig(JobContext context, String tableName) {
     return InputConfigurator.getInputTableConfig(CLASS, context.getConfiguration(), tableName);
-  }
-
-  /**
-   * Initializes an Accumulo {@link org.apache.accumulo.core.client.impl.TabletLocator} based on the configuration.
-   *
-   * @param context
-   *          the Hadoop context for the configured job
-   * @param table
-   *          the table for which to initialize the locator
-   * @return an Accumulo tablet locator
-   * @throws org.apache.accumulo.core.client.TableNotFoundException
-   *           if the table name set on the configuration doesn't exist
-   * @since 1.6.0
-   * @deprecated since 1.7.0 This method returns a type that is not part of the public API and is not guaranteed to be stable. The method was deprecated to
-   *             discourage its use.
-   */
-  @Deprecated
-  protected static TabletLocator getTabletLocator(JobContext context, String table) throws TableNotFoundException {
-    return InputConfigurator.getTabletLocator(CLASS, context.getConfiguration(), table);
   }
 
   // InputFormat doesn't have the equivalent of OutputFormat's checkOutputSpecs(JobContext job)
@@ -590,13 +592,13 @@ public abstract class AbstractInputFormat<K,V> extends InputFormat<K,V> {
 
         try {
           if (isOffline) {
-            scanner = new OfflineScanner(instance, new Credentials(principal, token), split.getTableId(), authorizations);
+            scanner = new OfflineScanner(instance, new Credentials(principal, token), Table.ID.of(split.getTableId()), authorizations);
           } else if (DeprecationUtil.isMockInstance(instance)) {
             scanner = instance.getConnector(principal, token).createScanner(split.getTableName(), authorizations);
           } else {
             ClientConfiguration clientConf = getClientConfiguration(attempt);
             ClientContext context = new ClientContext(instance, new Credentials(principal, token), clientConf);
-            scanner = new ScannerImpl(context, split.getTableId(), authorizations);
+            scanner = new ScannerImpl(context, Table.ID.of(split.getTableId()), authorizations);
           }
           if (isIsolated) {
             log.info("Creating isolated scanner");
@@ -686,7 +688,7 @@ public abstract class AbstractInputFormat<K,V> extends InputFormat<K,V> {
     }
   }
 
-  Map<String,Map<KeyExtent,List<Range>>> binOfflineTable(JobContext context, String tableId, List<Range> ranges) throws TableNotFoundException,
+  Map<String,Map<KeyExtent,List<Range>>> binOfflineTable(JobContext context, Table.ID tableId, List<Range> ranges) throws TableNotFoundException,
       AccumuloException, AccumuloSecurityException {
 
     Instance instance = getInstance(context);
@@ -716,10 +718,10 @@ public abstract class AbstractInputFormat<K,V> extends InputFormat<K,V> {
       InputTableConfig tableConfig = tableConfigEntry.getValue();
 
       Instance instance = getInstance(context);
-      String tableId;
+      Table.ID tableId;
       // resolve table name to id once, and use id from this point forward
       if (DeprecationUtil.isMockInstance(instance)) {
-        tableId = "";
+        tableId = Table.ID.of("");
       } else {
         try {
           tableId = Tables.getTableId(instance, tableName);
@@ -769,10 +771,11 @@ public abstract class AbstractInputFormat<K,V> extends InputFormat<K,V> {
               getClientConfiguration(context));
           while (!tl.binRanges(clientContext, ranges, binnedRanges).isEmpty()) {
             if (!DeprecationUtil.isMockInstance(instance)) {
+              String tableIdStr = tableId.canonicalID();
               if (!Tables.exists(instance, tableId))
-                throw new TableDeletedException(tableId);
+                throw new TableDeletedException(tableIdStr);
               if (Tables.getTableState(instance, tableId) == TableState.OFFLINE)
-                throw new TableOfflineException(instance, tableId);
+                throw new TableOfflineException(instance, tableIdStr);
             }
             binnedRanges.clear();
             log.warn("Unable to locate bins for specified ranges. Retrying.");
@@ -817,7 +820,7 @@ public abstract class AbstractInputFormat<K,V> extends InputFormat<K,V> {
             for (Range r : extentRanges.getValue()) {
               if (autoAdjust) {
                 // divide ranges into smaller ranges, based on the tablets
-                RangeInputSplit split = new RangeInputSplit(tableName, tableId, ke.clip(r), new String[] {location});
+                RangeInputSplit split = new RangeInputSplit(tableName, tableId.canonicalID(), ke.clip(r), new String[] {location});
                 SplitUtils.updateSplit(split, instance, tableConfig, principal, token, auths, logLevel);
                 split.setOffline(tableConfig.isOfflineScan());
                 split.setIsolatedScan(tableConfig.shouldUseIsolatedScanners());
@@ -839,7 +842,7 @@ public abstract class AbstractInputFormat<K,V> extends InputFormat<K,V> {
 
       if (!autoAdjust)
         for (Map.Entry<Range,ArrayList<String>> entry : splitsToAdd.entrySet()) {
-          RangeInputSplit split = new RangeInputSplit(tableName, tableId, entry.getKey(), entry.getValue().toArray(new String[0]));
+          RangeInputSplit split = new RangeInputSplit(tableName, tableId.canonicalID(), entry.getKey(), entry.getValue().toArray(new String[0]));
           SplitUtils.updateSplit(split, instance, tableConfig, principal, token, auths, logLevel);
           split.setOffline(tableConfig.isOfflineScan());
           split.setIsolatedScan(tableConfig.shouldUseIsolatedScanners());

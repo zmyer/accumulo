@@ -85,6 +85,8 @@ struct TabletServerStatus {
   15:i64 flushs
   16:i64 syncs
   17:list<BulkImportStatus> bulkImports
+  18:string version
+  19:i64 responseTime
 }
 
 enum MasterState {
@@ -112,7 +114,7 @@ struct DeadServer {
 struct MasterMonitorInfo {
   1:map<string, TableInfo> tableMap
   2:list<TabletServerStatus> tServerInfo
-  3:map<string, byte> badTServers
+  3:map<string, i8> badTServers
   6:MasterState state
   8:MasterGoalState goalState
   7:i32 unassignedTablets

@@ -25,10 +25,9 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Random;
 
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigurationCopy;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.Property;
-import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.PartialKey;
 import org.apache.accumulo.core.data.Range;
@@ -48,7 +47,7 @@ import org.slf4j.LoggerFactory;
 
 public class BloomFilterLayerLookupTest {
 
-  private static final Logger LOG = LoggerFactory.getLogger(BloomFilterLayerLookupTest.class);
+  private static final Logger log = LoggerFactory.getLogger(BloomFilterLayerLookupTest.class);
   private static Random random = new Random();
 
   @Rule
@@ -67,7 +66,7 @@ public class BloomFilterLayerLookupTest {
     ArrayList<Integer> vals = new ArrayList<>(valsSet);
     Collections.sort(vals);
 
-    ConfigurationCopy acuconf = new ConfigurationCopy(AccumuloConfiguration.getDefaultConfiguration());
+    ConfigurationCopy acuconf = new ConfigurationCopy(DefaultConfiguration.getInstance());
     acuconf.set(Property.TABLE_BLOOM_ENABLED, "true");
     acuconf.set(Property.TABLE_BLOOM_KEY_FUNCTOR, ColumnFamilyFunctor.class.getName());
     acuconf.set(Property.TABLE_FILE_TYPE, RFile.EXTENSION);
@@ -92,13 +91,13 @@ public class BloomFilterLayerLookupTest {
     }
     long t2 = System.currentTimeMillis();
 
-    LOG.debug(String.format("write rate %6.2f%n", vals.size() / ((t2 - t1) / 1000.0)));
+    log.debug(String.format("write rate %6.2f%n", vals.size() / ((t2 - t1) / 1000.0)));
     bmfw.close();
 
     t1 = System.currentTimeMillis();
     FileSKVIterator bmfr = FileOperations.getInstance().newReaderBuilder().forFile(fname, fs, conf).withTableConfiguration(acuconf).build();
     t2 = System.currentTimeMillis();
-    LOG.debug("Opened " + fname + " in " + (t2 - t1));
+    log.debug("Opened {} in {}", fname, (t2 - t1));
 
     int hits = 0;
     t1 = System.currentTimeMillis();
@@ -113,8 +112,8 @@ public class BloomFilterLayerLookupTest {
     t2 = System.currentTimeMillis();
 
     double rate1 = 5000 / ((t2 - t1) / 1000.0);
-    LOG.debug(String.format("random lookup rate : %6.2f%n", rate1));
-    LOG.debug("hits = " + hits);
+    log.debug(String.format("random lookup rate : %6.2f%n", rate1));
+    log.debug("hits = {}", hits);
 
     int count = 0;
     t1 = System.currentTimeMillis();
@@ -129,8 +128,8 @@ public class BloomFilterLayerLookupTest {
     t2 = System.currentTimeMillis();
 
     double rate2 = 500 / ((t2 - t1) / 1000.0);
-    LOG.debug(String.format("existant lookup rate %6.2f%n", rate2));
-    LOG.debug("expected hits 500.  Receive hits: " + count);
+    log.debug(String.format("existant lookup rate %6.2f%n", rate2));
+    log.debug("expected hits 500.  Receive hits: {}", count);
     bmfr.close();
 
     assertTrue(rate1 > rate2);
@@ -140,7 +139,7 @@ public class BloomFilterLayerLookupTest {
     String fi = String.format("%010d", row);
     // bmfr.seek(new Range(new Text("r"+fi)));
     Key k1 = new Key(new Text("r" + fi), new Text("cf1"));
-    bmfr.seek(new Range(k1, true, k1.followingKey(PartialKey.ROW_COLFAM), false), new ArrayList<ByteSequence>(), false);
+    bmfr.seek(new Range(k1, true, k1.followingKey(PartialKey.ROW_COLFAM), false), new ArrayList<>(), false);
   }
 
 }

@@ -28,18 +28,18 @@ import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.data.impl.KeyExtent;
 import org.apache.accumulo.core.master.thrift.TableInfo;
 import org.apache.accumulo.core.master.thrift.TabletServerStatus;
 import org.apache.accumulo.core.tabletserver.thrift.TabletStats;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.master.state.TabletMigration;
 import org.apache.hadoop.io.Text;
 import org.apache.thrift.TException;
 import org.junit.Test;
-
-import com.google.common.net.HostAndPort;
 
 public class ChaoticLoadBalancerTest {
 
@@ -50,10 +50,10 @@ public class ChaoticLoadBalancerTest {
       TabletServerStatus result = new TabletServerStatus();
       result.tableMap = new HashMap<>();
       for (KeyExtent extent : extents) {
-        String table = extent.getTableId();
-        TableInfo info = result.tableMap.get(table);
+        Table.ID table = extent.getTableId();
+        TableInfo info = result.tableMap.get(table.canonicalID());
         if (info == null)
-          result.tableMap.put(table, info = new TableInfo());
+          result.tableMap.put(table.canonicalID(), info = new TableInfo());
         info.onlineTablets++;
         info.recs = info.onlineTablets;
         info.ingestRate = 123.;
@@ -68,7 +68,7 @@ public class ChaoticLoadBalancerTest {
   class TestChaoticLoadBalancer extends ChaoticLoadBalancer {
 
     @Override
-    public List<TabletStats> getOnlineTabletsForTable(TServerInstance tserver, String table) throws ThriftSecurityException, TException {
+    public List<TabletStats> getOnlineTabletsForTable(TServerInstance tserver, Table.ID table) throws ThriftSecurityException, TException {
       List<TabletStats> result = new ArrayList<>();
       for (KeyExtent extent : servers.get(tserver).extents) {
         if (extent.getTableId().equals(table)) {
@@ -154,7 +154,7 @@ public class ChaoticLoadBalancerTest {
   }
 
   private static KeyExtent makeExtent(String table, String end, String prev) {
-    return new KeyExtent(table, toText(end), toText(prev));
+    return new KeyExtent(Table.ID.of(table), toText(end), toText(prev));
   }
 
   private static Text toText(String value) {

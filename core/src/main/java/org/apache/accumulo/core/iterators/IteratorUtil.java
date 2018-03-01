@@ -44,7 +44,6 @@ import org.apache.accumulo.core.data.thrift.IterInfo;
 import org.apache.accumulo.core.iterators.system.ColumnFamilySkippingIterator;
 import org.apache.accumulo.core.iterators.system.ColumnQualifierFilter;
 import org.apache.accumulo.core.iterators.system.DeletingIterator;
-import org.apache.accumulo.core.iterators.system.SynchronizedIterator;
 import org.apache.accumulo.core.iterators.system.VisibilityFilter;
 import org.apache.accumulo.core.iterators.user.VersioningIterator;
 import org.apache.accumulo.core.security.Authorizations;
@@ -70,17 +69,6 @@ public class IteratorUtil {
    */
   public static enum IteratorScope {
     majc, minc, scan;
-
-    /**
-     * Fetch the correct configuration key prefix for the given scope. Throws an IllegalArgumentException if no property exists for the given scope.
-     *
-     * @deprecated since 1.7.0 This method returns a type that is not part of the public API and is not guaranteed to be stable. The method was deprecated to
-     *             discourage its use.
-     */
-    @Deprecated
-    public static Property getProperty(IteratorScope scope) {
-      return IteratorUtil.getProperty(scope);
-    }
   }
 
   public static class IterInfoComparator implements Comparator<IterInfo>, Serializable {
@@ -177,7 +165,7 @@ public class IteratorUtil {
         options.put(optName, entry.getValue());
 
       } else {
-        log.warn("Unrecognizable option: " + entry.getKey());
+        log.warn("Unrecognizable option: {}", entry.getKey());
       }
     }
 
@@ -235,15 +223,21 @@ public class IteratorUtil {
   public static <K extends WritableComparable<?>,V extends Writable> SortedKeyValueIterator<K,V> loadIterators(IteratorScope scope,
       SortedKeyValueIterator<K,V> source, KeyExtent extent, AccumuloConfiguration conf, List<IterInfo> ssiList, Map<String,Map<String,String>> ssio,
       IteratorEnvironment env, boolean useAccumuloClassLoader) throws IOException {
-    List<IterInfo> iters = new ArrayList<>(ssiList);
-    Map<String,Map<String,String>> allOptions = new HashMap<>();
-    parseIteratorConfiguration(scope, iters, ssio, allOptions, conf);
-    return loadIterators(source, iters, allOptions, env, useAccumuloClassLoader, conf.get(Property.TABLE_CLASSPATH));
+
+    return loadIteratorsHelper(scope, source, extent, conf, ssiList, ssio, env, useAccumuloClassLoader, conf.get(Property.TABLE_CLASSPATH));
   }
 
   public static <K extends WritableComparable<?>,V extends Writable> SortedKeyValueIterator<K,V> loadIterators(IteratorScope scope,
       SortedKeyValueIterator<K,V> source, KeyExtent extent, AccumuloConfiguration conf, List<IterInfo> ssiList, Map<String,Map<String,String>> ssio,
       IteratorEnvironment env, boolean useAccumuloClassLoader, String classLoaderContext) throws IOException {
+
+    return loadIteratorsHelper(scope, source, extent, conf, ssiList, ssio, env, useAccumuloClassLoader, classLoaderContext);
+  }
+
+  private static <K extends WritableComparable<?>,V extends Writable> SortedKeyValueIterator<K,V> loadIteratorsHelper(IteratorScope scope,
+      SortedKeyValueIterator<K,V> source, KeyExtent extent, AccumuloConfiguration conf, List<IterInfo> ssiList, Map<String,Map<String,String>> ssio,
+      IteratorEnvironment env, boolean useAccumuloClassLoader, String classLoaderContext) throws IOException {
+
     List<IterInfo> iters = new ArrayList<>(ssiList);
     Map<String,Map<String,String>> allOptions = new HashMap<>();
     parseIteratorConfiguration(scope, iters, ssio, allOptions, conf);
@@ -260,7 +254,7 @@ public class IteratorUtil {
       Collection<IterInfo> iters, Map<String,Map<String,String>> iterOpts, IteratorEnvironment env, boolean useAccumuloClassLoader, String context,
       Map<String,Class<? extends SortedKeyValueIterator<K,V>>> classCache) throws IOException {
     // wrap the source in a SynchronizedIterator in case any of the additional configured iterators want to use threading
-    SortedKeyValueIterator<K,V> prev = new SynchronizedIterator<>(source);
+    SortedKeyValueIterator<K,V> prev = source;
 
     try {
       for (IterInfo iterInfo : iters) {
@@ -288,13 +282,7 @@ public class IteratorUtil {
         skvi.init(prev, options, env);
         prev = skvi;
       }
-    } catch (ClassNotFoundException e) {
-      log.error(e.toString());
-      throw new RuntimeException(e);
-    } catch (InstantiationException e) {
-      log.error(e.toString());
-      throw new RuntimeException(e);
-    } catch (IllegalAccessException e) {
+    } catch (ClassNotFoundException | IllegalAccessException | InstantiationException e) {
       log.error(e.toString());
       throw new RuntimeException(e);
     }
@@ -324,10 +312,15 @@ public class IteratorUtil {
   public static Range maximizeStartKeyTimeStamp(Range range) {
     Range seekRange = range;
 
-    if (range.getStartKey() != null && range.getStartKey().getTimestamp() != Long.MAX_VALUE) {
-      Key seekKey = new Key(seekRange.getStartKey());
-      seekKey.setTimestamp(Long.MAX_VALUE);
-      seekRange = new Range(seekKey, true, range.getEndKey(), range.isEndKeyInclusive());
+    if (range.getStartKey() != null) {
+      Key seekKey = range.getStartKey();
+      if (range.getStartKey().getTimestamp() != Long.MAX_VALUE) {
+        seekKey = new Key(seekRange.getStartKey());
+        seekKey.setTimestamp(Long.MAX_VALUE);
+        seekRange = new Range(seekKey, true, range.getEndKey(), range.isEndKeyInclusive());
+      } else if (!range.isStartKeyInclusive()) {
+        seekRange = new Range(seekKey, true, range.getEndKey(), range.isEndKeyInclusive());
+      }
     }
 
     return seekRange;
@@ -336,10 +329,15 @@ public class IteratorUtil {
   public static Range minimizeEndKeyTimeStamp(Range range) {
     Range seekRange = range;
 
-    if (range.getEndKey() != null && range.getEndKey().getTimestamp() != Long.MIN_VALUE) {
-      Key seekKey = new Key(seekRange.getEndKey());
-      seekKey.setTimestamp(Long.MIN_VALUE);
-      seekRange = new Range(range.getStartKey(), range.isStartKeyInclusive(), seekKey, true);
+    if (range.getEndKey() != null) {
+      Key seekKey = seekRange.getEndKey();
+      if (range.getEndKey().getTimestamp() != Long.MIN_VALUE) {
+        seekKey = new Key(seekRange.getEndKey());
+        seekKey.setTimestamp(Long.MIN_VALUE);
+        seekRange = new Range(range.getStartKey(), range.isStartKeyInclusive(), seekKey, true);
+      } else if (!range.isEndKeyInclusive()) {
+        seekRange = new Range(range.getStartKey(), range.isStartKeyInclusive(), seekKey, true);
+      }
     }
 
     return seekRange;
@@ -401,7 +399,7 @@ public class IteratorUtil {
       byte[] defaultVisibility) throws IOException {
     DeletingIterator delIter = new DeletingIterator(source, false);
     ColumnFamilySkippingIterator cfsi = new ColumnFamilySkippingIterator(delIter);
-    ColumnQualifierFilter colFilter = new ColumnQualifierFilter(cfsi, cols);
-    return new VisibilityFilter(colFilter, auths, defaultVisibility);
+    SortedKeyValueIterator<Key,Value> colFilter = ColumnQualifierFilter.wrap(cfsi, cols);
+    return VisibilityFilter.wrap(colFilter, auths, defaultVisibility);
   }
 }

@@ -39,6 +39,7 @@ import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.impl.ClientContext;
 import org.apache.accumulo.core.client.impl.Credentials;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.data.ArrayByteSequence;
@@ -62,6 +63,7 @@ import org.apache.accumulo.core.iterators.system.MultiIterator;
 import org.apache.accumulo.core.iterators.system.VisibilityFilter;
 import org.apache.accumulo.core.metadata.MetadataServicer;
 import org.apache.accumulo.core.security.Authorizations;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.core.util.Stat;
 import org.apache.accumulo.server.cli.ClientOnRequiredTable;
 import org.apache.accumulo.server.conf.ServerConfigurationFactory;
@@ -79,7 +81,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.beust.jcommander.Parameter;
-import com.google.common.net.HostAndPort;
 
 public class CollectTabletStats {
   private static final Logger log = LoggerFactory.getLogger(CollectTabletStats.class);
@@ -87,7 +88,7 @@ public class CollectTabletStats {
   static class CollectOptions extends ClientOnRequiredTable {
     @Parameter(names = "--iterations", description = "number of iterations")
     int iterations = 3;
-    @Parameter(names = "-t", description = "number of threads")
+    @Parameter(names = "--numThreads", description = "number of threads")
     int numThreads = 1;
     @Parameter(names = "-f", description = "select far tablets, default is to use local tablets")
     boolean selectFarTablets = false;
@@ -111,11 +112,11 @@ public class CollectTabletStats {
     Instance instance = opts.getInstance();
     final ServerConfigurationFactory sconf = new ServerConfigurationFactory(instance);
     Credentials creds = new Credentials(opts.getPrincipal(), opts.getToken());
-    ClientContext context = new ClientContext(instance, creds, sconf.getConfiguration());
+    ClientContext context = new ClientContext(instance, creds, sconf.getSystemConfiguration());
 
-    String tableId = Tables.getNameToIdMap(instance).get(opts.getTableName());
+    Table.ID tableId = Tables.getTableId(instance, opts.getTableName());
     if (tableId == null) {
-      log.error("Unable to find table named " + opts.getTableName());
+      log.error("Unable to find table named {}", opts.getTableName());
       System.exit(-1);
     }
 
@@ -132,7 +133,7 @@ public class CollectTabletStats {
     Map<KeyExtent,List<FileRef>> tabletFiles = new HashMap<>();
 
     for (KeyExtent ke : tabletsToTest) {
-      List<FileRef> files = getTabletFiles(context, tableId, ke);
+      List<FileRef> files = getTabletFiles(context, ke);
       tabletFiles.put(ke, files);
     }
 
@@ -162,7 +163,7 @@ public class CollectTabletStats {
         Test test = new Test(ke) {
           @Override
           public int runTest() throws Exception {
-            return readFiles(fs, sconf.getConfiguration(), files, ke, columns);
+            return readFiles(fs, sconf.getSystemConfiguration(), files, ke, columns);
           }
 
         };
@@ -349,7 +350,7 @@ public class CollectTabletStats {
   private static List<KeyExtent> findTablets(ClientContext context, boolean selectLocalTablets, String tableName, SortedMap<KeyExtent,String> tabletLocations)
       throws Exception {
 
-    String tableId = Tables.getNameToIdMap(context.getInstance()).get(tableName);
+    Table.ID tableId = Tables.getTableId(context.getInstance(), tableName);
     MetadataServicer.forTableId(context, tableId).getTabletLocations(tabletLocations);
 
     InetAddress localaddress = InetAddress.getLocalHost();
@@ -359,7 +360,7 @@ public class CollectTabletStats {
     for (Entry<KeyExtent,String> entry : tabletLocations.entrySet()) {
       String loc = entry.getValue();
       if (loc != null) {
-        boolean isLocal = HostAndPort.fromString(entry.getValue()).getHostText().equals(localaddress.getHostName());
+        boolean isLocal = HostAndPort.fromString(entry.getValue()).getHost().equals(localaddress.getHostName());
 
         if (selectLocalTablets && isLocal) {
           candidates.add(entry.getKey());
@@ -384,7 +385,7 @@ public class CollectTabletStats {
     return tabletsToTest;
   }
 
-  private static List<FileRef> getTabletFiles(ClientContext context, String tableId, KeyExtent ke) throws IOException {
+  private static List<FileRef> getTabletFiles(ClientContext context, KeyExtent ke) throws IOException {
     return new ArrayList<>(MetadataTableUtil.getDataFileSizes(ke, context).keySet());
   }
 
@@ -421,7 +422,7 @@ public class CollectTabletStats {
       Authorizations authorizations, byte[] defaultLabels, HashSet<Column> columnSet, List<IterInfo> ssiList, Map<String,Map<String,String>> ssio,
       boolean useTableIterators, TableConfiguration conf) throws IOException {
 
-    SortedMapIterator smi = new SortedMapIterator(new TreeMap<Key,Value>());
+    SortedMapIterator smi = new SortedMapIterator(new TreeMap<>());
 
     List<SortedKeyValueIterator<Key,Value>> iters = new ArrayList<>(mapfiles.size() + 1);
 
@@ -431,8 +432,8 @@ public class CollectTabletStats {
     MultiIterator multiIter = new MultiIterator(iters, ke);
     DeletingIterator delIter = new DeletingIterator(multiIter, false);
     ColumnFamilySkippingIterator cfsi = new ColumnFamilySkippingIterator(delIter);
-    ColumnQualifierFilter colFilter = new ColumnQualifierFilter(cfsi, columnSet);
-    VisibilityFilter visFilter = new VisibilityFilter(colFilter, authorizations, defaultLabels);
+    SortedKeyValueIterator<Key,Value> colFilter = ColumnQualifierFilter.wrap(cfsi, columnSet);
+    SortedKeyValueIterator<Key,Value> visFilter = VisibilityFilter.wrap(colFilter, authorizations, defaultLabels);
 
     if (useTableIterators)
       return IteratorUtil.loadIterators(IteratorScope.scan, visFilter, ke, conf, ssiList, ssio, null);
@@ -479,13 +480,13 @@ public class CollectTabletStats {
     for (FileRef file : files) {
       FileSystem ns = fs.getVolumeByPath(file.path()).getFileSystem();
       readers.add(FileOperations.getInstance().newReaderBuilder().forFile(file.path().toString(), ns, ns.getConf())
-          .withTableConfiguration(aconf.getConfiguration()).build());
+          .withTableConfiguration(aconf.getSystemConfiguration()).build());
     }
 
     List<IterInfo> emptyIterinfo = Collections.emptyList();
     Map<String,Map<String,String>> emptySsio = Collections.emptyMap();
     TableConfiguration tconf = aconf.getTableConfiguration(ke.getTableId());
-    reader = createScanIterator(ke, readers, auths, new byte[] {}, new HashSet<Column>(), emptyIterinfo, emptySsio, useTableIterators, tconf);
+    reader = createScanIterator(ke, readers, auths, new byte[] {}, new HashSet<>(), emptyIterinfo, emptySsio, useTableIterators, tconf);
 
     HashSet<ByteSequence> columnSet = createColumnBSS(columns);
 
@@ -505,82 +506,82 @@ public class CollectTabletStats {
   private static int scanTablet(Connector conn, String table, Authorizations auths, int batchSize, Text prevEndRow, Text endRow, String[] columns)
       throws Exception {
 
-    Scanner scanner = conn.createScanner(table, auths);
-    scanner.setBatchSize(batchSize);
-    scanner.setRange(new Range(prevEndRow, false, endRow, true));
+    try (Scanner scanner = conn.createScanner(table, auths)) {
+      scanner.setBatchSize(batchSize);
+      scanner.setRange(new Range(prevEndRow, false, endRow, true));
 
-    for (String c : columns) {
-      scanner.fetchColumnFamily(new Text(c));
+      for (String c : columns) {
+        scanner.fetchColumnFamily(new Text(c));
+      }
+
+      int count = 0;
+
+      for (Entry<Key,Value> entry : scanner) {
+        if (entry != null)
+          count++;
+      }
+      return count;
     }
-
-    int count = 0;
-
-    for (Entry<Key,Value> entry : scanner) {
-      if (entry != null)
-        count++;
-    }
-
-    return count;
   }
 
   private static void calcTabletStats(Connector conn, String table, Authorizations auths, int batchSize, KeyExtent ke, String[] columns) throws Exception {
 
     // long t1 = System.currentTimeMillis();
 
-    Scanner scanner = conn.createScanner(table, auths);
-    scanner.setBatchSize(batchSize);
-    scanner.setRange(new Range(ke.getPrevEndRow(), false, ke.getEndRow(), true));
+    try (Scanner scanner = conn.createScanner(table, auths)) {
+      scanner.setBatchSize(batchSize);
+      scanner.setRange(new Range(ke.getPrevEndRow(), false, ke.getEndRow(), true));
 
-    for (String c : columns) {
-      scanner.fetchColumnFamily(new Text(c));
-    }
-
-    Stat rowLen = new Stat();
-    Stat cfLen = new Stat();
-    Stat cqLen = new Stat();
-    Stat cvLen = new Stat();
-    Stat valLen = new Stat();
-    Stat colsPerRow = new Stat();
-
-    Text lastRow = null;
-    int colsPerRowCount = 0;
-
-    for (Entry<Key,Value> entry : scanner) {
-
-      Key key = entry.getKey();
-      Text row = key.getRow();
-
-      if (lastRow == null) {
-        lastRow = row;
+      for (String c : columns) {
+        scanner.fetchColumnFamily(new Text(c));
       }
 
-      if (!lastRow.equals(row)) {
-        colsPerRow.addStat(colsPerRowCount);
-        lastRow = row;
-        colsPerRowCount = 0;
+      Stat rowLen = new Stat();
+      Stat cfLen = new Stat();
+      Stat cqLen = new Stat();
+      Stat cvLen = new Stat();
+      Stat valLen = new Stat();
+      Stat colsPerRow = new Stat();
+
+      Text lastRow = null;
+      int colsPerRowCount = 0;
+
+      for (Entry<Key,Value> entry : scanner) {
+
+        Key key = entry.getKey();
+        Text row = key.getRow();
+
+        if (lastRow == null) {
+          lastRow = row;
+        }
+
+        if (!lastRow.equals(row)) {
+          colsPerRow.addStat(colsPerRowCount);
+          lastRow = row;
+          colsPerRowCount = 0;
+        }
+
+        colsPerRowCount++;
+
+        rowLen.addStat(row.getLength());
+        cfLen.addStat(key.getColumnFamilyData().length());
+        cqLen.addStat(key.getColumnQualifierData().length());
+        cvLen.addStat(key.getColumnVisibilityData().length());
+        valLen.addStat(entry.getValue().get().length);
       }
 
-      colsPerRowCount++;
-
-      rowLen.addStat(row.getLength());
-      cfLen.addStat(key.getColumnFamilyData().length());
-      cqLen.addStat(key.getColumnQualifierData().length());
-      cvLen.addStat(key.getColumnVisibilityData().length());
-      valLen.addStat(entry.getValue().get().length);
+      synchronized (System.out) {
+        System.out.println("");
+        System.out.println("\tTablet " + ke.getUUID() + " statistics : ");
+        printStat("Row length", rowLen);
+        printStat("Column family length", cfLen);
+        printStat("Column qualifier length", cqLen);
+        printStat("Column visibility length", cvLen);
+        printStat("Value length", valLen);
+        printStat("Columns per row", colsPerRow);
+        System.out.println("");
+      }
     }
-
-    synchronized (System.out) {
-      System.out.println("");
-      System.out.println("\tTablet " + ke.getUUID() + " statistics : ");
-      printStat("Row length", rowLen);
-      printStat("Column family length", cfLen);
-      printStat("Column qualifier length", cqLen);
-      printStat("Column visibility length", cvLen);
-      printStat("Value length", valLen);
-      printStat("Columns per row", colsPerRow);
-      System.out.println("");
-    }
-
   }
 
   private static void printStat(String desc, Stat s) {

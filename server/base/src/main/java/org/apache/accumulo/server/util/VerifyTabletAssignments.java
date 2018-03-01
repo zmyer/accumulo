@@ -33,6 +33,7 @@ import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.TableNotFoundException;
 import org.apache.accumulo.core.client.impl.ClientContext;
 import org.apache.accumulo.core.client.impl.Credentials;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.data.Range;
@@ -50,6 +51,7 @@ import org.apache.accumulo.core.tabletserver.thrift.NoSuchScanIDException;
 import org.apache.accumulo.core.tabletserver.thrift.TabletClientService;
 import org.apache.accumulo.core.trace.Tracer;
 import org.apache.accumulo.core.trace.thrift.TInfo;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.server.cli.ClientOpts;
 import org.apache.hadoop.io.Text;
 import org.apache.thrift.TException;
@@ -58,7 +60,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.beust.jcommander.Parameter;
-import com.google.common.net.HostAndPort;
 
 public class VerifyTabletAssignments {
   private static final Logger log = LoggerFactory.getLogger(VerifyTabletAssignments.class);
@@ -89,7 +90,7 @@ public class VerifyTabletAssignments {
 
     TreeMap<KeyExtent,String> tabletLocations = new TreeMap<>();
 
-    String tableId = Tables.getNameToIdMap(context.getInstance()).get(tableName);
+    Table.ID tableId = Tables.getNameToIdMap(context.getInstance()).get(tableName);
     MetadataServicer.forTableId(context, tableId).getTabletLocations(tabletLocations);
 
     final HashSet<KeyExtent> failures = new HashSet<>();

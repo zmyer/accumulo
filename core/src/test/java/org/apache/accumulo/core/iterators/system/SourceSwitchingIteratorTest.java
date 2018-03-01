@@ -16,41 +16,48 @@
  */
 package org.apache.accumulo.core.iterators.system;
 
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import junit.framework.TestCase;
-
 import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.Key;
+import org.apache.accumulo.core.data.PartialKey;
 import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.iterators.IterationInterruptedException;
 import org.apache.accumulo.core.iterators.IteratorEnvironment;
 import org.apache.accumulo.core.iterators.SortedKeyValueIterator;
 import org.apache.accumulo.core.iterators.SortedMapIterator;
+import org.apache.accumulo.core.iterators.WrappingIterator;
+import org.apache.accumulo.core.iterators.YieldCallback;
 import org.apache.accumulo.core.iterators.system.SourceSwitchingIterator.DataSource;
 import org.apache.hadoop.io.Text;
 
+import junit.framework.TestCase;
+
 public class SourceSwitchingIteratorTest extends TestCase {
 
-  Key nk(String row, String cf, String cq, long time) {
+  Key newKey(String row, String cf, String cq, long time) {
     return new Key(new Text(row), new Text(cf), new Text(cq), time);
   }
 
   void put(TreeMap<Key,Value> tm, String row, String cf, String cq, long time, Value val) {
-    tm.put(nk(row, cf, cq, time), val);
+    tm.put(newKey(row, cf, cq, time), val);
   }
 
   void put(TreeMap<Key,Value> tm, String row, String cf, String cq, long time, String val) {
     put(tm, row, cf, cq, time, new Value(val.getBytes()));
   }
 
-  private void ane(SortedKeyValueIterator<Key,Value> rdi, String row, String cf, String cq, long time, String val, boolean callNext) throws Exception {
+  private void testAndCallNext(SortedKeyValueIterator<Key,Value> rdi, String row, String cf, String cq, long time, String val, boolean callNext)
+      throws Exception {
     assertTrue(rdi.hasTop());
-    assertEquals(nk(row, cf, cq, time), rdi.getTopKey());
+    assertEquals(newKey(row, cf, cq, time), rdi.getTopKey());
     assertEquals(val, rdi.getTopValue().toString());
     if (callNext)
       rdi.next();
@@ -64,7 +71,7 @@ public class SourceSwitchingIteratorTest extends TestCase {
     AtomicBoolean iflag;
 
     TestDataSource(SortedKeyValueIterator<Key,Value> iter) {
-      this(iter, new ArrayList<TestDataSource>());
+      this(iter, new ArrayList<>());
     }
 
     public TestDataSource(SortedKeyValueIterator<Key,Value> iter, List<TestDataSource> copies) {
@@ -120,10 +127,10 @@ public class SourceSwitchingIteratorTest extends TestCase {
     TestDataSource tds = new TestDataSource(smi);
     SourceSwitchingIterator ssi = new SourceSwitchingIterator(tds);
 
-    ssi.seek(new Range(), new ArrayList<ByteSequence>(), false);
-    ane(ssi, "r1", "cf1", "cq1", 5, "v1", true);
-    ane(ssi, "r1", "cf1", "cq3", 5, "v2", true);
-    ane(ssi, "r2", "cf1", "cq1", 5, "v3", true);
+    ssi.seek(new Range(), new ArrayList<>(), false);
+    testAndCallNext(ssi, "r1", "cf1", "cq1", 5, "v1", true);
+    testAndCallNext(ssi, "r1", "cf1", "cq3", 5, "v2", true);
+    testAndCallNext(ssi, "r2", "cf1", "cq1", 5, "v3", true);
     assertFalse(ssi.hasTop());
   }
 
@@ -137,8 +144,8 @@ public class SourceSwitchingIteratorTest extends TestCase {
     TestDataSource tds = new TestDataSource(smi);
     SourceSwitchingIterator ssi = new SourceSwitchingIterator(tds);
 
-    ssi.seek(new Range(), new ArrayList<ByteSequence>(), false);
-    ane(ssi, "r1", "cf1", "cq1", 5, "v1", true);
+    ssi.seek(new Range(), new ArrayList<>(), false);
+    testAndCallNext(ssi, "r1", "cf1", "cq1", 5, "v1", true);
 
     TreeMap<Key,Value> tm2 = new TreeMap<>();
     put(tm2, "r1", "cf1", "cq1", 5, "v4");
@@ -149,8 +156,8 @@ public class SourceSwitchingIteratorTest extends TestCase {
     TestDataSource tds2 = new TestDataSource(smi2);
     tds.next = tds2;
 
-    ane(ssi, "r1", "cf1", "cq3", 5, "v2", true);
-    ane(ssi, "r2", "cf1", "cq1", 5, "v6", true);
+    testAndCallNext(ssi, "r1", "cf1", "cq3", 5, "v2", true);
+    testAndCallNext(ssi, "r2", "cf1", "cq1", 5, "v6", true);
     assertFalse(ssi.hasTop());
   }
 
@@ -169,8 +176,8 @@ public class SourceSwitchingIteratorTest extends TestCase {
     TestDataSource tds = new TestDataSource(smi);
     SourceSwitchingIterator ssi = new SourceSwitchingIterator(tds, true);
 
-    ssi.seek(new Range(), new ArrayList<ByteSequence>(), false);
-    ane(ssi, "r1", "cf1", "cq1", 5, "v1", true);
+    ssi.seek(new Range(), new ArrayList<>(), false);
+    testAndCallNext(ssi, "r1", "cf1", "cq1", 5, "v1", true);
 
     TreeMap<Key,Value> tm2 = new TreeMap<>(tm1);
     put(tm2, "r1", "cf1", "cq5", 5, "v7"); // should not see this because it should not switch until the row is finished
@@ -181,12 +188,12 @@ public class SourceSwitchingIteratorTest extends TestCase {
     TestDataSource tds2 = new TestDataSource(smi2);
     tds.next = tds2;
 
-    ane(ssi, "r1", "cf1", "cq2", 5, "v2", true);
-    ane(ssi, "r1", "cf1", "cq3", 5, "v3", true);
-    ane(ssi, "r1", "cf1", "cq4", 5, "v4", true);
-    ane(ssi, "r2", "cf1", "cq1", 5, "v8", true);
-    ane(ssi, "r3", "cf1", "cq1", 5, "v5", true);
-    ane(ssi, "r3", "cf1", "cq2", 5, "v6", true);
+    testAndCallNext(ssi, "r1", "cf1", "cq2", 5, "v2", true);
+    testAndCallNext(ssi, "r1", "cf1", "cq3", 5, "v3", true);
+    testAndCallNext(ssi, "r1", "cf1", "cq4", 5, "v4", true);
+    testAndCallNext(ssi, "r2", "cf1", "cq1", 5, "v8", true);
+    testAndCallNext(ssi, "r3", "cf1", "cq1", 5, "v5", true);
+    testAndCallNext(ssi, "r3", "cf1", "cq2", 5, "v6", true);
 
   }
 
@@ -208,10 +215,10 @@ public class SourceSwitchingIteratorTest extends TestCase {
     TestDataSource tds2 = new TestDataSource(smi2);
     tds.next = tds2;
 
-    ssi.seek(new Range(), new ArrayList<ByteSequence>(), false);
+    ssi.seek(new Range(), new ArrayList<>(), false);
 
-    ane(ssi, "r1", "cf1", "cq1", 6, "v3", true);
-    ane(ssi, "r1", "cf1", "cq2", 6, "v4", true);
+    testAndCallNext(ssi, "r1", "cf1", "cq1", 6, "v3", true);
+    testAndCallNext(ssi, "r1", "cf1", "cq2", 6, "v4", true);
 
   }
 
@@ -237,12 +244,12 @@ public class SourceSwitchingIteratorTest extends TestCase {
 
     ssi.switchNow();
 
-    ssi.seek(new Range("r1"), new ArrayList<ByteSequence>(), false);
-    dc1.seek(new Range("r2"), new ArrayList<ByteSequence>(), false);
+    ssi.seek(new Range("r1"), new ArrayList<>(), false);
+    dc1.seek(new Range("r2"), new ArrayList<>(), false);
 
-    ane(ssi, "r1", "cf1", "cq1", 6, "v3", true);
+    testAndCallNext(ssi, "r1", "cf1", "cq1", 6, "v3", true);
     assertFalse(ssi.hasTop());
-    ane(dc1, "r2", "cf1", "cq2", 6, "v4", true);
+    testAndCallNext(dc1, "r2", "cf1", "cq2", 6, "v4", true);
     assertFalse(dc1.hasTop());
   }
 
@@ -260,16 +267,121 @@ public class SourceSwitchingIteratorTest extends TestCase {
 
     assertSame(flag, tds.iflag);
 
-    ssi.seek(new Range("r1"), new ArrayList<ByteSequence>(), false);
-    ane(ssi, "r1", "cf1", "cq1", 5, "v1", true);
+    ssi.seek(new Range("r1"), new ArrayList<>(), false);
+    testAndCallNext(ssi, "r1", "cf1", "cq1", 5, "v1", true);
     assertFalse(ssi.hasTop());
 
     flag.set(true);
 
     try {
-      ssi.seek(new Range("r1"), new ArrayList<ByteSequence>(), false);
+      ssi.seek(new Range("r1"), new ArrayList<>(), false);
       fail("expected to see IterationInterruptedException");
     } catch (IterationInterruptedException iie) {}
 
+  }
+
+  private Range yield(Range r, SourceSwitchingIterator ssi, YieldCallback<Key> yield) throws IOException {
+    while (yield.hasYielded()) {
+      Key yieldPosition = yield.getPositionAndReset();
+      if (!r.contains(yieldPosition)) {
+        throw new IOException("Underlying iterator yielded to a position outside of its range: " + yieldPosition + " not in " + r);
+      }
+      r = new Range(yieldPosition, false, (Key) null, r.isEndKeyInclusive());
+      ssi.seek(r, new ArrayList<>(), false);
+    }
+    return r;
+  }
+
+  public void testYield() throws Exception {
+    TreeMap<Key,Value> tm1 = new TreeMap<>();
+    put(tm1, "r1", "cf1", "cq1", 5, "v1");
+    put(tm1, "r1", "cf1", "cq3", 5, "v2");
+    put(tm1, "r2", "cf1", "cq1", 5, "v3");
+
+    SortedMapIterator smi = new SortedMapIterator(tm1);
+    YieldingIterator ymi = new YieldingIterator(smi);
+    TestDataSource tds = new TestDataSource(ymi);
+    SourceSwitchingIterator ssi = new SourceSwitchingIterator(tds);
+
+    YieldCallback<Key> yield = new YieldCallback<>();
+    ssi.enableYielding(yield);
+
+    Range r = new Range();
+    ssi.seek(r, new ArrayList<>(), false);
+    r = yield(r, ssi, yield);
+    testAndCallNext(ssi, "r1", "cf1", "cq1", 5, "v1", true);
+    r = yield(r, ssi, yield);
+    testAndCallNext(ssi, "r1", "cf1", "cq3", 5, "v2", true);
+    r = yield(r, ssi, yield);
+    testAndCallNext(ssi, "r2", "cf1", "cq1", 5, "v3", true);
+    r = yield(r, ssi, yield);
+    assertFalse(ssi.hasTop());
+  }
+
+  /**
+   * This iterator which implements yielding will yield after every other next and every other seek call.
+   */
+  private final AtomicBoolean yieldNextKey = new AtomicBoolean(false);
+  private final AtomicBoolean yieldSeekKey = new AtomicBoolean(false);
+
+  public class YieldingIterator extends WrappingIterator {
+    private Optional<YieldCallback<Key>> yield = Optional.empty();
+
+    public YieldingIterator(SortedKeyValueIterator<Key,Value> source) {
+      setSource(source);
+    }
+
+    @Override
+    public SortedKeyValueIterator<Key,Value> deepCopy(IteratorEnvironment env) {
+      return new YieldingIterator(getSource().deepCopy(env));
+    }
+
+    @Override
+    public boolean hasTop() {
+      return (!(yield.isPresent() && yield.get().hasYielded()) && super.hasTop());
+    }
+
+    @Override
+    public void next() throws IOException {
+      boolean yielded = false;
+
+      // yield on every other next call.
+      yieldNextKey.set(!yieldNextKey.get());
+      if (yield.isPresent() && yieldNextKey.get()) {
+        yielded = true;
+        // since we are not actually skipping keys underneath, simply use the key following the top key as the yield key
+        yield.get().yield(getTopKey().followingKey(PartialKey.ROW_COLFAM_COLQUAL_COLVIS_TIME));
+      }
+
+      // if not yielding, then simply pass on the next call
+      if (!yielded) {
+        super.next();
+      }
+    }
+
+    @Override
+    public void seek(Range range, Collection<ByteSequence> columnFamilies, boolean inclusive) throws IOException {
+      boolean yielded = false;
+
+      if (!range.isStartKeyInclusive()) {
+        // yield on every other seek call.
+        yieldSeekKey.set(!yieldSeekKey.get());
+        if (yield.isPresent() && yieldSeekKey.get()) {
+          yielded = true;
+          // since we are not actually skipping keys underneath, simply use the key following the range start key
+          yield.get().yield(range.getStartKey().followingKey(PartialKey.ROW_COLFAM_COLQUAL_COLVIS_TIME));
+        }
+      }
+
+      // if not yielding, then simply pass on the call to the source
+      if (!yielded) {
+        super.seek(range, columnFamilies, inclusive);
+      }
+    }
+
+    @Override
+    public void enableYielding(YieldCallback<Key> yield) {
+      this.yield = Optional.of(yield);
+    }
   }
 }

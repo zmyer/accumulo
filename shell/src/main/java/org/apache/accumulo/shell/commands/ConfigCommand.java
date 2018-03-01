@@ -24,15 +24,13 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeMap;
 
-import jline.console.ConsoleReader;
-
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.NamespaceNotFoundException;
 import org.apache.accumulo.core.client.TableNotFoundException;
 import org.apache.accumulo.core.client.impl.Namespaces;
 import org.apache.accumulo.core.client.impl.Tables;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.security.ColumnVisibility;
 import org.apache.accumulo.core.util.BadArgumentException;
@@ -45,6 +43,8 @@ import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.OptionGroup;
 import org.apache.commons.cli.Options;
+
+import jline.console.ConsoleReader;
 
 public class ConfigCommand extends Command {
   private Option tableOpt, deleteOpt, setOpt, filterOpt, disablePaginationOpt, outputFileOpt, namespaceOpt;
@@ -150,7 +150,7 @@ public class ConfigCommand extends Command {
       siteConfig.putAll(shellState.getConnector().instanceOperations().getSiteConfiguration());
 
       final TreeMap<String,String> defaults = new TreeMap<>();
-      for (Entry<String,String> defaultEntry : AccumuloConfiguration.getDefaultConfiguration()) {
+      for (Entry<String,String> defaultEntry : DefaultConfiguration.getInstance()) {
         defaults.put(defaultEntry.getKey(), defaultEntry.getValue());
       }
 

@@ -53,7 +53,6 @@ import org.apache.accumulo.core.client.IteratorSetting;
 import org.apache.accumulo.core.client.NamespaceNotFoundException;
 import org.apache.accumulo.core.client.TableNotFoundException;
 import org.apache.accumulo.core.client.ZooKeeperInstance;
-import org.apache.accumulo.core.client.impl.ClientContext;
 import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.security.tokens.AuthenticationToken;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
@@ -152,6 +151,7 @@ import org.apache.accumulo.shell.commands.SetIterCommand;
 import org.apache.accumulo.shell.commands.SetScanIterCommand;
 import org.apache.accumulo.shell.commands.SetShellIterCommand;
 import org.apache.accumulo.shell.commands.SleepCommand;
+import org.apache.accumulo.shell.commands.SummariesCommand;
 import org.apache.accumulo.shell.commands.SystemPermissionsCommand;
 import org.apache.accumulo.shell.commands.TableCommand;
 import org.apache.accumulo.shell.commands.TablePermissionsCommand;
@@ -415,7 +415,8 @@ public class Shell extends ShellOptions implements KeywordExecutable {
         new TableCommand(), new UserCommand(), new WhoAmICommand()};
     Command[] tableCommands = {new CloneTableCommand(), new ConfigCommand(), new CreateTableCommand(), new DeleteTableCommand(), new DropTableCommand(),
         new DUCommand(), new ExportTableCommand(), new ImportTableCommand(), new OfflineCommand(), new OnlineCommand(), new RenameTableCommand(),
-        new TablesCommand(), new NamespacesCommand(), new CreateNamespaceCommand(), new DeleteNamespaceCommand(), new RenameNamespaceCommand()};
+        new TablesCommand(), new NamespacesCommand(), new CreateNamespaceCommand(), new DeleteNamespaceCommand(), new RenameNamespaceCommand(),
+        new SummariesCommand()};
     Command[] tableControlCommands = {new AddSplitsCommand(), new CompactCommand(), new ConstraintCommand(), new FlushCommand(), new GetGroupsCommand(),
         new GetSplitsCommand(), new MergeCommand(), new SetGroupsCommand()};
     Command[] userCommands = {new AddAuthsCommand(), new CreateUserCommand(), new DeleteUserCommand(), new DropUserCommand(), new GetAuthsCommand(),
@@ -484,7 +485,7 @@ public class Shell extends ShellOptions implements KeywordExecutable {
    *          ClientConfiguration instance
    * @return The ZooKeepers to connect to
    */
-  static String getZooKeepers(String keepers, ClientConfiguration clientConfig, AccumuloConfiguration conf) {
+  static String getZooKeepers(String keepers, ClientConfiguration clientConfig) {
     if (null != keepers) {
       return keepers;
     }
@@ -493,7 +494,7 @@ public class Shell extends ShellOptions implements KeywordExecutable {
       return clientConfig.get(ClientProperty.INSTANCE_ZK_HOST);
     }
 
-    return conf.get(Property.INSTANCE_ZK_HOST);
+    return SiteConfiguration.getInstance().get(Property.INSTANCE_ZK_HOST);
   }
 
   /*
@@ -505,9 +506,10 @@ public class Shell extends ShellOptions implements KeywordExecutable {
     if (instanceName == null) {
       instanceName = clientConfig.get(ClientProperty.INSTANCE_NAME);
     }
-    AccumuloConfiguration conf = SiteConfiguration.getInstance(ClientContext.convertClientConfig(clientConfig));
-    String keepers = getZooKeepers(keepersOption, clientConfig, conf);
+
+    String keepers = getZooKeepers(keepersOption, clientConfig);
     if (instanceName == null) {
+      AccumuloConfiguration conf = SiteConfiguration.getInstance();
       Path instanceDir = new Path(VolumeConfiguration.getVolumeUris(conf)[0], "instance_id");
       instanceId = UUID.fromString(ZooUtil.getInstanceIDFromHdfs(instanceDir, conf));
     }
@@ -558,18 +560,21 @@ public class Shell extends ShellOptions implements KeywordExecutable {
       shellState.getConnector().instanceOperations().getSystemConfiguration().get(Property.VFS_CONTEXT_CLASSPATH_PROPERTY.getKey() + classpath);
 
       try {
-        AccumuloVFSClassLoader.getContextManager().setContextConfig(new ContextManager.DefaultContextsConfig(new Iterable<Map.Entry<String,String>>() {
+
+        final Map<String,String> systemConfig = shellState.getConnector().instanceOperations().getSystemConfiguration();
+
+        AccumuloVFSClassLoader.getContextManager().setContextConfig(new ContextManager.DefaultContextsConfig() {
           @Override
-          public Iterator<Entry<String,String>> iterator() {
-            try {
-              return shellState.getConnector().instanceOperations().getSystemConfiguration().entrySet().iterator();
-            } catch (AccumuloException e) {
-              throw new RuntimeException(e);
-            } catch (AccumuloSecurityException e) {
-              throw new RuntimeException(e);
+          public Map<String,String> getVfsContextClasspathProperties() {
+            Map<String,String> filteredMap = new HashMap<>();
+            for (Entry<String,String> entry : systemConfig.entrySet()) {
+              if (entry.getKey().startsWith(Property.VFS_CONTEXT_CLASSPATH_PROPERTY.getKey())) {
+                filteredMap.put(entry.getKey(), entry.getValue());
+              }
             }
+            return filteredMap;
           }
-        }));
+        });
       } catch (IllegalStateException ise) {}
 
       classloader = AccumuloVFSClassLoader.getContextManager().getClassLoader(classpath);
@@ -582,6 +587,16 @@ public class Shell extends ShellOptions implements KeywordExecutable {
   @Override
   public String keyword() {
     return "shell";
+  }
+
+  @Override
+  public UsageGroup usageGroup() {
+    return UsageGroup.CORE;
+  }
+
+  @Override
+  public String description() {
+    return "Runs Accumulo shell";
   }
 
   @Override
@@ -639,13 +654,10 @@ public class Shell extends ShellOptions implements KeywordExecutable {
     ShellCompletor userCompletor = null;
 
     if (execFile != null) {
-      java.util.Scanner scanner = new java.util.Scanner(execFile, UTF_8.name());
-      try {
+      try (java.util.Scanner scanner = new java.util.Scanner(execFile, UTF_8.name())) {
         while (scanner.hasNextLine() && !hasExited()) {
           execCommand(scanner.nextLine(), true, isVerbose());
         }
-      } finally {
-        scanner.close();
       }
     } else if (execCommand != null) {
       for (String command : execCommand.split("\n")) {
@@ -1008,9 +1020,10 @@ public class Shell extends ShellOptions implements KeywordExecutable {
     }
   }
 
-  public interface PrintLine {
+  public interface PrintLine extends AutoCloseable {
     void print(String s);
 
+    @Override
     void close();
   }
 

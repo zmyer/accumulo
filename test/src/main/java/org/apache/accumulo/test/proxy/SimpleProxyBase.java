@@ -16,8 +16,8 @@
  */
 package org.apache.accumulo.test.proxy;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
@@ -48,7 +48,7 @@ import org.apache.accumulo.cluster.ClusterUser;
 import org.apache.accumulo.core.client.ClientConfiguration;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Instance;
-import org.apache.accumulo.core.client.impl.Namespaces;
+import org.apache.accumulo.core.client.impl.Namespace;
 import org.apache.accumulo.core.client.security.tokens.KerberosToken;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
 import org.apache.accumulo.core.conf.DefaultConfiguration;
@@ -64,8 +64,7 @@ import org.apache.accumulo.core.iterators.user.VersioningIterator;
 import org.apache.accumulo.core.metadata.MetadataTable;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.util.ByteBufferUtil;
-import org.apache.accumulo.examples.simple.constraints.MaxMutationSize;
-import org.apache.accumulo.examples.simple.constraints.NumericValueConstraint;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.harness.MiniClusterHarness;
 import org.apache.accumulo.harness.SharedMiniClusterBase;
 import org.apache.accumulo.harness.TestingKdc;
@@ -111,6 +110,8 @@ import org.apache.accumulo.proxy.thrift.UnknownScanner;
 import org.apache.accumulo.proxy.thrift.UnknownWriter;
 import org.apache.accumulo.proxy.thrift.WriterOptions;
 import org.apache.accumulo.server.util.PortUtils;
+import org.apache.accumulo.test.constraints.MaxMutationSize;
+import org.apache.accumulo.test.constraints.NumericValueConstraint;
 import org.apache.accumulo.test.functional.SlowIterator;
 import org.apache.commons.io.FileUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -133,7 +134,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.Iterators;
-import com.google.common.net.HostAndPort;
 
 /**
  * Call every method on the proxy and try to verify that it works.
@@ -2619,8 +2619,8 @@ public abstract class SimpleProxyBase extends SharedMiniClusterBase {
   @Test
   public void namespaceOperations() throws Exception {
     // default namespace and accumulo namespace
-    assertEquals("System namespace is wrong", client.systemNamespace(), Namespaces.ACCUMULO_NAMESPACE);
-    assertEquals("Default namespace is wrong", client.defaultNamespace(), Namespaces.DEFAULT_NAMESPACE);
+    assertEquals("System namespace is wrong", client.systemNamespace(), Namespace.ACCUMULO);
+    assertEquals("Default namespace is wrong", client.defaultNamespace(), Namespace.DEFAULT);
 
     // namespace existance and namespace listing
     assertTrue("Namespace created during setup should exist", client.namespaceExists(creds, namespaceName));

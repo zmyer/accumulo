@@ -30,7 +30,7 @@ import java.util.Map.Entry;
 import java.util.NoSuchElementException;
 
 import org.apache.accumulo.core.client.IteratorSetting;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
+import org.apache.accumulo.core.conf.ConfigurationTypeHelper;
 import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.PartialKey;
@@ -120,7 +120,7 @@ abstract public class TransformingIterator extends WrappingIterator implements O
     }
 
     if (options.containsKey(MAX_BUFFER_SIZE_OPT)) {
-      maxBufferSize = AccumuloConfiguration.getMemoryInBytes(options.get(MAX_BUFFER_SIZE_OPT));
+      maxBufferSize = ConfigurationTypeHelper.getFixedMemoryAsBytes(options.get(MAX_BUFFER_SIZE_OPT));
     } else {
       maxBufferSize = DEFAULT_MAX_BUFFER_SIZE;
     }
@@ -150,7 +150,7 @@ abstract public class TransformingIterator extends WrappingIterator implements O
         if (option.getKey().equals(AUTH_OPT)) {
           new Authorizations(option.getValue().getBytes(UTF_8));
         } else if (option.getKey().equals(MAX_BUFFER_SIZE_OPT)) {
-          AccumuloConfiguration.getMemoryInBytes(option.getValue());
+          ConfigurationTypeHelper.getFixedMemoryAsBytes(option.getValue());
         }
       } catch (Exception e) {
         throw new IllegalArgumentException("Failed to parse opt " + option.getKey() + " " + option.getValue(), e);
@@ -388,7 +388,7 @@ abstract public class TransformingIterator extends WrappingIterator implements O
         colVis = new ColumnVisibility(visibility.toArray());
         parsedVisibilitiesCache.put(visibility, Boolean.TRUE);
       } catch (BadArgumentException e) {
-        log.error("Parse error after transformation : " + visibility);
+        log.error("Parse error after transformation : {}", visibility);
         parsedVisibilitiesCache.put(visibility, Boolean.FALSE);
         if (scanning) {
           return false;
@@ -415,10 +415,7 @@ abstract public class TransformingIterator extends WrappingIterator implements O
           colVis = new ColumnVisibility(visibility.toArray());
         visible = ve.evaluate(colVis);
         visibleCache.put(visibility, visible);
-      } catch (VisibilityParseException e) {
-        log.error("Parse Error", e);
-        visible = Boolean.FALSE;
-      } catch (BadArgumentException e) {
+      } catch (VisibilityParseException | BadArgumentException e) {
         log.error("Parse Error", e);
         visible = Boolean.FALSE;
       }

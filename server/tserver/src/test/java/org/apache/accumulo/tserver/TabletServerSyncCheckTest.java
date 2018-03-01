@@ -19,12 +19,13 @@ package org.apache.accumulo.tserver;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.Map;
-import java.util.Optional;
 
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.conf.ConfigurationCopy;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.volume.Volume;
 import org.apache.accumulo.core.volume.VolumeImpl;
+import org.apache.accumulo.server.fs.VolumeChooserEnvironment;
 import org.apache.accumulo.server.fs.VolumeManagerImpl;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.ContentSummary;
@@ -188,7 +189,7 @@ public class TabletServerSyncCheckTest {
     }
 
     @Override
-    public Path getFullPath(String tableId, String path) {
+    public Path getFullPath(Table.ID tableId, String path) {
       return null;
     }
 
@@ -203,7 +204,7 @@ public class TabletServerSyncCheckTest {
     }
 
     @Override
-    public String choose(Optional<String> tableID, String[] options) {
+    public String choose(VolumeChooserEnvironment env, String[] options) {
       return null;
     }
 

@@ -19,6 +19,7 @@ package org.apache.accumulo.tserver;
 
 import java.util.TreeMap;
 
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.data.impl.KeyExtent;
@@ -31,11 +32,11 @@ import org.junit.Test;
 
 public class CheckTabletMetadataTest {
 
-  private static Key nk(String row, ColumnFQ cfq) {
+  private static Key newKey(String row, ColumnFQ cfq) {
     return new Key(new Text(row), cfq.getColumnFamily(), cfq.getColumnQualifier());
   }
 
-  private static Key nk(String row, Text cf, String cq) {
+  private static Key newKey(String row, Text cf, String cq) {
     return new Key(row, cf.toString(), cq);
   }
 
@@ -70,7 +71,7 @@ public class CheckTabletMetadataTest {
   @Test
   public void testBadTabletMetadata() throws Exception {
 
-    KeyExtent ke = new KeyExtent("1", null, null);
+    KeyExtent ke = new KeyExtent(Table.ID.of("1"), null, null);
 
     TreeMap<Key,Value> tabletMeta = new TreeMap<>();
 
@@ -89,22 +90,22 @@ public class CheckTabletMetadataTest {
     assertFail(tabletMeta, ke, new TServerInstance("127.0.0.2:9997", 4));
     assertFail(tabletMeta, ke, new TServerInstance("127.0.0.2:9997", 5));
 
-    assertFail(tabletMeta, new KeyExtent("1", null, new Text("m")), tsi);
+    assertFail(tabletMeta, new KeyExtent(Table.ID.of("1"), null, new Text("m")), tsi);
 
-    assertFail(tabletMeta, new KeyExtent("1", new Text("r"), new Text("m")), tsi);
+    assertFail(tabletMeta, new KeyExtent(Table.ID.of("1"), new Text("r"), new Text("m")), tsi);
 
-    assertFail(tabletMeta, ke, tsi, nk("1<", TabletsSection.TabletColumnFamily.PREV_ROW_COLUMN));
+    assertFail(tabletMeta, ke, tsi, newKey("1<", TabletsSection.TabletColumnFamily.PREV_ROW_COLUMN));
 
-    assertFail(tabletMeta, ke, tsi, nk("1<", TabletsSection.ServerColumnFamily.DIRECTORY_COLUMN));
+    assertFail(tabletMeta, ke, tsi, newKey("1<", TabletsSection.ServerColumnFamily.DIRECTORY_COLUMN));
 
-    assertFail(tabletMeta, ke, tsi, nk("1<", TabletsSection.ServerColumnFamily.TIME_COLUMN));
+    assertFail(tabletMeta, ke, tsi, newKey("1<", TabletsSection.ServerColumnFamily.TIME_COLUMN));
 
-    assertFail(tabletMeta, ke, tsi, nk("1<", TabletsSection.FutureLocationColumnFamily.NAME, "4"));
+    assertFail(tabletMeta, ke, tsi, newKey("1<", TabletsSection.FutureLocationColumnFamily.NAME, "4"));
 
     TreeMap<Key,Value> copy = new TreeMap<>(tabletMeta);
     put(copy, "1<", TabletsSection.CurrentLocationColumnFamily.NAME, "4", "127.0.0.1:9997");
     assertFail(copy, ke, tsi);
-    assertFail(copy, ke, tsi, nk("1<", TabletsSection.FutureLocationColumnFamily.NAME, "4"));
+    assertFail(copy, ke, tsi, newKey("1<", TabletsSection.FutureLocationColumnFamily.NAME, "4"));
 
     copy = new TreeMap<>(tabletMeta);
     put(copy, "1<", TabletsSection.CurrentLocationColumnFamily.NAME, "5", "127.0.0.1:9998");

@@ -25,17 +25,15 @@ import java.util.Random;
 import java.util.Set;
 import java.util.SortedMap;
 
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.data.impl.KeyExtent;
 import org.apache.accumulo.core.master.thrift.TableInfo;
 import org.apache.accumulo.core.master.thrift.TabletServerStatus;
 import org.apache.accumulo.core.metadata.MetadataTable;
 import org.apache.accumulo.core.tabletserver.thrift.TabletStats;
-import org.apache.accumulo.server.conf.ServerConfiguration;
-import org.apache.accumulo.server.conf.ServerConfigurationFactory;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.master.state.TabletMigration;
-import org.apache.commons.lang.NotImplementedException;
 import org.apache.thrift.TException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,7 +74,7 @@ public class ChaoticLoadBalancer extends TabletBalancer {
       for (TableInfo ti : e.getValue().getTableMap().values()) {
         numTablets += ti.tablets;
       }
-      if (numTablets < avg) {
+      if (numTablets <= avg) {
         tServerArray.add(e.getKey());
         toAssign.put(e.getKey(), avg - numTablets);
       }
@@ -131,11 +129,12 @@ public class ChaoticLoadBalancer extends TabletBalancer {
     long avg = (long) Math.ceil(((double) totalTablets) / current.size() * 1.2);
 
     for (Entry<TServerInstance,TabletServerStatus> e : current.entrySet()) {
-      for (String table : e.getValue().getTableMap().keySet()) {
-        if (!moveMetadata && MetadataTable.NAME.equals(table))
+      for (String tableId : e.getValue().getTableMap().keySet()) {
+        Table.ID id = Table.ID.of(tableId);
+        if (!moveMetadata && MetadataTable.ID.equals(id))
           continue;
         try {
-          for (TabletStats ts : getOnlineTabletsForTable(e.getKey(), table)) {
+          for (TabletStats ts : getOnlineTabletsForTable(e.getKey(), id)) {
             KeyExtent ke = new KeyExtent(ts.extent);
             int index = r.nextInt(underCapacityTServer.size());
             TServerInstance dest = underCapacityTServer.get(index);
@@ -163,13 +162,5 @@ public class ChaoticLoadBalancer extends TabletBalancer {
 
     return 100;
   }
-
-  @Override
-  public void init(ServerConfiguration conf) {
-    throw new NotImplementedException();
-  }
-
-  @Override
-  public void init(ServerConfigurationFactory conf) {}
 
 }

@@ -45,7 +45,6 @@ import org.apache.accumulo.core.client.impl.TabletLocator.TabletServerMutations;
 import org.apache.accumulo.core.client.impl.TabletLocatorImpl.TabletLocationObtainer;
 import org.apache.accumulo.core.client.impl.TabletLocatorImpl.TabletServerLockChecker;
 import org.apache.accumulo.core.client.security.tokens.AuthenticationToken;
-import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.PartialKey;
@@ -66,7 +65,7 @@ public class TabletLocatorImplTest {
   private static final KeyExtent MTE = new KeyExtent(MetadataTable.ID, null, RTE.getEndRow());
 
   static KeyExtent nke(String t, String er, String per) {
-    return new KeyExtent(t, er == null ? null : new Text(er), per == null ? null : new Text(per));
+    return new KeyExtent(Table.ID.of(t), er == null ? null : new Text(er), per == null ? null : new Text(per));
   }
 
   static Range nr(String k1, boolean si, String k2, boolean ei) {
@@ -144,7 +143,7 @@ public class TabletLocatorImplTest {
 
     RootTabletLocator rtl = new TestRootTabletLocator();
     TabletLocatorImpl rootTabletCache = new TabletLocatorImpl(MetadataTable.ID, rtl, ttlo, new YesLockChecker());
-    TabletLocatorImpl tab1TabletCache = new TabletLocatorImpl(table, rootTabletCache, ttlo, tslc);
+    TabletLocatorImpl tab1TabletCache = new TabletLocatorImpl(Table.ID.of(table), rootTabletCache, ttlo, tslc);
 
     setLocation(tservers, rootTabLoc, RTE, MTE, metaTabLoc);
 
@@ -171,7 +170,7 @@ public class TabletLocatorImplTest {
   @Before
   public void setUp() {
     testInstance = new TestInstance("instance1", "tserver1");
-    context = new ClientContext(testInstance, new Credentials("test", null), new ClientConfiguration());
+    context = new ClientContext(testInstance, new Credentials("test", null), ClientConfiguration.create());
   }
 
   private void runTest(Text tableName, List<Range> ranges, TabletLocatorImpl tab1TabletCache, Map<String,Map<KeyExtent,List<Range>>> expected) throws Exception {
@@ -451,18 +450,6 @@ public class TabletLocatorImplTest {
       throw new UnsupportedOperationException();
     }
 
-    @Deprecated
-    @Override
-    public AccumuloConfiguration getConfiguration() {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    @Deprecated
-    public void setConfiguration(AccumuloConfiguration conf) {
-      throw new UnsupportedOperationException();
-    }
-
     @Override
     @Deprecated
     public Connector getConnector(String user, CharSequence pass) throws AccumuloException, AccumuloSecurityException {
@@ -693,7 +680,7 @@ public class TabletLocatorImplTest {
 
     RootTabletLocator rtl = new TestRootTabletLocator();
     TabletLocatorImpl rootTabletCache = new TabletLocatorImpl(MetadataTable.ID, rtl, ttlo, new YesLockChecker());
-    TabletLocatorImpl tab1TabletCache = new TabletLocatorImpl("tab1", rootTabletCache, ttlo, new YesLockChecker());
+    TabletLocatorImpl tab1TabletCache = new TabletLocatorImpl(Table.ID.of("tab1"), rootTabletCache, ttlo, new YesLockChecker());
 
     locateTabletTest(tab1TabletCache, "r1", null, null);
 
@@ -1236,14 +1223,14 @@ public class TabletLocatorImplTest {
 
     RootTabletLocator rtl = new TestRootTabletLocator();
     TabletLocatorImpl rootTabletCache = new TabletLocatorImpl(MetadataTable.ID, rtl, ttlo, new YesLockChecker());
-    TabletLocatorImpl tab0TabletCache = new TabletLocatorImpl("0", rootTabletCache, ttlo, new YesLockChecker());
+    TabletLocatorImpl tab0TabletCache = new TabletLocatorImpl(Table.ID.of("0"), rootTabletCache, ttlo, new YesLockChecker());
 
     setLocation(tservers, "tserver1", RTE, mte1, "tserver2");
     setLocation(tservers, "tserver1", RTE, mte2, "tserver3");
 
     // create two tablets that straddle a metadata split point
-    KeyExtent ke1 = new KeyExtent("0", new Text("0bbf20e"), null);
-    KeyExtent ke2 = new KeyExtent("0", new Text("0bc0756"), new Text("0bbf20e"));
+    KeyExtent ke1 = new KeyExtent(Table.ID.of("0"), new Text("0bbf20e"), null);
+    KeyExtent ke2 = new KeyExtent(Table.ID.of("0"), new Text("0bc0756"), new Text("0bbf20e"));
 
     setLocation(tservers, "tserver2", mte1, ke1, "tserver4");
     setLocation(tservers, "tserver3", mte2, ke2, "tserver5");
@@ -1263,14 +1250,14 @@ public class TabletLocatorImplTest {
 
     RootTabletLocator rtl = new TestRootTabletLocator();
     TabletLocatorImpl rootTabletCache = new TabletLocatorImpl(MetadataTable.ID, rtl, ttlo, new YesLockChecker());
-    TabletLocatorImpl tab0TabletCache = new TabletLocatorImpl("0", rootTabletCache, ttlo, new YesLockChecker());
+    TabletLocatorImpl tab0TabletCache = new TabletLocatorImpl(Table.ID.of("0"), rootTabletCache, ttlo, new YesLockChecker());
 
     setLocation(tservers, "tserver1", RTE, mte1, "tserver2");
     setLocation(tservers, "tserver1", RTE, mte2, "tserver3");
 
     // create the ~ tablet so it exists
     Map<KeyExtent,SortedMap<Key,Value>> ts3 = new HashMap<>();
-    ts3.put(mte2, new TreeMap<Key,Value>());
+    ts3.put(mte2, new TreeMap<>());
     tservers.tservers.put("tserver3", ts3);
 
     assertNull(tab0TabletCache.locateTablet(context, new Text("row_0000000000"), false, false));
@@ -1286,7 +1273,7 @@ public class TabletLocatorImplTest {
     KeyExtent mte4 = new KeyExtent(MetadataTable.ID, new Text("1;r"), new Text("1;j"));
     KeyExtent mte5 = new KeyExtent(MetadataTable.ID, null, new Text("1;r"));
 
-    KeyExtent ke1 = new KeyExtent("1", null, null);
+    KeyExtent ke1 = new KeyExtent(Table.ID.of("1"), null, null);
 
     TServers tservers = new TServers();
     TestTabletLocationObtainer ttlo = new TestTabletLocationObtainer(tservers);
@@ -1294,7 +1281,7 @@ public class TabletLocatorImplTest {
     RootTabletLocator rtl = new TestRootTabletLocator();
 
     TabletLocatorImpl rootTabletCache = new TabletLocatorImpl(MetadataTable.ID, rtl, ttlo, new YesLockChecker());
-    TabletLocatorImpl tab0TabletCache = new TabletLocatorImpl("1", rootTabletCache, ttlo, new YesLockChecker());
+    TabletLocatorImpl tab0TabletCache = new TabletLocatorImpl(Table.ID.of("1"), rootTabletCache, ttlo, new YesLockChecker());
 
     setLocation(tservers, "tserver1", RTE, mte1, "tserver2");
     setLocation(tservers, "tserver1", RTE, mte2, "tserver3");

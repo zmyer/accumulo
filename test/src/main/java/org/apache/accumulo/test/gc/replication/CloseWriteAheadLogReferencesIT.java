@@ -1,5 +1,3 @@
-package org.apache.accumulo.test.gc.replication;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,6 +14,7 @@ package org.apache.accumulo.test.gc.replication;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.accumulo.test.gc.replication;
 
 import static org.easymock.EasyMock.createMock;
 import static org.easymock.EasyMock.expect;
@@ -32,6 +31,7 @@ import org.apache.accumulo.core.client.BatchWriterConfig;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.Scanner;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigurationCopy;
 import org.apache.accumulo.core.conf.Property;
@@ -92,10 +92,9 @@ public class CloseWriteAheadLogReferencesIT extends ConfigurableMacBase {
     expect(mockInst.getInstanceID()).andReturn(testName.getMethodName()).anyTimes();
     expect(mockInst.getZooKeepers()).andReturn("localhost").anyTimes();
     expect(mockInst.getZooKeepersSessionTimeOut()).andReturn(30000).anyTimes();
-    final AccumuloConfiguration systemConf = new ConfigurationCopy(new HashMap<String,String>());
+    final AccumuloConfiguration systemConf = new ConfigurationCopy(new HashMap<>());
     ServerConfigurationFactory factory = createMock(ServerConfigurationFactory.class);
-    expect(factory.getConfiguration()).andReturn(systemConf).anyTimes();
-    expect(factory.getInstance()).andReturn(mockInst).anyTimes();
+    expect(factory.getSystemConfiguration()).andReturn(systemConf).anyTimes();
     expect(factory.getSiteConfiguration()).andReturn(siteConfig).anyTimes();
 
     // Just make the SiteConfiguration delegate to our AccumuloConfiguration
@@ -123,7 +122,7 @@ public class CloseWriteAheadLogReferencesIT extends ConfigurableMacBase {
     }).anyTimes();
 
     replay(mockInst, factory, siteConfig);
-    refs = new WrappedCloseWriteAheadLogReferences(new AccumuloServerContext(factory));
+    refs = new WrappedCloseWriteAheadLogReferences(new AccumuloServerContext(mockInst, factory));
   }
 
   @Test
@@ -137,11 +136,12 @@ public class CloseWriteAheadLogReferencesIT extends ConfigurableMacBase {
 
     refs.updateReplicationEntries(conn, wals);
 
-    Scanner s = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
-    s.fetchColumnFamily(ReplicationSection.COLF);
-    Entry<Key,Value> entry = Iterables.getOnlyElement(s);
-    Status status = Status.parseFrom(entry.getValue().get());
-    Assert.assertFalse(status.getClosed());
+    try (Scanner s = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY)) {
+      s.fetchColumnFamily(ReplicationSection.COLF);
+      Entry<Key,Value> entry = Iterables.getOnlyElement(s);
+      Status status = Status.parseFrom(entry.getValue().get());
+      Assert.assertFalse(status.getClosed());
+    }
   }
 
   @Test
@@ -156,11 +156,12 @@ public class CloseWriteAheadLogReferencesIT extends ConfigurableMacBase {
 
     refs.updateReplicationEntries(conn, wals);
 
-    Scanner s = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
-    s.fetchColumnFamily(ReplicationSection.COLF);
-    Entry<Key,Value> entry = Iterables.getOnlyElement(s);
-    Status status = Status.parseFrom(entry.getValue().get());
-    Assert.assertTrue(status.getClosed());
+    try (Scanner s = conn.createScanner(MetadataTable.NAME, Authorizations.EMPTY)) {
+      s.fetchColumnFamily(ReplicationSection.COLF);
+      Entry<Key,Value> entry = Iterables.getOnlyElement(s);
+      Status status = Status.parseFrom(entry.getValue().get());
+      Assert.assertTrue(status.getClosed());
+    }
   }
 
   @Test
@@ -169,16 +170,17 @@ public class CloseWriteAheadLogReferencesIT extends ConfigurableMacBase {
     Set<String> wals = Collections.singleton(file);
     BatchWriter bw = ReplicationTable.getBatchWriter(conn);
     Mutation m = new Mutation(file);
-    StatusSection.add(m, "1", ProtobufUtil.toValue(StatusUtil.ingestedUntil(1000)));
+    StatusSection.add(m, Table.ID.of("1"), ProtobufUtil.toValue(StatusUtil.ingestedUntil(1000)));
     bw.addMutation(m);
     bw.close();
 
     refs.updateReplicationEntries(conn, wals);
 
-    Scanner s = ReplicationTable.getScanner(conn);
-    Entry<Key,Value> entry = Iterables.getOnlyElement(s);
-    Status status = Status.parseFrom(entry.getValue().get());
-    Assert.assertFalse(status.getClosed());
+    try (Scanner s = ReplicationTable.getScanner(conn)) {
+      Entry<Key,Value> entry = Iterables.getOnlyElement(s);
+      Status status = Status.parseFrom(entry.getValue().get());
+      Assert.assertFalse(status.getClosed());
+    }
   }
 
 }

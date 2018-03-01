@@ -126,7 +126,7 @@ public class RecoveryManager {
     }
 
     final String path = ZooUtil.getRoot(master.getInstance()) + Constants.ZRECOVERY + "/" + sortId;
-    log.info("Created zookeeper entry " + path + " with data " + work);
+    log.info("Created zookeeper entry {} with data {}", path, work);
   }
 
   public boolean recoverLogs(KeyExtent extent, Collection<Collection<String>> walogs) throws IOException {
@@ -139,7 +139,7 @@ public class RecoveryManager {
         if (switchedWalog != null) {
           // replaces the volume used for sorting, but do not change entry in metadata table. When the tablet loads it will change the metadata table entry. If
           // the tablet has the same replacement config, then it will find the sorted log.
-          log.info("Volume replaced " + walog + " -> " + switchedWalog);
+          log.info("Volume replaced {} -> {}", walog, switchedWalog);
           walog = switchedWalog;
         }
 
@@ -147,7 +147,7 @@ public class RecoveryManager {
         String sortId = parts[parts.length - 1];
         String filename = master.getFileSystem().getFullPath(FileType.WAL, walog).toString();
         String dest = RecoveryPath.getRecoveryPath(master.getFileSystem(), new Path(filename)).toString();
-        log.debug("Recovering " + filename + " to " + dest);
+        log.debug("Recovering {} to {}", filename, dest);
 
         boolean sortQueued;
         synchronized (this) {
@@ -173,7 +173,8 @@ public class RecoveryManager {
         synchronized (this) {
           if (!closeTasksQueued.contains(sortId) && !sortsQueued.contains(sortId)) {
             AccumuloConfiguration aconf = master.getConfiguration();
-            LogCloser closer = aconf.instantiateClassProperty(Property.MASTER_WALOG_CLOSER_IMPLEMETATION, LogCloser.class, new HadoopLogCloser());
+            LogCloser closer = Property.createInstanceFromPropertyName(aconf, Property.MASTER_WALOG_CLOSER_IMPLEMETATION, LogCloser.class,
+                new HadoopLogCloser());
             Long delay = recoveryDelay.get(sortId);
             if (delay == null) {
               delay = aconf.getTimeInMillis(Property.MASTER_RECOVERY_DELAY);
@@ -181,7 +182,7 @@ public class RecoveryManager {
               delay = Math.min(2 * delay, 1000 * 60 * 5l);
             }
 
-            log.info("Starting recovery of " + filename + " (in : " + (delay / 1000) + "s), tablet " + extent + " holds a reference");
+            log.info("Starting recovery of {} (in : {}s), tablet {} holds a reference", filename, (delay / 1000), extent);
 
             executor.schedule(new LogSortTask(closer, filename, dest, sortId), delay, TimeUnit.MILLISECONDS);
             closeTasksQueued.add(sortId);

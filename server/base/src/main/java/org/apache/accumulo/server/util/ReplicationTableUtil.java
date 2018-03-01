@@ -16,7 +16,7 @@
  */
 package org.apache.accumulo.server.util;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.util.Collections;
 import java.util.EnumSet;
@@ -161,13 +161,7 @@ public class ReplicationTableUtil {
       try {
         t.update(m);
         return;
-      } catch (AccumuloException e) {
-        log.error(e.toString(), e);
-      } catch (AccumuloSecurityException e) {
-        log.error(e.toString(), e);
-      } catch (ConstraintViolationException e) {
-        log.error(e.toString(), e);
-      } catch (TableNotFoundException e) {
+      } catch (AccumuloException | TableNotFoundException | ConstraintViolationException | AccumuloSecurityException e) {
         log.error(e.toString(), e);
       }
       sleepUninterruptibly(1, TimeUnit.SECONDS);
@@ -179,7 +173,7 @@ public class ReplicationTableUtil {
    */
   public static void updateFiles(ClientContext context, KeyExtent extent, String file, Status stat) {
     if (log.isDebugEnabled()) {
-      log.debug("Updating replication status for " + extent + " with " + file + " using " + ProtobufUtil.toString(stat));
+      log.debug("Updating replication status for {} with {} using {}", extent, file, ProtobufUtil.toString(stat));
     }
     // TODO could use batch writer, would need to handle failure and retry like update does - ACCUMULO-1294
 
@@ -194,7 +188,7 @@ public class ReplicationTableUtil {
 
   private static Mutation createUpdateMutation(Text row, Value v, KeyExtent extent) {
     Mutation m = new Mutation(row);
-    m.put(MetadataSchema.ReplicationSection.COLF, new Text(extent.getTableId()), v);
+    m.put(MetadataSchema.ReplicationSection.COLF, new Text(extent.getTableId().getUtf8()), v);
     return m;
   }
 }

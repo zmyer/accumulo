@@ -17,6 +17,7 @@
 package org.apache.accumulo.test.functional;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -68,7 +69,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.google.common.collect.Iterators;
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class GarbageCollectorIT extends ConfigurableMacBase {
   private static final String OUR_SECRET = "itsreallysecret";
@@ -180,8 +180,9 @@ public class GarbageCollectorIT extends ConfigurableMacBase {
     // run recovery
     cluster.start();
     // did it recover?
-    Scanner scanner = c.createScanner(MetadataTable.NAME, Authorizations.EMPTY);
-    Iterators.size(scanner.iterator());
+    try (Scanner scanner = c.createScanner(MetadataTable.NAME, Authorizations.EMPTY)) {
+      Iterators.size(scanner.iterator());
+    }
   }
 
   private Mutation createDelMutation(String path, String cf, String cq, String val) {
@@ -230,15 +231,16 @@ public class GarbageCollectorIT extends ConfigurableMacBase {
       gc.destroy();
     }
 
-    Scanner scanner = getConnector().createScanner(table, Authorizations.EMPTY);
-    Iterator<Entry<Key,Value>> iter = scanner.iterator();
-    assertTrue(iter.hasNext());
-    Entry<Key,Value> entry = iter.next();
-    Assert.assertEquals("r1", entry.getKey().getRow().toString());
-    Assert.assertEquals("cf1", entry.getKey().getColumnFamily().toString());
-    Assert.assertEquals("cq1", entry.getKey().getColumnQualifier().toString());
-    Assert.assertEquals("v1", entry.getValue().toString());
-    Assert.assertFalse(iter.hasNext());
+    try (Scanner scanner = getConnector().createScanner(table, Authorizations.EMPTY)) {
+      Iterator<Entry<Key,Value>> iter = scanner.iterator();
+      assertTrue(iter.hasNext());
+      Entry<Key,Value> entry = iter.next();
+      Assert.assertEquals("r1", entry.getKey().getRow().toString());
+      Assert.assertEquals("cf1", entry.getKey().getColumnFamily().toString());
+      Assert.assertEquals("cq1", entry.getKey().getColumnQualifier().toString());
+      Assert.assertEquals("v1", entry.getValue().toString());
+      Assert.assertFalse(iter.hasNext());
+    }
   }
 
   @Test

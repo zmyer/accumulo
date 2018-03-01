@@ -37,7 +37,6 @@ import org.apache.accumulo.core.file.rfile.PrintInfo;
 import org.apache.accumulo.core.util.Classpath;
 import org.apache.accumulo.core.util.CreateToken;
 import org.apache.accumulo.core.util.Help;
-import org.apache.accumulo.core.util.Jar;
 import org.apache.accumulo.core.util.Version;
 import org.apache.accumulo.gc.GCExecutable;
 import org.apache.accumulo.gc.SimpleGarbageCollector;
@@ -108,7 +107,6 @@ public class KeywordStartIT {
     expectSet.put("help", Help.class);
     expectSet.put("info", Info.class);
     expectSet.put("init", Initialize.class);
-    expectSet.put("jar", Jar.class);
     expectSet.put("login-info", LoginProperties.class);
     expectSet.put("master", MasterExecutable.class);
     expectSet.put("minicluster", MiniClusterExecutable.class);
@@ -135,14 +133,14 @@ public class KeywordStartIT {
     boolean moreExpected = expectIter.hasNext();
     if (moreExpected) {
       while (expectIter.hasNext()) {
-        log.warn("Missing class for keyword '" + expectIter.next() + "'");
+        log.warn("Missing class for keyword '{}'", expectIter.next());
       }
     }
     assertFalse("Missing expected classes", moreExpected);
     boolean moreActual = actualIter.hasNext();
     if (moreActual) {
       while (actualIter.hasNext()) {
-        log.warn("Extra class found with keyword '" + actualIter.next() + "'");
+        log.warn("Extra class found with keyword '{}'", actualIter.next());
       }
     }
     assertFalse("Found additional unexpected classes", moreActual);
@@ -195,6 +193,11 @@ public class KeywordStartIT {
 
     @Override
     public String keyword() {
+      return kw;
+    }
+
+    @Override
+    public String description() {
       return kw;
     }
 

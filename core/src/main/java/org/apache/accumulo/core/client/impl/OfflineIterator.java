@@ -16,7 +16,7 @@
  */
 package org.apache.accumulo.core.client.impl;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -146,7 +146,7 @@ class OfflineIterator implements Iterator<Entry<Key,Value>> {
   private Range range;
   private KeyExtent currentExtent;
   private Connector conn;
-  private String tableId;
+  private Table.ID tableId;
   private Authorizations authorizations;
   private Instance instance;
   private ScannerOptions options;
@@ -162,7 +162,7 @@ class OfflineIterator implements Iterator<Entry<Key,Value>> {
       this.range = range.bound(this.options.fetchedColumns.first(), this.options.fetchedColumns.last());
     }
 
-    this.tableId = table.toString();
+    this.tableId = Table.ID.of(table.toString());
     this.authorizations = authorizations;
     this.readers = new ArrayList<>();
 
@@ -319,7 +319,10 @@ class OfflineIterator implements Iterator<Entry<Key,Value>> {
       IOException {
 
     // TODO share code w/ tablet - ACCUMULO-1303
-    AccumuloConfiguration acuTableConf = AccumuloConfiguration.getTableConfiguration(conn, tableId);
+
+    // possible race condition here, if table is renamed
+    String tableName = Tables.getTableName(conn.getInstance(), tableId);
+    AccumuloConfiguration acuTableConf = new ConfigurationCopy(conn.tableOperations().getProperties(tableName));
 
     Configuration conf = CachedConfiguration.getInstance();
 

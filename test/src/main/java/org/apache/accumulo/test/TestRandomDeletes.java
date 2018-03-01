@@ -81,13 +81,14 @@ public class TestRandomDeletes {
   private static TreeSet<RowColumn> scanAll(ClientOnDefaultTable opts, ScannerOpts scanOpts, String tableName) throws Exception {
     TreeSet<RowColumn> result = new TreeSet<>();
     Connector conn = opts.getConnector();
-    Scanner scanner = conn.createScanner(tableName, auths);
-    scanner.setBatchSize(scanOpts.scanBatchSize);
-    for (Entry<Key,Value> entry : scanner) {
-      Key key = entry.getKey();
-      Column column = new Column(TextUtil.getBytes(key.getColumnFamily()), TextUtil.getBytes(key.getColumnQualifier()), TextUtil.getBytes(key
-          .getColumnVisibility()));
-      result.add(new RowColumn(key.getRow(), column, key.getTimestamp()));
+    try (Scanner scanner = conn.createScanner(tableName, auths)) {
+      scanner.setBatchSize(scanOpts.scanBatchSize);
+      for (Entry<Key,Value> entry : scanner) {
+        Key key = entry.getKey();
+        Column column = new Column(TextUtil.getBytes(key.getColumnFamily()), TextUtil.getBytes(key.getColumnQualifier()), TextUtil.getBytes(key
+            .getColumnVisibility()));
+        result.add(new RowColumn(key.getRow(), column, key.getTimestamp()));
+      }
     }
     return result;
   }
@@ -136,7 +137,7 @@ public class TestRandomDeletes {
       String tableName = opts.getTableName();
 
       TreeSet<RowColumn> doomed = scanAll(opts, scanOpts, tableName);
-      log.info("Got " + doomed.size() + " rows");
+      log.info("Got {} rows", doomed.size());
 
       long startTime = System.currentTimeMillis();
       while (true) {
@@ -148,7 +149,7 @@ public class TestRandomDeletes {
       long stopTime = System.currentTimeMillis();
 
       long elapsed = (stopTime - startTime) / 1000;
-      log.info("deleted " + deleted + " values in " + elapsed + " seconds");
+      log.info("deleted {} values in {} seconds", deleted, elapsed);
     } catch (Exception e) {
       throw new RuntimeException(e);
     }

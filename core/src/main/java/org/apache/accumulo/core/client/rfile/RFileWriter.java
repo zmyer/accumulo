@@ -55,9 +55,9 @@ import com.google.common.base.Preconditions;
  *
  * <pre>
  * <code>
- *     {@code Iterable<Entry<Key, Value>>} localityGroup1Data = ...
- *     {@code Iterable<Entry<Key, Value>>} localityGroup2Data = ...
- *     {@code Iterable<Entry<Key, Value>>} defaultGroupData = ...
+ *     Iterable&lt;Entry&lt;Key, Value&gt;&gt; localityGroup1Data = ...
+ *     Iterable&lt;Entry&lt;Key, Value&gt;&gt; localityGroup2Data = ...
+ *     Iterable&lt;Entry&lt;Key, Value&gt;&gt; defaultGroupData = ...
  *
  *     try(RFileWriter writer = RFile.newWriter().to(file).build()) {
  *
@@ -207,6 +207,32 @@ public class RFileWriter implements AutoCloseable {
       validVisibilities.put(new ArrayByteSequence(Arrays.copyOf(cv, cv.length)), Boolean.TRUE);
     }
     writer.append(key, val);
+  }
+
+  /**
+   * This method has the same behavior as {@link #append(Key, Value)}.
+   *
+   * @param key
+   *          Same restrictions on key as {@link #append(Key, Value)}.
+   * @param value
+   *          this parameter will be UTF-8 encoded. Must be non-null.
+   * @since 2.0.0
+   */
+  public void append(Key key, CharSequence value) throws IOException {
+    append(key, new Value(value));
+  }
+
+  /**
+   * This method has the same behavior as {@link #append(Key, Value)}.
+   *
+   * @param key
+   *          Same restrictions on key as {@link #append(Key, Value)}.
+   * @param value
+   *          Must be non-null.
+   * @since 2.0.0
+   */
+  public void append(Key key, byte[] value) throws IOException {
+    append(key, new Value(value));
   }
 
   /**

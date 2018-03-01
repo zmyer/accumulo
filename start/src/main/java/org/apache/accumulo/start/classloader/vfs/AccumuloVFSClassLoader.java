@@ -52,7 +52,7 @@ import org.slf4j.LoggerFactory;
  * SystemClassLoader that loads JVM classes
  *       ^
  *       |
- * AccumuloClassLoader loads jars from locations in general.classpaths. Usually the URLs for HADOOP_HOME, ZOOKEEPER_HOME, ACCUMULO_HOME and their associated directories
+ * AccumuloClassLoader loads jars from locations in general.classpaths. Usually the URLs for HADOOP_HOME, ZOOKEEPER_HOME, ACCUMULO_HOME/lib and their associated directories
  *       ^
  *       |
  * VFSClassLoader that loads jars from locations in general.vfs.classpaths.  Can be used to load accumulo jar from HDFS
@@ -118,7 +118,7 @@ public class AccumuloVFSClassLoader {
   }
 
   static FileObject[] resolve(FileSystemManager vfs, String uris) throws FileSystemException {
-    return resolve(vfs, uris, new ArrayList<FileObject>());
+    return resolve(vfs, uris, new ArrayList<>());
   }
 
   static FileObject[] resolve(FileSystemManager vfs, String uris, ArrayList<FileObject> pathsToMonitor) throws FileSystemException {
@@ -158,11 +158,11 @@ public class AccumuloVFSClassLoader {
               }
             }
           } else {
-            log.warn("ignoring classpath entry " + fo);
+            log.warn("ignoring classpath entry {}", fo);
           }
           break;
         default:
-          log.warn("ignoring classpath entry " + fo);
+          log.warn("ignoring classpath entry {}", fo);
           break;
       }
 
@@ -171,22 +171,10 @@ public class AccumuloVFSClassLoader {
     return classpath.toArray(new FileObject[classpath.size()]);
   }
 
-  private static ReloadingClassLoader createDynamicClassloader(final ClassLoader parent) throws FileSystemException, IOException {
-    String dynamicCPath = AccumuloClassLoader.getAccumuloString(DYNAMIC_CLASSPATH_PROPERTY_NAME, DEFAULT_DYNAMIC_CLASSPATH_VALUE);
+  private static ReloadingClassLoader createDynamicClassloader(final ClassLoader parent) throws IOException {
+    String dynamicCPath = AccumuloClassLoader.getAccumuloProperty(DYNAMIC_CLASSPATH_PROPERTY_NAME, DEFAULT_DYNAMIC_CLASSPATH_VALUE);
 
-    String envJars = System.getenv("ACCUMULO_XTRAJARS");
-    if (null != envJars && !envJars.equals(""))
-      if (dynamicCPath != null && !dynamicCPath.equals(""))
-        dynamicCPath = dynamicCPath + "," + envJars;
-      else
-        dynamicCPath = envJars;
-
-    ReloadingClassLoader wrapper = new ReloadingClassLoader() {
-      @Override
-      public ClassLoader getClassLoader() {
-        return parent;
-      }
-    };
+    ReloadingClassLoader wrapper = () -> parent;
 
     if (dynamicCPath == null || dynamicCPath.equals(""))
       return wrapper;
@@ -208,7 +196,7 @@ public class AccumuloVFSClassLoader {
             parent = AccumuloClassLoader.getClassLoader();
           }
 
-          FileObject[] vfsCP = resolve(vfs, AccumuloClassLoader.getAccumuloString(VFS_CLASSLOADER_SYSTEM_CLASSPATH_PROPERTY, ""));
+          FileObject[] vfsCP = resolve(vfs, AccumuloClassLoader.getAccumuloProperty(VFS_CLASSLOADER_SYSTEM_CLASSPATH_PROPERTY, ""));
 
           if (vfsCP.length == 0) {
             localLoader = createDynamicClassloader(parent);
@@ -286,7 +274,7 @@ public class AccumuloVFSClassLoader {
   }
 
   private static File computeTopCacheDir() {
-    String cacheDirPath = AccumuloClassLoader.getAccumuloString(VFS_CACHE_DIR, System.getProperty("java.io.tmpdir"));
+    String cacheDirPath = AccumuloClassLoader.getAccumuloProperty(VFS_CACHE_DIR, System.getProperty("java.io.tmpdir"));
     String procName = ManagementFactory.getRuntimeMXBean().getName();
     return new File(cacheDirPath, "accumulo-vfs-cache-" + procName + "-" + System.getProperty("user.name", "nouser"));
   }
@@ -295,16 +283,27 @@ public class AccumuloVFSClassLoader {
     void print(String s);
   }
 
-  public static void printClassPath() {
-    printClassPath(new Printer() {
-      @Override
-      public void print(String s) {
-        System.out.println(s);
-      }
-    });
+  public static void printClassPath(boolean debug) {
+    printClassPath(System.out::print, debug);
   }
 
-  public static void printClassPath(Printer out) {
+  public static String getClassPath(boolean debug) {
+    StringBuilder cp = new StringBuilder();
+    printClassPath(s -> cp.append(s), debug);
+    return cp.toString();
+  }
+
+  private static void printJar(Printer out, String jarPath, boolean debug, boolean sawFirst) {
+    if (debug)
+      out.print("\t");
+    if (!debug && sawFirst)
+      out.print(":");
+    out.print(jarPath);
+    if (debug)
+      out.print("\n");
+  }
+
+  public static void printClassPath(Printer out, boolean debug) {
     try {
       ClassLoader cl = getClassLoader();
       ArrayList<ClassLoader> classloaders = new ArrayList<>();
@@ -319,12 +318,17 @@ public class AccumuloVFSClassLoader {
       int level = 0;
 
       for (ClassLoader classLoader : classloaders) {
-        if (level > 0)
-          out.print("");
+
         level++;
 
-        String classLoaderDescription;
+        if (debug && level > 1) {
+          out.print("\n");
+        }
+        if (!debug && level < 2) {
+          continue;
+        }
 
+        String classLoaderDescription;
         switch (level) {
           case 1:
             classLoaderDescription = level + ": Java System Classloader (loads Java system resources)";
@@ -344,25 +348,28 @@ public class AccumuloVFSClassLoader {
             break;
         }
 
+        boolean sawFirst = false;
         if (classLoader instanceof URLClassLoader) {
-          // If VFS class loader enabled, but no contexts defined.
-          out.print("Level " + classLoaderDescription + " URL classpath items are:");
-
+          if (debug)
+            out.print("Level " + classLoaderDescription + " URL classpath items are:\n");
           for (URL u : ((URLClassLoader) classLoader).getURLs()) {
-            out.print("\t" + u.toExternalForm());
+            printJar(out, u.getFile(), debug, sawFirst);
+            sawFirst = true;
           }
-
         } else if (classLoader instanceof VFSClassLoader) {
-          out.print("Level " + classLoaderDescription + " VFS classpaths items are:");
+          if (debug)
+            out.print("Level " + classLoaderDescription + " VFS classpaths items are:\n");
           VFSClassLoader vcl = (VFSClassLoader) classLoader;
           for (FileObject f : vcl.getFileObjects()) {
-            out.print("\t" + f.getURL().toExternalForm());
+            printJar(out, f.getURL().getFile(), debug, sawFirst);
+            sawFirst = true;
           }
         } else {
-          out.print("Unknown classloader configuration " + classLoader.getClass());
+          if (debug)
+            out.print("Unknown classloader configuration " + classLoader.getClass() + "\n");
         }
       }
-
+      out.print("\n");
     } catch (Throwable t) {
       throw new RuntimeException(t);
     }

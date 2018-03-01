@@ -16,6 +16,7 @@
  */
 package org.apache.accumulo.test;
 
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -41,7 +42,6 @@ import org.apache.hadoop.fs.RawLocalFileSystem;
 import org.junit.Test;
 
 import com.google.common.collect.Iterators;
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class MultiTableRecoveryIT extends ConfigurableMacBase {
 
@@ -99,13 +99,13 @@ public class MultiTableRecoveryIT extends ConfigurableMacBase {
     System.out.println("checking the data");
     long count = 0;
     for (int w = 0; w < N; w++) {
-      Scanner scanner = c.createScanner(tables[w], Authorizations.EMPTY);
-      for (Entry<Key,Value> entry : scanner) {
-        int value = Integer.parseInt(entry.getValue().toString());
-        assertEquals(w, value);
-        count++;
+      try (Scanner scanner = c.createScanner(tables[w], Authorizations.EMPTY)) {
+        for (Entry<Key,Value> entry : scanner) {
+          int value = Integer.parseInt(entry.getValue().toString());
+          assertEquals(w, value);
+          count++;
+        }
       }
-      scanner.close();
     }
     assertEquals(1_000_000, count);
   }

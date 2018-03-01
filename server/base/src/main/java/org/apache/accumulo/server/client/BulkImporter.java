@@ -16,7 +16,7 @@
  */
 package org.apache.accumulo.server.client;
 
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -38,6 +38,7 @@ import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.impl.ClientContext;
 import org.apache.accumulo.core.client.impl.ServerClient;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.TabletLocator;
 import org.apache.accumulo.core.client.impl.TabletLocator.TabletLocation;
 import org.apache.accumulo.core.client.impl.Translator;
@@ -58,6 +59,7 @@ import org.apache.accumulo.core.rpc.ThriftUtil;
 import org.apache.accumulo.core.tabletserver.thrift.TabletClientService;
 import org.apache.accumulo.core.trace.Tracer;
 import org.apache.accumulo.core.util.CachedConfiguration;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.core.util.NamingThreadFactory;
 import org.apache.accumulo.core.util.StopWatch;
 import org.apache.accumulo.fate.util.LoggingRunnable;
@@ -72,8 +74,6 @@ import org.apache.htrace.wrappers.TraceRunnable;
 import org.apache.thrift.TServiceClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.google.common.net.HostAndPort;
 
 public class BulkImporter {
 
@@ -129,7 +129,7 @@ public class BulkImporter {
     final Map<Path,List<KeyExtent>> completeFailures = Collections.synchronizedSortedMap(new TreeMap<Path,List<KeyExtent>>());
 
     ClientService.Client client = null;
-    final TabletLocator locator = TabletLocator.getLocator(context, tableId);
+    final TabletLocator locator = TabletLocator.getLocator(context, Table.ID.of(tableId));
 
     try {
       final Map<Path,List<TabletLocation>> assignments = Collections.synchronizedSortedMap(new TreeMap<Path,List<TabletLocation>>());
@@ -148,7 +148,7 @@ public class BulkImporter {
             } catch (Exception ex) {
               log.warn("Unable to find tablets that overlap file " + mapFile.toString(), ex);
             }
-            log.debug("Map file " + mapFile + " found to overlap " + tabletsToAssignMapFileTo.size() + " tablets");
+            log.debug("Map file {} found to overlap {} tablets", mapFile, tabletsToAssignMapFileTo.size());
             if (tabletsToAssignMapFileTo.size() == 0) {
               List<KeyExtent> empty = Collections.emptyList();
               completeFailures.put(mapFile, empty);
@@ -191,7 +191,7 @@ public class BulkImporter {
         sleepUninterruptibly(sleepTime, TimeUnit.MILLISECONDS);
         timer.stop(Timers.SLEEP);
 
-        log.debug("Trying to assign " + assignmentFailures.size() + " map files that previously failed on some key extents");
+        log.debug("Trying to assign {} map files that previously failed on some key extents", assignmentFailures.size());
         assignments.clear();
 
         // for failed key extents, try to find children key extents to
@@ -245,7 +245,7 @@ public class BulkImporter {
         for (Entry<Path,Integer> entry : failureIter) {
           int retries = context.getConfiguration().getCount(Property.TSERV_BULK_RETRY);
           if (entry.getValue() > retries && assignmentFailures.get(entry.getKey()) != null) {
-            log.error("Map file " + entry.getKey() + " failed more than " + retries + " times, giving up.");
+            log.error("Map file {} failed more than {} times, giving up.", entry.getKey(), retries);
             completeFailures.put(entry.getKey(), assignmentFailures.get(entry.getKey()));
             assignmentFailures.remove(entry.getKey());
           }
@@ -280,7 +280,7 @@ public class BulkImporter {
     Collections.sort(files);
 
     log.debug("BULK IMPORT TIMING STATISTICS");
-    log.debug("Files: " + files);
+    log.debug("Files: {}", files);
     log.debug(String.format("Examine map files    : %,10.2f secs %6.2f%s", timer.getSecs(Timers.EXAMINE_MAP_FILES), 100.0 * timer.get(Timers.EXAMINE_MAP_FILES)
         / timer.get(Timers.TOTAL), "%"));
     log.debug(String.format("Query %-14s : %,10.2f secs %6.2f%s", MetadataTable.NAME, timer.getSecs(Timers.QUERY_METADATA),
@@ -309,7 +309,7 @@ public class BulkImporter {
       List<KeyExtent> extents = entry.getValue();
 
       for (KeyExtent keyExtent : extents)
-        log.debug("\t" + entry.getKey() + " -> " + keyExtent);
+        log.debug("\t{} -> {}", entry.getKey(), keyExtent);
     }
 
     return Collections.emptySet();
@@ -463,7 +463,7 @@ public class BulkImporter {
           }
         }
 
-        log.info("Could not assign {} map files to tablet {} because : {} .  Will retry ...", mapFiles.size(), ke, message);
+        log.info("Could not assign {} map files to tablet {} because : {}.  Will retry ...", mapFiles.size(), ke, message);
       }
     }
 
@@ -474,14 +474,12 @@ public class BulkImporter {
         for (PathSize ps : mapFiles)
           uniqMapFiles.add(ps.path);
 
-      log.debug("Assigning " + uniqMapFiles.size() + " map files to " + assignmentsPerTablet.size() + " tablets at " + location);
+      log.debug("Assigning {} map files to {} tablets at {}", uniqMapFiles.size(), assignmentsPerTablet.size(), location);
 
       try {
         List<KeyExtent> failures = assignMapFiles(context, location, assignmentsPerTablet);
         handleFailures(failures, "Not Serving Tablet");
-      } catch (AccumuloException e) {
-        handleFailures(assignmentsPerTablet.keySet(), e.getMessage());
-      } catch (AccumuloSecurityException e) {
+      } catch (AccumuloException | AccumuloSecurityException e) {
         handleFailures(assignmentsPerTablet.keySet(), e.getMessage());
       }
     }
@@ -545,7 +543,7 @@ public class BulkImporter {
           }
         }
 
-        log.warn("Could not assign " + entry.getValue().size() + " map files to tablet " + ke + " because it had no location, will retry ...");
+        log.warn("Could not assign {} map files to tablet {} because it had no location, will retry ...", entry.getValue().size(), ke);
 
         continue;
       }
@@ -597,7 +595,7 @@ public class BulkImporter {
           }
         }
 
-        log.debug("Asking " + location + " to bulk load " + files);
+        log.debug("Asking {} to bulk load {}", location, files);
         List<TKeyExtent> failures = client.bulkImport(Tracer.traceInfo(), context.rpcCreds(), tid, Translator.translate(files, Translators.KET), setTime);
 
         return Translator.translate(failures, Translators.TKET);
@@ -642,9 +640,8 @@ public class BulkImporter {
     String filename = file.toString();
     // log.debug(filename + " finding overlapping tablets " + startRow + " -> " + endRow);
     FileSystem fs = vm.getVolumeByPath(file).getFileSystem();
-    FileSKVIterator reader = FileOperations.getInstance().newReaderBuilder().forFile(filename, fs, fs.getConf())
-        .withTableConfiguration(context.getConfiguration()).seekToBeginning().build();
-    try {
+    try (FileSKVIterator reader = FileOperations.getInstance().newReaderBuilder().forFile(filename, fs, fs.getConf())
+        .withTableConfiguration(context.getConfiguration()).seekToBeginning().build()) {
       Text row = startRow;
       if (row == null)
         row = new Text();
@@ -666,8 +663,6 @@ public class BulkImporter {
         } else
           break;
       }
-    } finally {
-      reader.close();
     }
     // log.debug(filename + " to be sent to " + result);
     return result;

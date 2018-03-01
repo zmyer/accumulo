@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import org.apache.accumulo.fate.zookeeper.ZooCache.ZcStat;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.LockID;
 import org.apache.accumulo.fate.zookeeper.ZooUtil.NodeMissingPolicy;
 import org.apache.zookeeper.KeeperException;
@@ -146,7 +147,7 @@ public class ZooLock implements Watcher {
     if (log.isTraceEnabled()) {
       log.trace("Candidate lock nodes");
       for (String child : children) {
-        log.trace("- " + child);
+        log.trace("- {}", child);
       }
     }
 
@@ -172,26 +173,26 @@ public class ZooLock implements Watcher {
     }
 
     final String lockToWatch = path + "/" + prev;
-    log.trace("Establishing watch on " + lockToWatch);
+    log.trace("Establishing watch on {}", lockToWatch);
     Stat stat = zooKeeper.getStatus(lockToWatch, new Watcher() {
 
       @Override
       public void process(WatchedEvent event) {
         if (log.isTraceEnabled()) {
           log.trace("Processing event:");
-          log.trace("- type  " + event.getType());
-          log.trace("- path  " + event.getPath());
-          log.trace("- state " + event.getState());
+          log.trace("- type  {}", event.getType());
+          log.trace("- path  {}", event.getPath());
+          log.trace("- state {}", event.getState());
         }
         boolean renew = true;
         if (event.getType() == EventType.NodeDeleted && event.getPath().equals(lockToWatch)) {
-          log.trace("Detected deletion of " + lockToWatch + ", attempting to acquire lock");
+          log.trace("Detected deletion of {}, attempting to acquire lock", lockToWatch);
           synchronized (ZooLock.this) {
             try {
               if (asyncLock != null) {
                 lockAsync(myLock, lw);
               } else if (log.isTraceEnabled()) {
-                log.trace("While waiting for another lock " + lockToWatch + " " + myLock + " was deleted");
+                log.trace("While waiting for another lock {} {} was deleted", lockToWatch, myLock);
               }
             } catch (Exception e) {
               if (lock == null) {
@@ -212,15 +213,13 @@ public class ZooLock implements Watcher {
           renew = false;
         }
         if (renew) {
-          log.trace("Renewing watch on " + lockToWatch);
+          log.trace("Renewing watch on {}", lockToWatch);
           try {
             Stat restat = zooKeeper.getStatus(lockToWatch, this);
             if (restat == null) {
               lockAsync(myLock, lw);
             }
-          } catch (KeeperException e) {
-            lw.failedToAcquireLock(new Exception("Failed to renew watch on other master node"));
-          } catch (InterruptedException e) {
+          } catch (KeeperException | InterruptedException e) {
             lw.failedToAcquireLock(new Exception("Failed to renew watch on other master node"));
           }
         }
@@ -250,7 +249,7 @@ public class ZooLock implements Watcher {
 
     try {
       final String asyncLockPath = zooKeeper.putEphemeralSequential(path + "/" + LOCK_PREFIX, data);
-      log.trace("Ephemeral node " + asyncLockPath + " created");
+      log.trace("Ephemeral node {} created", asyncLockPath);
       Stat stat = zooKeeper.getStatus(asyncLockPath, new Watcher() {
 
         private void failedToAcquireLock() {
@@ -266,7 +265,7 @@ public class ZooLock implements Watcher {
             } else if (asyncLock != null && event.getType() == EventType.NodeDeleted && event.getPath().equals(path + "/" + asyncLock)) {
               failedToAcquireLock();
             } else if (event.getState() != KeeperState.Disconnected && event.getState() != KeeperState.Expired && (lock != null || asyncLock != null)) {
-              log.debug("Unexpected event watching lock node " + event + " " + asyncLockPath);
+              log.debug("Unexpected event watching lock node {} {}", event, asyncLockPath);
               try {
                 Stat stat2 = zooKeeper.getStatus(asyncLockPath, this);
                 if (stat2 == null) {
@@ -294,9 +293,7 @@ public class ZooLock implements Watcher {
 
       lockAsync(asyncLock, lw);
 
-    } catch (KeeperException e) {
-      lw.failedToAcquireLock(e);
-    } catch (InterruptedException e) {
+    } catch (KeeperException | InterruptedException e) {
       lw.failedToAcquireLock(e);
     }
   }
@@ -371,7 +368,7 @@ public class ZooLock implements Watcher {
 
   @Override
   public synchronized void process(WatchedEvent event) {
-    log.debug("event " + event.getPath() + " " + event.getType() + " " + event.getState());
+    log.debug("event {} {} {}", event.getPath(), event.getType(), event.getState());
 
     watchingParent = false;
 
@@ -411,7 +408,7 @@ public class ZooLock implements Watcher {
     if (!lid.node.equals(lockNode))
       return false;
 
-    Stat stat = new Stat();
+    ZcStat stat = new ZcStat();
     return zc.get(lid.path + "/" + lid.node, stat) != null && stat.getEphemeralOwner() == lid.eid;
   }
 
@@ -429,7 +426,7 @@ public class ZooLock implements Watcher {
     return zk.getData(path + "/" + lockNode, false, null);
   }
 
-  public static byte[] getLockData(org.apache.accumulo.fate.zookeeper.ZooCache zc, String path, Stat stat) {
+  public static byte[] getLockData(org.apache.accumulo.fate.zookeeper.ZooCache zc, String path, ZcStat stat) {
 
     List<String> children = zc.getChildren(path);
 
@@ -461,7 +458,7 @@ public class ZooLock implements Watcher {
 
     String lockNode = children.get(0);
 
-    Stat stat = new Stat();
+    ZcStat stat = new ZcStat();
     if (zc.get(path + "/" + lockNode, stat) != null)
       return stat.getEphemeralOwner();
     return 0;

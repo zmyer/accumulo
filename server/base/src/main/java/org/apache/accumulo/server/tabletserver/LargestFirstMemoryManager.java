@@ -24,9 +24,10 @@ import java.util.TreeMap;
 
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.TableNotFoundException;
-import org.apache.accumulo.core.client.impl.Tables;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.impl.KeyExtent;
+import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,7 +52,7 @@ public class LargestFirstMemoryManager implements MemoryManager {
   // The fraction of memory that needs to be used before we begin flushing.
   private double compactionThreshold;
   private long maxObserved;
-  private final HashMap<String,Long> mincIdleThresholds = new HashMap<>();
+  private final HashMap<Table.ID,Long> mincIdleThresholds = new HashMap<>();
   private ServerConfiguration config = null;
 
   private static class TabletInfo {
@@ -127,8 +128,8 @@ public class LargestFirstMemoryManager implements MemoryManager {
   @Override
   public void init(ServerConfiguration conf) {
     this.config = conf;
-    maxMemory = conf.getConfiguration().getMemoryInBytes(Property.TSERV_MAXMEM);
-    maxConcurrentMincs = conf.getConfiguration().getCount(Property.TSERV_MINC_MAXCONCURRENT);
+    maxMemory = conf.getSystemConfiguration().getAsBytes(Property.TSERV_MAXMEM);
+    maxConcurrentMincs = conf.getSystemConfiguration().getCount(Property.TSERV_MINC_MAXCONCURRENT);
     numWaitingMultiplier = TSERV_MINC_MAXCONCURRENT_NUMWAITING_MULTIPLIER;
   }
 
@@ -139,14 +140,15 @@ public class LargestFirstMemoryManager implements MemoryManager {
   }
 
   protected long getMinCIdleThreshold(KeyExtent extent) {
-    String tableId = extent.getTableId();
+    Table.ID tableId = extent.getTableId();
     if (!mincIdleThresholds.containsKey(tableId))
       mincIdleThresholds.put(tableId, config.getTableConfiguration(tableId).getTimeInMillis(Property.TABLE_MINC_COMPACT_IDLETIME));
     return mincIdleThresholds.get(tableId);
   }
 
-  protected boolean tableExists(Instance instance, String tableId) {
-    return Tables.exists(instance, tableId);
+  protected boolean tableExists(Instance instance, Table.ID tableId) {
+    // make sure that the table still exists by checking if it has a configuration
+    return config.getTableConfiguration(tableId) != null;
   }
 
   @Override
@@ -154,7 +156,7 @@ public class LargestFirstMemoryManager implements MemoryManager {
     if (maxMemory < 0)
       throw new IllegalStateException("need to initialize " + LargestFirstMemoryManager.class.getName());
 
-    final Instance instance = config.getInstance();
+    final Instance instance = HdfsZooInstance.getInstance();
     final int maxMinCs = maxConcurrentMincs * numWaitingMultiplier;
 
     mincIdleThresholds.clear();

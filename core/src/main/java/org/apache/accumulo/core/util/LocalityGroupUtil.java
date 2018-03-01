@@ -16,6 +16,7 @@
  */
 package org.apache.accumulo.core.util;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -36,26 +37,38 @@ import org.apache.accumulo.core.data.ByteSequence;
 import org.apache.accumulo.core.data.Column;
 import org.apache.accumulo.core.data.ColumnUpdate;
 import org.apache.accumulo.core.data.Mutation;
+import org.apache.accumulo.core.data.Range;
 import org.apache.accumulo.core.data.thrift.TMutation;
+import org.apache.accumulo.core.file.FileSKVIterator;
+import org.apache.accumulo.core.file.rfile.RFile.Reader;
 import org.apache.commons.lang.mutable.MutableLong;
 import org.apache.hadoop.io.Text;
 
 import com.google.common.base.Joiner;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSet.Builder;
 
 public class LocalityGroupUtil {
 
   // private static final Logger log = Logger.getLogger(ColumnFamilySet.class);
 
-  public static final Set<ByteSequence> EMPTY_CF_SET = Collections.emptySet();
+  // using an ImmutableSet here for more efficient comparisons in LocalityGroupIterator
+  public static final ImmutableSet<ByteSequence> EMPTY_CF_SET = ImmutableSet.of();
 
-  public static Set<ByteSequence> families(Collection<Column> columns) {
+  /**
+   * Create a set of families to be passed into the SortedKeyValueIterator seek call from a supplied set of columns. We are using the ImmutableSet to enable
+   * faster comparisons down in the LocalityGroupIterator.
+   *
+   * @param columns
+   *          The set of columns
+   * @return An immutable set of columns
+   */
+  public static ImmutableSet<ByteSequence> families(Collection<Column> columns) {
     if (columns.size() == 0)
       return EMPTY_CF_SET;
-    Set<ByteSequence> result = new HashSet<>(columns.size());
-    for (Column col : columns) {
-      result.add(new ArrayByteSequence(col.getColumnFamily()));
-    }
-    return result;
+    Builder<ByteSequence> builder = ImmutableSet.builder();
+    columns.forEach(c -> builder.add(new ArrayByteSequence(c.getColumnFamily())));
+    return builder.build();
   }
 
   @SuppressWarnings("serial")
@@ -70,7 +83,7 @@ public class LocalityGroupUtil {
     String[] groups = acuconf.get(Property.TABLE_LOCALITY_GROUPS).split(",");
     for (String group : groups) {
       if (group.length() > 0)
-        result.put(group, new HashSet<ByteSequence>());
+        result.put(group, new HashSet<>());
     }
     HashSet<ByteSequence> all = new HashSet<>();
     for (Entry<String,String> entry : acuconf) {
@@ -265,7 +278,7 @@ public class LocalityGroupUtil {
             int lgid = getLgid(mbs, cu);
 
             if (parts.get(lgid) == null) {
-              parts.set(lgid, new ArrayList<ColumnUpdate>());
+              parts.set(lgid, new ArrayList<>());
               lgcount++;
             }
 
@@ -296,4 +309,45 @@ public class LocalityGroupUtil {
     }
   }
 
+  /**
+   * This method created to help seek an rfile for a locality group obtained from {@link Reader#getLocalityGroupCF()}. This method can possibly return an empty
+   * list for the default locality group. When this happens the default locality group needs to be seeked differently. This method helps do that.
+   *
+   * <p>
+   * For the default locality group will seek using the families of all other locality groups non-inclusive.
+   *
+   * @see Reader#getLocalityGroupCF()
+   */
+  public static void seek(FileSKVIterator reader, Range range, String lgName, Map<String,ArrayList<ByteSequence>> localityGroupCF) throws IOException {
+
+    Collection<ByteSequence> families;
+    boolean inclusive;
+    if (lgName == null) {
+      // this is the default locality group, create a set of all families not in the default group
+      Set<ByteSequence> nonDefaultFamilies = new HashSet<>();
+      for (Entry<String,ArrayList<ByteSequence>> entry : localityGroupCF.entrySet()) {
+        if (entry.getKey() != null) {
+          nonDefaultFamilies.addAll(entry.getValue());
+        }
+      }
+
+      families = nonDefaultFamilies;
+      inclusive = false;
+    } else {
+      families = localityGroupCF.get(lgName);
+      inclusive = true;
+    }
+
+    reader.seek(range, families, inclusive);
+  }
+
+  static public void ensureNonOverlappingGroups(Map<String,Set<Text>> groups) {
+    HashSet<Text> all = new HashSet<>();
+    for (Entry<String,Set<Text>> entry : groups.entrySet()) {
+      if (!Collections.disjoint(all, entry.getValue())) {
+        throw new IllegalArgumentException("Group " + entry.getKey() + " overlaps with another group");
+      }
+      all.addAll(entry.getValue());
+    }
+  }
 }

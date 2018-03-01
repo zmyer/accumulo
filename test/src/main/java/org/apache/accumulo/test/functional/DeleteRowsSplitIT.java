@@ -17,6 +17,7 @@
 package org.apache.accumulo.test.functional;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
@@ -40,8 +41,6 @@ import org.apache.hadoop.io.Text;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 // attempt to reproduce ACCUMULO-315
 public class DeleteRowsSplitIT extends AccumuloClusterHarness {
@@ -73,7 +72,7 @@ public class DeleteRowsSplitIT extends AccumuloClusterHarness {
     // Eliminate whole tablets
     for (int test = 0; test < 10; test++) {
       // create a table
-      log.info("Test " + test);
+      log.info("Test {}", test);
       conn.tableOperations().create(tableName);
 
       // put some data in it
@@ -113,14 +112,15 @@ public class DeleteRowsSplitIT extends AccumuloClusterHarness {
       }
 
       // scan the table
-      Scanner scanner = conn.createScanner(tableName, Authorizations.EMPTY);
-      for (Entry<Key,Value> entry : scanner) {
-        Text row = entry.getKey().getRow();
-        assertTrue(row.compareTo(start) <= 0 || row.compareTo(end) > 0);
-      }
+      try (Scanner scanner = conn.createScanner(tableName, Authorizations.EMPTY)) {
+        for (Entry<Key,Value> entry : scanner) {
+          Text row = entry.getKey().getRow();
+          assertTrue(row.compareTo(start) <= 0 || row.compareTo(end) > 0);
+        }
 
-      // delete the table
-      conn.tableOperations().delete(tableName);
+        // delete the table
+        conn.tableOperations().delete(tableName);
+      }
     }
   }
 

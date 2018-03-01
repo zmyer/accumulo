@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigurationCopy;
 import org.apache.accumulo.core.conf.Property;
@@ -133,23 +134,23 @@ public class IteratorUtilTest {
 
     TreeMap<Key,Value> tm = new TreeMap<>();
 
-    MultiIteratorTest.nkv(tm, 1, 0, false, "1");
-    MultiIteratorTest.nkv(tm, 2, 0, false, "2");
+    MultiIteratorTest.newKeyValue(tm, 1, 0, false, "1");
+    MultiIteratorTest.newKeyValue(tm, 2, 0, false, "2");
 
     SortedMapIterator source = new SortedMapIterator(tm);
 
-    SortedKeyValueIterator<Key,Value> iter = IteratorUtil.loadIterators(IteratorScope.minc, source, new KeyExtent("tab", null, null), conf,
+    SortedKeyValueIterator<Key,Value> iter = IteratorUtil.loadIterators(IteratorScope.minc, source, new KeyExtent(Table.ID.of("tab"), null, null), conf,
         new DefaultIteratorEnvironment(conf));
     iter.seek(new Range(), EMPTY_COL_FAMS, false);
 
     assertTrue(iter.hasTop());
-    assertTrue(iter.getTopKey().equals(MultiIteratorTest.nk(1, 0)));
+    assertTrue(iter.getTopKey().equals(MultiIteratorTest.newKey(1, 0)));
     assertTrue(iter.getTopValue().toString().equals("4"));
 
     iter.next();
 
     assertTrue(iter.hasTop());
-    assertTrue(iter.getTopKey().equals(MultiIteratorTest.nk(2, 0)));
+    assertTrue(iter.getTopKey().equals(MultiIteratorTest.newKey(2, 0)));
     assertTrue(iter.getTopValue().toString().equals("9"));
 
     iter.next();
@@ -165,23 +166,23 @@ public class IteratorUtilTest {
 
     TreeMap<Key,Value> tm = new TreeMap<>();
 
-    MultiIteratorTest.nkv(tm, 1, 0, false, "1");
-    MultiIteratorTest.nkv(tm, 2, 0, false, "2");
+    MultiIteratorTest.newKeyValue(tm, 1, 0, false, "1");
+    MultiIteratorTest.newKeyValue(tm, 2, 0, false, "2");
 
     SortedMapIterator source = new SortedMapIterator(tm);
 
-    SortedKeyValueIterator<Key,Value> iter = IteratorUtil.loadIterators(IteratorScope.majc, source, new KeyExtent("tab", null, null), conf,
+    SortedKeyValueIterator<Key,Value> iter = IteratorUtil.loadIterators(IteratorScope.majc, source, new KeyExtent(Table.ID.of("tab"), null, null), conf,
         new DefaultIteratorEnvironment(conf));
     iter.seek(new Range(), EMPTY_COL_FAMS, false);
 
     assertTrue(iter.hasTop());
-    assertTrue(iter.getTopKey().equals(MultiIteratorTest.nk(1, 0)));
+    assertTrue(iter.getTopKey().equals(MultiIteratorTest.newKey(1, 0)));
     assertTrue(iter.getTopValue().toString().equals("1"));
 
     iter.next();
 
     assertTrue(iter.hasTop());
-    assertTrue(iter.getTopKey().equals(MultiIteratorTest.nk(2, 0)));
+    assertTrue(iter.getTopKey().equals(MultiIteratorTest.newKey(2, 0)));
     assertTrue(iter.getTopValue().toString().equals("2"));
 
     iter.next();
@@ -198,26 +199,26 @@ public class IteratorUtilTest {
 
     TreeMap<Key,Value> tm = new TreeMap<>();
 
-    MultiIteratorTest.nkv(tm, 1, 0, false, "1");
-    MultiIteratorTest.nkv(tm, 2, 0, false, "2");
+    MultiIteratorTest.newKeyValue(tm, 1, 0, false, "1");
+    MultiIteratorTest.newKeyValue(tm, 2, 0, false, "2");
 
     SortedMapIterator source = new SortedMapIterator(tm);
 
     conf.set(Property.TABLE_ITERATOR_PREFIX + IteratorScope.minc.name() + ".addIter", "2," + AddingIter.class.getName());
     conf.set(Property.TABLE_ITERATOR_PREFIX + IteratorScope.minc.name() + ".sqIter", "1," + SquaringIter.class.getName());
 
-    SortedKeyValueIterator<Key,Value> iter = IteratorUtil.loadIterators(IteratorScope.minc, source, new KeyExtent("tab", null, null), conf,
+    SortedKeyValueIterator<Key,Value> iter = IteratorUtil.loadIterators(IteratorScope.minc, source, new KeyExtent(Table.ID.of("tab"), null, null), conf,
         new DefaultIteratorEnvironment(conf));
     iter.seek(new Range(), EMPTY_COL_FAMS, false);
 
     assertTrue(iter.hasTop());
-    assertTrue(iter.getTopKey().equals(MultiIteratorTest.nk(1, 0)));
+    assertTrue(iter.getTopKey().equals(MultiIteratorTest.newKey(1, 0)));
     assertTrue(iter.getTopValue().toString().equals("2"));
 
     iter.next();
 
     assertTrue(iter.hasTop());
-    assertTrue(iter.getTopKey().equals(MultiIteratorTest.nk(2, 0)));
+    assertTrue(iter.getTopKey().equals(MultiIteratorTest.newKey(2, 0)));
     assertTrue(iter.getTopValue().toString().equals("5"));
 
     iter.next();
@@ -237,23 +238,23 @@ public class IteratorUtilTest {
 
     TreeMap<Key,Value> tm = new TreeMap<>();
 
-    MultiIteratorTest.nkv(tm, 1, 0, false, "1");
-    MultiIteratorTest.nkv(tm, 2, 0, false, "2");
+    MultiIteratorTest.newKeyValue(tm, 1, 0, false, "1");
+    MultiIteratorTest.newKeyValue(tm, 2, 0, false, "2");
 
     SortedMapIterator source = new SortedMapIterator(tm);
 
-    SortedKeyValueIterator<Key,Value> iter = IteratorUtil.loadIterators(IteratorScope.minc, source, new KeyExtent("tab", null, null), conf,
+    SortedKeyValueIterator<Key,Value> iter = IteratorUtil.loadIterators(IteratorScope.minc, source, new KeyExtent(Table.ID.of("tab"), null, null), conf,
         new DefaultIteratorEnvironment(conf));
     iter.seek(new Range(), EMPTY_COL_FAMS, false);
 
     assertTrue(iter.hasTop());
-    assertTrue(iter.getTopKey().equals(MultiIteratorTest.nk(1, 0)));
+    assertTrue(iter.getTopKey().equals(MultiIteratorTest.newKey(1, 0)));
     assertTrue(iter.getTopValue().toString().equals("64"));
 
     iter.next();
 
     assertTrue(iter.hasTop());
-    assertTrue(iter.getTopKey().equals(MultiIteratorTest.nk(2, 0)));
+    assertTrue(iter.getTopKey().equals(MultiIteratorTest.newKey(2, 0)));
     assertTrue(iter.getTopValue().toString().equals("81"));
 
     iter.next();
@@ -273,17 +274,17 @@ public class IteratorUtilTest {
 
     TreeMap<Key,Value> tm = new TreeMap<>();
 
-    MultiIteratorTest.nkv(tm, 1, 850, false, "1");
-    MultiIteratorTest.nkv(tm, 2, 950, false, "2");
+    MultiIteratorTest.newKeyValue(tm, 1, 850, false, "1");
+    MultiIteratorTest.newKeyValue(tm, 2, 950, false, "2");
 
     SortedMapIterator source = new SortedMapIterator(tm);
 
-    SortedKeyValueIterator<Key,Value> iter = IteratorUtil.loadIterators(IteratorScope.minc, source, new KeyExtent("tab", null, null), conf,
+    SortedKeyValueIterator<Key,Value> iter = IteratorUtil.loadIterators(IteratorScope.minc, source, new KeyExtent(Table.ID.of("tab"), null, null), conf,
         new DefaultIteratorEnvironment(conf));
     iter.seek(new Range(), EMPTY_COL_FAMS, false);
 
     assertTrue(iter.hasTop());
-    assertTrue(iter.getTopKey().equals(MultiIteratorTest.nk(2, 950)));
+    assertTrue(iter.getTopKey().equals(MultiIteratorTest.newKey(2, 950)));
     iter.next();
 
     assertFalse(iter.hasTop());

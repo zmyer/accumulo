@@ -28,6 +28,7 @@ import java.util.Map;
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.ClientConfiguration;
+import org.apache.accumulo.core.client.ConnectionInfo;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.ZooKeeperInstance;
@@ -136,8 +137,8 @@ public class ConfigurableMacBase extends AccumuloITBase {
     cfg.setNativeLibPaths(nativePathInDevTree, nativePathInMapReduce);
     cfg.setProperty(Property.GC_FILE_ARCHIVE, Boolean.TRUE.toString());
     Configuration coreSite = new Configuration(false);
-    configure(cfg, coreSite);
     cfg.setProperty(Property.TSERV_NATIVEMAP_ENABLED, Boolean.TRUE.toString());
+    configure(cfg, coreSite);
     configureForEnvironment(cfg, getClass(), getSslDir(baseDir));
     cluster = new MiniAccumuloClusterImpl(cfg);
     if (coreSite.size() > 0) {
@@ -172,6 +173,10 @@ public class ConfigurableMacBase extends AccumuloITBase {
     return getCluster().getConnector("root", new PasswordToken(ROOT_PASSWORD));
   }
 
+  protected ConnectionInfo getConnectionInfo() {
+    return Connector.builder().forInstance(getCluster().getInstanceName(), getCluster().getZooKeepers()).usingPassword("root", ROOT_PASSWORD).info();
+  }
+
   protected Process exec(Class<?> clazz, String... args) throws IOException {
     return getCluster().exec(clazz, args);
   }
@@ -182,7 +187,7 @@ public class ConfigurableMacBase extends AccumuloITBase {
   }
 
   protected ClientConfiguration getClientConfig() throws Exception {
-    return new ClientConfiguration(getCluster().getConfig().getClientConfFile());
+    return ClientConfiguration.fromFile(getCluster().getConfig().getClientConfFile());
   }
 
 }

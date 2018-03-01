@@ -23,7 +23,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
 
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
+import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.impl.KeyExtent;
 import org.apache.accumulo.core.master.thrift.TabletServerStatus;
 import org.apache.accumulo.core.rpc.ThriftUtil;
@@ -32,7 +34,7 @@ import org.apache.accumulo.core.tabletserver.thrift.TabletClientService.Client;
 import org.apache.accumulo.core.tabletserver.thrift.TabletStats;
 import org.apache.accumulo.core.trace.Tracer;
 import org.apache.accumulo.server.AccumuloServerContext;
-import org.apache.accumulo.server.conf.ServerConfiguration;
+import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ServerConfigurationFactory;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.master.state.TabletMigration;
@@ -43,24 +45,37 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.Iterables;
 
+/**
+ * This class is responsible for managing the distribution of tablets throughout an Accumulo cluster. In most cases, users will want a balancer implementation
+ * which ensures a uniform distribution of tablets, so that no individual tablet server is handling significantly more work than any other.
+ *
+ * <p>
+ * Implementations may wish to store configuration in Accumulo's system configuration using the {@link Property#GENERAL_ARBITRARY_PROP_PREFIX}. They may also
+ * benefit from using per-table configuration using {@link Property#TABLE_ARBITRARY_PROP_PREFIX}.
+ */
 public abstract class TabletBalancer {
 
   private static final Logger log = LoggerFactory.getLogger(TabletBalancer.class);
-
-  protected ServerConfigurationFactory configuration;
 
   protected AccumuloServerContext context;
 
   /**
    * Initialize the TabletBalancer. This gives the balancer the opportunity to read the configuration.
+   *
+   * @deprecated since 2.0.0; use {@link #init(AccumuloServerContext)} instead.
    */
+  @Deprecated
   public void init(ServerConfigurationFactory conf) {
-    context = new AccumuloServerContext(conf);
-    configuration = conf;
+    init(new AccumuloServerContext(HdfsZooInstance.getInstance(), conf));
   }
 
-  public void init(ServerConfiguration conf) {
-    init((ServerConfigurationFactory) conf);
+  /**
+   * Initialize the TabletBalancer. This gives the balancer the opportunity to read the configuration.
+   *
+   * @since 2.0.0
+   */
+  public void init(AccumuloServerContext context) {
+    this.context = context;
   }
 
   /**
@@ -147,9 +162,9 @@ public abstract class TabletBalancer {
 
     @Override
     public void run() {
-      balancerLog.warn("Not balancing due to " + migrations.size() + " outstanding migrations.");
+      balancerLog.warn("Not balancing due to {} outstanding migrations.", migrations.size());
       /* TODO ACCUMULO-2938 redact key extents in this output to avoid leaking protected information. */
-      balancerLog.debug("Sample up to 10 outstanding migrations: " + Iterables.limit(migrations, 10));
+      balancerLog.debug("Sample up to 10 outstanding migrations: {}", Iterables.limit(migrations, 10));
     }
   }
 
@@ -190,13 +205,13 @@ public abstract class TabletBalancer {
    * @throws TException
    *           any other problem
    */
-  public List<TabletStats> getOnlineTabletsForTable(TServerInstance tserver, String tableId) throws ThriftSecurityException, TException {
-    log.debug("Scanning tablet server " + tserver + " for table " + tableId);
+  public List<TabletStats> getOnlineTabletsForTable(TServerInstance tserver, Table.ID tableId) throws ThriftSecurityException, TException {
+    log.debug("Scanning tablet server {} for table {}", tserver, tableId);
     Client client = ThriftUtil.getClient(new TabletClientService.Client.Factory(), tserver.getLocation(), context);
     try {
-      return client.getTabletStats(Tracer.traceInfo(), context.rpcCreds(), tableId);
+      return client.getTabletStats(Tracer.traceInfo(), context.rpcCreds(), tableId.canonicalID());
     } catch (TTransportException e) {
-      log.error("Unable to connect to " + tserver + ": " + e);
+      log.error("Unable to connect to {}: ", tserver, e);
     } finally {
       ThriftUtil.returnClient(client);
     }
@@ -216,23 +231,23 @@ public abstract class TabletBalancer {
     List<TabletMigration> result = new ArrayList<>(migrations.size());
     for (TabletMigration m : migrations) {
       if (m.tablet == null) {
-        log.warn("Balancer gave back a null tablet " + m);
+        log.warn("Balancer gave back a null tablet {}", m);
         continue;
       }
       if (m.newServer == null) {
-        log.warn("Balancer did not set the destination " + m);
+        log.warn("Balancer did not set the destination {}", m);
         continue;
       }
       if (m.oldServer == null) {
-        log.warn("Balancer did not set the source " + m);
+        log.warn("Balancer did not set the source {}", m);
         continue;
       }
       if (!current.contains(m.oldServer)) {
-        log.warn("Balancer wants to move a tablet from a server that is not current: " + m);
+        log.warn("Balancer wants to move a tablet from a server that is not current: {}", m);
         continue;
       }
       if (!current.contains(m.newServer)) {
-        log.warn("Balancer wants to move a tablet to a server that is not current: " + m);
+        log.warn("Balancer wants to move a tablet to a server that is not current: {}", m);
         continue;
       }
       result.add(m);

@@ -31,7 +31,7 @@ import org.apache.accumulo.core.client.impl.ClientContext;
 import org.apache.accumulo.core.client.impl.Credentials;
 import org.apache.accumulo.core.client.impl.ThriftTransportKey;
 import org.apache.accumulo.core.client.impl.ThriftTransportPool;
-import org.apache.accumulo.core.conf.DefaultConfiguration;
+import org.apache.accumulo.core.conf.ConfigurationTypeHelper;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.util.ServerServices;
 import org.apache.accumulo.core.util.ServerServices.Service;
@@ -57,7 +57,7 @@ public class TransportCachingIT extends AccumuloClusterHarness {
     Instance instance = conn.getInstance();
     ClientConfiguration clientConf = cluster.getClientConfig();
     ClientContext context = new ClientContext(instance, new Credentials(getAdminPrincipal(), getAdminToken()), clientConf);
-    long rpcTimeout = DefaultConfiguration.getTimeInMillis(Property.GENERAL_RPC_TIMEOUT.getDefaultValue());
+    long rpcTimeout = ConfigurationTypeHelper.getTimeInMillis(Property.GENERAL_RPC_TIMEOUT.getDefaultValue());
 
     // create list of servers
     ArrayList<ThriftTransportKey> servers = new ArrayList<>();
@@ -81,7 +81,7 @@ public class TransportCachingIT extends AccumuloClusterHarness {
         // Get a transport (cached or not)
         first = pool.getAnyTransport(servers, true).getSecond();
       } catch (TTransportException e) {
-        log.warn("Failed to obtain transport to " + servers);
+        log.warn("Failed to obtain transport to {}", servers);
       }
     }
 
@@ -95,7 +95,7 @@ public class TransportCachingIT extends AccumuloClusterHarness {
         // Get a cached transport (should be the first)
         second = pool.getAnyTransport(servers, true).getSecond();
       } catch (TTransportException e) {
-        log.warn("Failed obtain 2nd transport to " + servers);
+        log.warn("Failed obtain 2nd transport to {}", servers);
       }
     }
 
@@ -110,7 +110,7 @@ public class TransportCachingIT extends AccumuloClusterHarness {
         // Get a non-cached transport
         third = pool.getAnyTransport(servers, false).getSecond();
       } catch (TTransportException e) {
-        log.warn("Failed obtain 2nd transport to " + servers);
+        log.warn("Failed obtain 2nd transport to {}", servers);
       }
     }
 

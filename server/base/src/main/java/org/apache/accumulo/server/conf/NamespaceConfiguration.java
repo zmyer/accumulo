@@ -21,7 +21,7 @@ import java.util.function.Predicate;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.Instance;
-import org.apache.accumulo.core.client.impl.Namespaces;
+import org.apache.accumulo.core.client.impl.Namespace;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.ConfigurationObserver;
 import org.apache.accumulo.core.conf.ObservableConfiguration;
@@ -29,7 +29,6 @@ import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
 import org.apache.accumulo.fate.zookeeper.ZooCache;
 import org.apache.accumulo.fate.zookeeper.ZooCacheFactory;
-import org.apache.accumulo.server.client.HdfsZooInstance;
 import org.apache.accumulo.server.conf.ZooCachePropertyAccessor.PropCacheKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,18 +40,16 @@ public class NamespaceConfiguration extends ObservableConfiguration {
 
   private final AccumuloConfiguration parent;
   private ZooCachePropertyAccessor propCacheAccessor = null;
-  protected String namespaceId = null;
+  protected Namespace.ID namespaceId = null;
   protected Instance inst = null;
   private ZooCacheFactory zcf = new ZooCacheFactory();
+  private final String path;
 
-  public NamespaceConfiguration(String namespaceId, AccumuloConfiguration parent) {
-    this(namespaceId, HdfsZooInstance.getInstance(), parent);
-  }
-
-  public NamespaceConfiguration(String namespaceId, Instance inst, AccumuloConfiguration parent) {
+  public NamespaceConfiguration(Namespace.ID namespaceId, Instance inst, AccumuloConfiguration parent) {
     this.inst = inst;
     this.parent = parent;
     this.namespaceId = namespaceId;
+    this.path = ZooUtil.getRoot(inst.getInstanceID()) + Constants.ZNAMESPACES + "/" + namespaceId + Constants.ZNAMESPACE_CONF;
   }
 
   /**
@@ -71,7 +68,7 @@ public class NamespaceConfiguration extends ObservableConfiguration {
   private synchronized ZooCachePropertyAccessor getPropCacheAccessor() {
     if (propCacheAccessor == null) {
       synchronized (propCaches) {
-        PropCacheKey key = new PropCacheKey(inst.getInstanceID(), namespaceId);
+        PropCacheKey key = new PropCacheKey(inst.getInstanceID(), namespaceId.canonicalID());
         ZooCache propCache = propCaches.get(key);
         if (propCache == null) {
           propCache = zcf.getZooCache(inst.getZooKeepers(), inst.getZooKeepersSessionTimeOut(), new NamespaceConfWatcher(inst));
@@ -84,14 +81,14 @@ public class NamespaceConfiguration extends ObservableConfiguration {
   }
 
   private String getPath() {
-    return ZooUtil.getRoot(inst.getInstanceID()) + Constants.ZNAMESPACES + "/" + getNamespaceId() + Constants.ZNAMESPACE_CONF;
+    return path;
   }
 
   @Override
   public String get(Property property) {
     String key = property.getKey();
     AccumuloConfiguration getParent;
-    if (!(namespaceId.equals(Namespaces.ACCUMULO_NAMESPACE_ID) && isIteratorOrConstraint(key))) {
+    if (!(namespaceId.equals(Namespace.ID.ACCUMULO) && isIteratorOrConstraint(key))) {
       getParent = parent;
     } else {
       // ignore iterators from parent if system namespace
@@ -100,35 +97,18 @@ public class NamespaceConfiguration extends ObservableConfiguration {
     return getPropCacheAccessor().get(property, getPath(), getParent);
   }
 
-  private class SystemNamespaceFilter implements Predicate<String> {
-
-    private Predicate<String> userFilter;
-
-    SystemNamespaceFilter(Predicate<String> userFilter) {
-      this.userFilter = userFilter;
-    }
-
-    @Override
-    public boolean test(String key) {
-      if (isIteratorOrConstraint(key))
-        return false;
-      return userFilter.test(key);
-    }
-
-  }
-
   @Override
   public void getProperties(Map<String,String> props, Predicate<String> filter) {
     Predicate<String> parentFilter = filter;
     // exclude system iterators/constraints from the system namespace
     // so they don't affect the metadata or root tables.
-    if (getNamespaceId().equals(Namespaces.ACCUMULO_NAMESPACE_ID))
-      parentFilter = new SystemNamespaceFilter(filter);
+    if (getNamespaceId().equals(Namespace.ID.ACCUMULO))
+      parentFilter = key -> isIteratorOrConstraint(key) ? false : filter.test(key);
 
     getPropCacheAccessor().getProperties(props, getPath(), filter, parent, parentFilter);
   }
 
-  protected String getNamespaceId() {
+  protected Namespace.ID getNamespaceId() {
     return namespaceId;
   }
 
@@ -165,5 +145,10 @@ public class NamespaceConfiguration extends ObservableConfiguration {
     // Else, if the accessor is null, we could lock and double-check
     // to see if it happened to be created so we could invalidate its cache
     // but I don't see much benefit coming from that extra check.
+  }
+
+  @Override
+  public long getUpdateCount() {
+    return parent.getUpdateCount() + getPropCacheAccessor().getZooCache().getUpdateCount();
   }
 }

@@ -28,16 +28,20 @@ import java.util.Set;
 
 import org.apache.accumulo.core.Constants;
 import org.apache.accumulo.core.client.impl.ClientContext;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.data.impl.KeyExtent;
 import org.apache.accumulo.core.master.thrift.TabletServerStatus;
 import org.apache.accumulo.core.rpc.ThriftUtil;
 import org.apache.accumulo.core.tabletserver.thrift.NotServingTabletException;
+import org.apache.accumulo.core.tabletserver.thrift.TUnloadTabletGoal;
 import org.apache.accumulo.core.tabletserver.thrift.TabletClientService;
 import org.apache.accumulo.core.trace.Tracer;
 import org.apache.accumulo.core.util.AddressUtil;
+import org.apache.accumulo.core.util.HostAndPort;
 import org.apache.accumulo.core.util.ServerServices;
 import org.apache.accumulo.core.zookeeper.ZooUtil;
+import org.apache.accumulo.fate.zookeeper.ZooCache.ZcStat;
 import org.apache.accumulo.server.master.state.TServerInstance;
 import org.apache.accumulo.server.util.Halt;
 import org.apache.accumulo.server.util.time.SimpleTimer;
@@ -52,12 +56,8 @@ import org.apache.zookeeper.KeeperException.NoNodeException;
 import org.apache.zookeeper.KeeperException.NotEmptyException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
-import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.google.common.net.HostAndPort;
-import org.apache.accumulo.core.tabletserver.thrift.TUnloadTabletGoal;
 
 public class LiveTServerSet implements Watcher {
 
@@ -89,12 +89,9 @@ public class LiveTServerSet implements Watcher {
     public void assignTablet(ZooLock lock, KeyExtent extent) throws TException {
       if (extent.isMeta()) {
         // see ACCUMULO-3597
-        TTransport transport = ThriftUtil.createTransport(address, context);
-        try {
+        try (TTransport transport = ThriftUtil.createTransport(address, context)) {
           TabletClientService.Client client = ThriftUtil.createClient(new TabletClientService.Client.Factory(), transport);
           loadTablet(client, lock, extent);
-        } finally {
-          transport.close();
         }
       } else {
         TabletClientService.Client client = ThriftUtil.getClient(new TabletClientService.Client.Factory(), address, context);
@@ -120,11 +117,17 @@ public class LiveTServerSet implements Watcher {
       if (usePooledConnection == true)
         throw new UnsupportedOperationException();
 
+      long start = System.currentTimeMillis();
+
       TTransport transport = ThriftUtil.createTransport(address, context);
 
       try {
         TabletClientService.Client client = ThriftUtil.createClient(new TabletClientService.Client.Factory(), transport);
-        return client.getTabletServerStatus(Tracer.traceInfo(), context.rpcCreds());
+        TabletServerStatus status = client.getTabletServerStatus(Tracer.traceInfo(), context.rpcCreds());
+        if (status != null) {
+          status.setResponseTime(System.currentTimeMillis() - start);
+        }
+        return status;
       } finally {
         if (transport != null)
           transport.close();
@@ -149,10 +152,10 @@ public class LiveTServerSet implements Watcher {
       }
     }
 
-    public void flush(ZooLock lock, String tableId, byte[] startRow, byte[] endRow) throws TException {
+    public void flush(ZooLock lock, Table.ID tableId, byte[] startRow, byte[] endRow) throws TException {
       TabletClientService.Client client = ThriftUtil.getClient(new TabletClientService.Client.Factory(), address, context);
       try {
-        client.flush(Tracer.traceInfo(), context.rpcCreds(), lockString(lock), tableId, startRow == null ? null : ByteBuffer.wrap(startRow),
+        client.flush(Tracer.traceInfo(), context.rpcCreds(), lockString(lock), tableId.canonicalID(), startRow == null ? null : ByteBuffer.wrap(startRow),
             endRow == null ? null : ByteBuffer.wrap(endRow));
       } finally {
         ThriftUtil.returnClient(client);
@@ -264,10 +267,8 @@ public class LiveTServerSet implements Watcher {
   private void deleteServerNode(String serverNode) throws InterruptedException, KeeperException {
     try {
       ZooReaderWriter.getInstance().delete(serverNode, -1);
-    } catch (NotEmptyException ex) {
+    } catch (NotEmptyException | NoNodeException ex) {
       // race condition: tserver created the lock after our last check; we'll see it at the next check
-    } catch (NoNodeException nne) {
-      // someone else deleted it
     }
   }
 
@@ -277,7 +278,7 @@ public class LiveTServerSet implements Watcher {
     TServerInfo info = current.get(zPath);
 
     final String lockPath = path + "/" + zPath;
-    Stat stat = new Stat();
+    ZcStat stat = new ZcStat();
     byte[] lockData = ZooLock.getLockData(getZooCache(), lockPath, stat);
 
     if (lockData == null) {
@@ -408,7 +409,7 @@ public class LiveTServerSet implements Watcher {
     current.remove(zPath);
     currentInstances.remove(server);
 
-    log.info("Removing zookeeper lock for " + server);
+    log.info("Removing zookeeper lock for {}", server);
     String fullpath = ZooUtil.getRoot(context.getInstance()) + Constants.ZTSERVERS + "/" + zPath;
     try {
       ZooReaderWriter.getInstance().recursiveDelete(fullpath, SKIP);

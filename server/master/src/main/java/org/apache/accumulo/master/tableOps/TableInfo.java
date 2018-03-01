@@ -19,13 +19,16 @@ package org.apache.accumulo.master.tableOps;
 import java.io.Serializable;
 import java.util.Map;
 
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.client.impl.Table;
+
 class TableInfo implements Serializable {
 
   private static final long serialVersionUID = 1L;
 
   String tableName;
-  String tableId;
-  String namespaceId;
+  Table.ID tableId;
+  Namespace.ID namespaceId;
   char timeType;
   String user;
 

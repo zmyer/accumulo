@@ -16,12 +16,44 @@
  */
 package org.apache.accumulo.server.fs;
 
+import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.volume.Volume;
 
 /**
  * Helper used by {@link VolumeManager}s to select from a set of {@link Volume} URIs. N.B. implemenations must be threadsafe. VolumeChooser.equals will be used
  * for internal caching.
+ *
+ * <p>
+ * Implementations may wish to store configuration in Accumulo's system configuration using the {@link Property#GENERAL_ARBITRARY_PROP_PREFIX}. They may also
+ * benefit from using per-table configuration using {@link Property#TABLE_ARBITRARY_PROP_PREFIX}.
  */
 public interface VolumeChooser {
-  String choose(VolumeChooserEnvironment env, String[] options);
+
+  /**
+   * Choose a volume from the provided options.
+   *
+   * @param env
+   *          the server environment provided by the calling framework
+   * @param options
+   *          the list of volumes to choose from
+   * @return one of the options
+   * @throws VolumeChooserException
+   *           if there is an error choosing (this is a RuntimeException); this does not preclude other RuntimeExceptions from occurring
+   */
+  String choose(VolumeChooserEnvironment env, String[] options) throws VolumeChooserException;
+
+  public static class VolumeChooserException extends RuntimeException {
+
+    private static final long serialVersionUID = 1L;
+
+    public VolumeChooserException(String message) {
+      super(message);
+    }
+
+    public VolumeChooserException(String message, Throwable cause) {
+      super(message, cause);
+    }
+
+  }
+
 }

@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.accumulo.core.client.IteratorSetting;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.data.impl.KeyExtent;
@@ -57,8 +58,8 @@ public class TabletStateChangeIterator extends SkippingIterator {
   private static final Logger log = LoggerFactory.getLogger(TabletStateChangeIterator.class);
 
   private Set<TServerInstance> current;
-  private Set<String> onlineTables;
-  private Map<String,MergeInfo> merges;
+  private Set<Table.ID> onlineTables;
+  private Map<Table.ID,MergeInfo> merges;
   private boolean debug = false;
   private Set<KeyExtent> migrations;
   private MasterState masterState = MasterState.NORMAL;
@@ -67,7 +68,7 @@ public class TabletStateChangeIterator extends SkippingIterator {
   public void init(SortedKeyValueIterator<Key,Value> source, Map<String,String> options, IteratorEnvironment env) throws IOException {
     super.init(source, options, env);
     current = parseServers(options.get(SERVERS_OPTION));
-    onlineTables = parseTables(options.get(TABLES_OPTION));
+    onlineTables = parseTableIDs(options.get(TABLES_OPTION));
     merges = parseMerges(options.get(MERGES_OPTION));
     debug = options.containsKey(DEBUG_OPTION);
     migrations = parseMigrations(options.get(MIGRATIONS_OPTION));
@@ -75,7 +76,7 @@ public class TabletStateChangeIterator extends SkippingIterator {
       masterState = MasterState.valueOf(options.get(MASTER_STATE_OPTION));
     } catch (Exception ex) {
       if (options.get(MASTER_STATE_OPTION) != null) {
-        log.error("Unable to decode masterState " + options.get(MASTER_STATE_OPTION));
+        log.error("Unable to decode masterState {}", options.get(MASTER_STATE_OPTION));
       }
     }
     Set<TServerInstance> shuttingDown = parseServers(options.get(SHUTTING_DOWN_OPTION));
@@ -103,12 +104,12 @@ public class TabletStateChangeIterator extends SkippingIterator {
     }
   }
 
-  private Set<String> parseTables(String tables) {
-    if (tables == null)
+  private Set<Table.ID> parseTableIDs(String tableIDs) {
+    if (tableIDs == null)
       return null;
-    Set<String> result = new HashSet<>();
-    for (String table : tables.split(","))
-      result.add(table);
+    Set<Table.ID> result = new HashSet<>();
+    for (String tableID : tableIDs.split(","))
+      result.add(Table.ID.of(tableID));
     return result;
   }
 
@@ -130,11 +131,11 @@ public class TabletStateChangeIterator extends SkippingIterator {
     return result;
   }
 
-  private Map<String,MergeInfo> parseMerges(String merges) {
+  private Map<Table.ID,MergeInfo> parseMerges(String merges) {
     if (merges == null)
       return null;
     try {
-      Map<String,MergeInfo> result = new HashMap<>();
+      Map<Table.ID,MergeInfo> result = new HashMap<>();
       DataInputBuffer buffer = new DataInputBuffer();
       byte[] data = Base64.getDecoder().decode(merges);
       buffer.reset(data, data.length);
@@ -182,7 +183,7 @@ public class TabletStateChangeIterator extends SkippingIterator {
       boolean shouldBeOnline = onlineTables.contains(tls.extent.getTableId());
 
       if (debug) {
-        log.debug(tls.extent + " is " + tls.getState(current) + " and should be " + (shouldBeOnline ? "on" : "off") + "line");
+        log.debug("{} is {} and should be {} line", tls.extent, tls.getState(current), (shouldBeOnline ? "on" : "off"));
       }
       switch (tls.getState(current)) {
         case ASSIGNED:
@@ -221,7 +222,7 @@ public class TabletStateChangeIterator extends SkippingIterator {
     }
   }
 
-  public static void setOnlineTables(IteratorSetting cfg, Set<String> onlineTables) {
+  public static void setOnlineTables(IteratorSetting cfg, Set<Table.ID> onlineTables) {
     if (onlineTables != null)
       cfg.addOption(TABLES_OPTION, Joiner.on(",").join(onlineTables));
   }

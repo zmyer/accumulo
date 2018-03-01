@@ -29,14 +29,14 @@ import org.apache.accumulo.core.client.BatchWriterConfig;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.impl.AccumuloServerException;
-import org.apache.accumulo.core.client.impl.Namespaces;
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.conf.ConfigurationTypeHelper;
 import org.apache.accumulo.core.conf.Property;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.data.Mutation;
 import org.apache.accumulo.core.data.Value;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.minicluster.impl.MiniAccumuloConfigImpl;
-import org.apache.accumulo.server.conf.TableConfiguration;
 import org.apache.accumulo.test.functional.ConfigurableMacBase;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
@@ -78,7 +78,7 @@ public class LargeSplitRowIT extends ConfigurableMacBase {
 
     // Create a split point that is too large to be an end row and fill it with all 'm'
     SortedSet<Text> partitionKeys = new TreeSet<>();
-    byte data[] = new byte[(int) (TableConfiguration.getMemoryInBytes(Property.TABLE_MAX_END_ROW_SIZE.getDefaultValue()) + 2)];
+    byte data[] = new byte[(int) (ConfigurationTypeHelper.getFixedMemoryAsBytes(Property.TABLE_MAX_END_ROW_SIZE.getDefaultValue()) + 2)];
     for (int i = 0; i < data.length; i++) {
       data[i] = 'm';
     }
@@ -92,15 +92,16 @@ public class LargeSplitRowIT extends ConfigurableMacBase {
 
     // Make sure that the information that was written to the table before we tried to add the split point is still correct
     int counter = 0;
-    final Scanner scanner = conn.createScanner(tableName, Authorizations.EMPTY);
-    for (Entry<Key,Value> entry : scanner) {
-      counter++;
-      Key k = entry.getKey();
-      Assert.assertEquals("Row", k.getRow().toString());
-      Assert.assertEquals("cf", k.getColumnFamily().toString());
-      Assert.assertEquals("cq", k.getColumnQualifier().toString());
-      Assert.assertEquals("value", entry.getValue().toString());
+    try (Scanner scanner = conn.createScanner(tableName, Authorizations.EMPTY)) {
+      for (Entry<Key,Value> entry : scanner) {
+        counter++;
+        Key k = entry.getKey();
+        Assert.assertEquals("Row", k.getRow().toString());
+        Assert.assertEquals("cf", k.getColumnFamily().toString());
+        Assert.assertEquals("cq", k.getColumnQualifier().toString());
+        Assert.assertEquals("value", entry.getValue().toString());
 
+      }
     }
     // Make sure there is only one line in the table
     Assert.assertEquals(1, counter);
@@ -123,7 +124,7 @@ public class LargeSplitRowIT extends ConfigurableMacBase {
     // Create a BatchWriter and key for a table entry that is longer than the allowed size for an end row
     // Fill this key with all m's except the last spot
     BatchWriter batchWriter = conn.createBatchWriter(tableName, new BatchWriterConfig());
-    byte data[] = new byte[(int) (TableConfiguration.getMemoryInBytes(Property.TABLE_MAX_END_ROW_SIZE.getDefaultValue()) + 2)];
+    byte data[] = new byte[(int) (ConfigurationTypeHelper.getFixedMemoryAsBytes(Property.TABLE_MAX_END_ROW_SIZE.getDefaultValue()) + 2)];
     for (int i = 0; i < data.length - 1; i++) {
       data[i] = (byte) 'm';
     }
@@ -142,16 +143,17 @@ public class LargeSplitRowIT extends ConfigurableMacBase {
 
     // Make sure all the data that was put in the table is still correct
     int count = 0;
-    final Scanner scanner = conn.createScanner(tableName, Authorizations.EMPTY);
-    for (Entry<Key,Value> entry : scanner) {
-      Key k = entry.getKey();
-      data[data.length - 1] = (byte) count;
-      String expected = new String(data, UTF_8);
-      Assert.assertEquals(expected, k.getRow().toString());
-      Assert.assertEquals("cf", k.getColumnFamily().toString());
-      Assert.assertEquals("cq", k.getColumnQualifier().toString());
-      Assert.assertEquals("value", entry.getValue().toString());
-      count++;
+    try (Scanner scanner = conn.createScanner(tableName, Authorizations.EMPTY)) {
+      for (Entry<Key,Value> entry : scanner) {
+        Key k = entry.getKey();
+        data[data.length - 1] = (byte) count;
+        String expected = new String(data, UTF_8);
+        Assert.assertEquals(expected, k.getRow().toString());
+        Assert.assertEquals("cf", k.getColumnFamily().toString());
+        Assert.assertEquals("cq", k.getColumnQualifier().toString());
+        Assert.assertEquals("value", entry.getValue().toString());
+        count++;
+      }
     }
     Assert.assertEquals(250, count);
 
@@ -187,7 +189,7 @@ public class LargeSplitRowIT extends ConfigurableMacBase {
 
     while (iterator.hasNext()) {
       String curr = iterator.next();
-      if (!curr.startsWith(Namespaces.ACCUMULO_NAMESPACE + ".")) {
+      if (!curr.startsWith(Namespace.ACCUMULO + ".")) {
         tableName = curr;
       }
     }
@@ -233,7 +235,7 @@ public class LargeSplitRowIT extends ConfigurableMacBase {
 
     // Create a BatchWriter and key for a table entry that is longer than the allowed size for an end row
     BatchWriter batchWriter = conn.createBatchWriter(tableName, new BatchWriterConfig());
-    byte data[] = new byte[(int) (TableConfiguration.getMemoryInBytes(Property.TABLE_MAX_END_ROW_SIZE.getDefaultValue()) + 2)];
+    byte data[] = new byte[(int) (ConfigurationTypeHelper.getFixedMemoryAsBytes(Property.TABLE_MAX_END_ROW_SIZE.getDefaultValue()) + 2)];
 
     // Fill key with all j's except for last spot which alternates through 1 through 10 for every j value
     for (int j = 0; j < max; j += spacing) {
@@ -256,31 +258,31 @@ public class LargeSplitRowIT extends ConfigurableMacBase {
     // Make sure all the data that was put in the table is still correct
     int count = 0;
     int extra = 10;
-    final Scanner scanner = conn.createScanner(tableName, Authorizations.EMPTY);
-    for (Entry<Key,Value> entry : scanner) {
-      if (extra == 10) {
-        extra = 0;
-        for (int i = 0; i < data.length - 1; i++) {
-          data[i] = (byte) count;
-        }
-        count += spacing;
+    try (Scanner scanner = conn.createScanner(tableName, Authorizations.EMPTY)) {
+      for (Entry<Key,Value> entry : scanner) {
+        if (extra == 10) {
+          extra = 0;
+          for (int i = 0; i < data.length - 1; i++) {
+            data[i] = (byte) count;
+          }
+          count += spacing;
 
+        }
+        Key k = entry.getKey();
+        data[data.length - 1] = (byte) extra;
+        String expected = new String(data, UTF_8);
+        Assert.assertEquals(expected, k.getRow().toString());
+        Assert.assertEquals("cf", k.getColumnFamily().toString());
+        Assert.assertEquals("cq", k.getColumnQualifier().toString());
+        Assert.assertEquals("value", entry.getValue().toString());
+        extra++;
       }
-      Key k = entry.getKey();
-      data[data.length - 1] = (byte) extra;
-      String expected = new String(data, UTF_8);
-      Assert.assertEquals(expected, k.getRow().toString());
-      Assert.assertEquals("cf", k.getColumnFamily().toString());
-      Assert.assertEquals("cq", k.getColumnQualifier().toString());
-      Assert.assertEquals("value", entry.getValue().toString());
-      extra++;
     }
     Assert.assertEquals(10, extra);
     Assert.assertEquals(max, count);
 
     // Make sure no splits occured in the table
     Assert.assertEquals(0, conn.tableOperations().listSplits(tableName).size());
-
   }
 
 }

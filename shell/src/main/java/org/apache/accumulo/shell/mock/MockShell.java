@@ -23,8 +23,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-import jline.console.ConsoleReader;
-
 import org.apache.accumulo.core.client.AccumuloException;
 import org.apache.accumulo.core.client.AccumuloSecurityException;
 import org.apache.accumulo.core.client.TableNotFoundException;
@@ -32,6 +30,8 @@ import org.apache.accumulo.shell.Shell;
 import org.apache.accumulo.shell.ShellOptionsJC;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.vfs2.FileSystemException;
+
+import jline.console.ConsoleReader;
 
 /**
  * An Accumulo Shell implementation that allows a developer to attach an InputStream and Writer to the Shell for testing purposes.
@@ -88,13 +88,10 @@ public class MockShell extends Shell {
       printInfo();
 
     if (execFile != null) {
-      java.util.Scanner scanner = new java.util.Scanner(execFile, UTF_8.name());
-      try {
+      try (java.util.Scanner scanner = new java.util.Scanner(execFile, UTF_8.name())) {
         while (scanner.hasNextLine() && !hasExited()) {
           execCommand(scanner.nextLine(), true, isVerbose());
         }
-      } finally {
-        scanner.close();
       }
     } else if (execCommand != null) {
       for (String command : execCommand.split("\n")) {

@@ -29,6 +29,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 
 import org.apache.accumulo.core.client.Instance;
+import org.apache.accumulo.core.client.impl.Namespace;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
 import org.apache.accumulo.core.conf.DefaultConfiguration;
 import org.apache.accumulo.core.conf.SiteConfiguration;
@@ -92,12 +93,6 @@ public class ServerConfigurationFactoryTest {
   }
 
   @Test
-  public void testGetInstance() {
-    ready();
-    assertSame(instance, scf.getInstance());
-  }
-
-  @Test
   public void testGetDefaultConfiguration() {
     ready();
     DefaultConfiguration c = scf.getDefaultConfiguration();
@@ -115,11 +110,11 @@ public class ServerConfigurationFactoryTest {
   public void testGetConfiguration() {
     mockInstanceForConfig();
     ready();
-    AccumuloConfiguration c = scf.getConfiguration();
+    AccumuloConfiguration c = scf.getSystemConfiguration();
     assertNotNull(c);
   }
 
-  private static final String NSID = "NAMESPACE";
+  private static final Namespace.ID NSID = Namespace.ID.of("NAMESPACE");
 
   @Test
   public void testGetNamespaceConfiguration() {

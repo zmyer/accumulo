@@ -22,6 +22,7 @@ import static org.apache.accumulo.core.conf.Property.INSTANCE_ZK_TIMEOUT;
 import static org.apache.accumulo.core.conf.Property.TSERV_WALOG_MAX_SIZE;
 import static org.apache.accumulo.core.conf.Property.TSERV_WAL_REPLICATION;
 import static org.apache.accumulo.core.security.Authorizations.EMPTY;
+import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 import static org.apache.accumulo.minicluster.ServerType.GARBAGE_COLLECTOR;
 import static org.apache.accumulo.minicluster.ServerType.TABLET_SERVER;
 import static org.junit.Assert.assertEquals;
@@ -65,7 +66,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.google.common.collect.Iterators;
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 public class WALSunnyDayIT extends ConfigurableMacBase {
 
@@ -141,7 +141,7 @@ public class WALSunnyDayIT extends ConfigurableMacBase {
     Map<KeyExtent,List<String>> markers = getRecoveryMarkers(c);
     // log.debug("markers " + markers);
     assertEquals("one tablet should have markers", 1, markers.keySet().size());
-    assertEquals("tableId of the keyExtent should be 1", "1", markers.keySet().iterator().next().getTableId());
+    assertEquals("tableId of the keyExtent should be 1", "1", markers.keySet().iterator().next().getTableId().canonicalID());
 
     // put some data in the WAL
     assertEquals(0, cluster.exec(SetGoalState.class, "NORMAL").waitFor());
@@ -158,10 +158,10 @@ public class WALSunnyDayIT extends ConfigurableMacBase {
   }
 
   private void verifySomeData(Connector c, String tableName, int expected) throws Exception {
-    Scanner scan = c.createScanner(tableName, EMPTY);
-    int result = Iterators.size(scan.iterator());
-    scan.close();
-    Assert.assertEquals(expected, result);
+    try (Scanner scan = c.createScanner(tableName, EMPTY)) {
+      int result = Iterators.size(scan.iterator());
+      Assert.assertEquals(expected, result);
+    }
   }
 
   private void writeSomeData(Connector conn, String tableName, int row, int col) throws Exception {
@@ -189,28 +189,28 @@ public class WALSunnyDayIT extends ConfigurableMacBase {
 
   private Map<KeyExtent,List<String>> getRecoveryMarkers(Connector c) throws Exception {
     Map<KeyExtent,List<String>> result = new HashMap<>();
-    Scanner root = c.createScanner(RootTable.NAME, EMPTY);
-    root.setRange(TabletsSection.getRange());
-    root.fetchColumnFamily(TabletsSection.LogColumnFamily.NAME);
-    TabletColumnFamily.PREV_ROW_COLUMN.fetch(root);
+    try (Scanner root = c.createScanner(RootTable.NAME, EMPTY); Scanner meta = c.createScanner(MetadataTable.NAME, EMPTY)) {
+      root.setRange(TabletsSection.getRange());
+      root.fetchColumnFamily(TabletsSection.LogColumnFamily.NAME);
+      TabletColumnFamily.PREV_ROW_COLUMN.fetch(root);
 
-    Scanner meta = c.createScanner(MetadataTable.NAME, EMPTY);
-    meta.setRange(TabletsSection.getRange());
-    meta.fetchColumnFamily(TabletsSection.LogColumnFamily.NAME);
-    TabletColumnFamily.PREV_ROW_COLUMN.fetch(meta);
+      meta.setRange(TabletsSection.getRange());
+      meta.fetchColumnFamily(TabletsSection.LogColumnFamily.NAME);
+      TabletColumnFamily.PREV_ROW_COLUMN.fetch(meta);
 
-    List<String> logs = new ArrayList<>();
-    Iterator<Entry<Key,Value>> both = Iterators.concat(root.iterator(), meta.iterator());
-    while (both.hasNext()) {
-      Entry<Key,Value> entry = both.next();
-      Key key = entry.getKey();
-      if (key.getColumnFamily().equals(TabletsSection.LogColumnFamily.NAME)) {
-        logs.add(key.getColumnQualifier().toString());
-      }
-      if (TabletColumnFamily.PREV_ROW_COLUMN.hasColumns(key) && !logs.isEmpty()) {
-        KeyExtent extent = new KeyExtent(key.getRow(), entry.getValue());
-        result.put(extent, logs);
-        logs = new ArrayList<>();
+      List<String> logs = new ArrayList<>();
+      Iterator<Entry<Key,Value>> both = Iterators.concat(root.iterator(), meta.iterator());
+      while (both.hasNext()) {
+        Entry<Key,Value> entry = both.next();
+        Key key = entry.getKey();
+        if (key.getColumnFamily().equals(TabletsSection.LogColumnFamily.NAME)) {
+          logs.add(key.getColumnQualifier().toString());
+        }
+        if (TabletColumnFamily.PREV_ROW_COLUMN.hasColumns(key) && !logs.isEmpty()) {
+          KeyExtent extent = new KeyExtent(key.getRow(), entry.getValue());
+          result.put(extent, logs);
+          logs = new ArrayList<>();
+        }
       }
     }
     return result;

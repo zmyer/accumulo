@@ -18,13 +18,20 @@
 package org.apache.accumulo.tserver.compaction.strategies;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import org.apache.accumulo.core.client.summary.SummarizerConfiguration;
+import org.apache.accumulo.core.client.summary.Summary;
 import org.apache.accumulo.core.compaction.CompactionSettings;
 import org.apache.accumulo.core.conf.ConfigurationCopy;
 import org.apache.accumulo.core.file.FileSKVIterator;
@@ -39,27 +46,135 @@ import org.apache.hadoop.fs.Path;
 
 public class ConfigurableCompactionStrategy extends CompactionStrategy {
 
-  private static interface Test {
-    boolean shouldCompact(Entry<FileRef,DataFileValue> file, MajorCompactionRequest request);
+  private static abstract class Test {
+    // Do any work that blocks in this method. This method is not always called before shouldCompact(). See CompactionStrategy javadocs.
+    void gatherInformation(MajorCompactionRequest request) {}
+
+    abstract boolean shouldCompact(Entry<FileRef,DataFileValue> file, MajorCompactionRequest request);
   }
 
-  private static class NoSampleTest implements Test {
+  private static class SummaryTest extends Test {
+
+    private boolean selectExtraSummary;
+    private boolean selectNoSummary;
+
+    private boolean summaryConfigured = true;
+    private boolean gatherCalled = false;
+
+    // files that do not need compaction
+    private Set<FileRef> okFiles = Collections.emptySet();
+
+    public SummaryTest(boolean selectExtraSummary, boolean selectNoSummary) {
+      this.selectExtraSummary = selectExtraSummary;
+      this.selectNoSummary = selectNoSummary;
+    }
+
+    @Override
+    void gatherInformation(MajorCompactionRequest request) {
+      gatherCalled = true;
+      Collection<SummarizerConfiguration> configs = SummarizerConfiguration.fromTableProperties(request.getTableProperties());
+      if (configs.size() == 0) {
+        summaryConfigured = false;
+      } else {
+        Set<SummarizerConfiguration> configsSet = configs instanceof Set ? (Set<SummarizerConfiguration>) configs : new HashSet<>(configs);
+        okFiles = new HashSet<>();
+
+        for (FileRef fref : request.getFiles().keySet()) {
+          Map<SummarizerConfiguration,Summary> sMap = new HashMap<>();
+          Collection<Summary> summaries;
+          try {
+            summaries = request.getSummaries(Collections.singletonList(fref), conf -> configsSet.contains(conf));
+          } catch (IOException e) {
+            throw new UncheckedIOException(e);
+          }
+          for (Summary summary : summaries) {
+            sMap.put(summary.getSummarizerConfiguration(), summary);
+          }
+
+          boolean needsCompaction = false;
+          for (SummarizerConfiguration sc : configs) {
+            Summary summary = sMap.get(sc);
+
+            if (summary == null && selectNoSummary) {
+              needsCompaction = true;
+              break;
+            }
+
+            if (summary != null && summary.getFileStatistics().getExtra() > 0 && selectExtraSummary) {
+              needsCompaction = true;
+              break;
+            }
+          }
+
+          if (!needsCompaction) {
+            okFiles.add(fref);
+          }
+        }
+      }
+
+    }
 
     @Override
     public boolean shouldCompact(Entry<FileRef,DataFileValue> file, MajorCompactionRequest request) {
-      try (FileSKVIterator reader = request.openReader(file.getKey())) {
-        SamplerConfigurationImpl sc = SamplerConfigurationImpl.newSamplerConfig(new ConfigurationCopy(request.getTableProperties()));
-        if (sc == null) {
-          return false;
-        }
-        return reader.getSample(sc) == null;
-      } catch (IOException e) {
-        throw new RuntimeException(e);
+
+      if (!gatherCalled) {
+        Collection<SummarizerConfiguration> configs = SummarizerConfiguration.fromTableProperties(request.getTableProperties());
+        return configs.size() > 0;
       }
+
+      if (!summaryConfigured) {
+        return false;
+      }
+
+      // Its possible the set of files could change between gather and now. So this will default to compacting any files that are unknown.
+      return !okFiles.contains(file.getKey());
     }
   }
 
-  private static abstract class FileSizeTest implements Test {
+  private static class NoSampleTest extends Test {
+
+    private Set<FileRef> filesWithSample = Collections.emptySet();
+    private boolean samplingConfigured = true;
+    private boolean gatherCalled = false;
+
+    @Override
+    void gatherInformation(MajorCompactionRequest request) {
+      gatherCalled = true;
+
+      SamplerConfigurationImpl sc = SamplerConfigurationImpl.newSamplerConfig(new ConfigurationCopy(request.getTableProperties()));
+      if (sc == null) {
+        samplingConfigured = false;
+      } else {
+        filesWithSample = new HashSet<>();
+        for (FileRef fref : request.getFiles().keySet()) {
+          try (FileSKVIterator reader = request.openReader(fref)) {
+            if (reader.getSample(sc) != null) {
+              filesWithSample.add(fref);
+            }
+          } catch (IOException e) {
+            throw new UncheckedIOException(e);
+          }
+        }
+      }
+    }
+
+    @Override
+    public boolean shouldCompact(Entry<FileRef,DataFileValue> file, MajorCompactionRequest request) {
+
+      if (!gatherCalled) {
+        SamplerConfigurationImpl sc = SamplerConfigurationImpl.newSamplerConfig(new ConfigurationCopy(request.getTableProperties()));
+        return sc != null;
+      }
+
+      if (!samplingConfigured) {
+        return false;
+      }
+
+      return !filesWithSample.contains(file.getKey());
+    }
+  }
+
+  private static abstract class FileSizeTest extends Test {
     private final long esize;
 
     private FileSizeTest(String s) {
@@ -74,7 +189,7 @@ public class ConfigurableCompactionStrategy extends CompactionStrategy {
     public abstract boolean shouldCompact(long fsize, long esize);
   }
 
-  private static abstract class PatternPathTest implements Test {
+  private static abstract class PatternPathTest extends Test {
     private Pattern pattern;
 
     private PatternPathTest(String p) {
@@ -98,10 +213,19 @@ public class ConfigurableCompactionStrategy extends CompactionStrategy {
   @Override
   public void init(Map<String,String> options) {
 
+    boolean selectNoSummary = false;
+    boolean selectExtraSummary = false;
+
     Set<Entry<String,String>> es = options.entrySet();
     for (Entry<String,String> entry : es) {
 
       switch (CompactionSettings.valueOf(entry.getKey())) {
+        case SF_EXTRA_SUMMARY:
+          selectExtraSummary = true;
+          break;
+        case SF_NO_SUMMARY:
+          selectNoSummary = true;
+          break;
         case SF_NO_SAMPLE:
           tests.add(new NoSampleTest());
           break;
@@ -159,6 +283,11 @@ public class ConfigurableCompactionStrategy extends CompactionStrategy {
           throw new IllegalArgumentException("Unknown option " + entry.getKey());
       }
     }
+
+    if (selectExtraSummary || selectNoSummary) {
+      tests.add(new SummaryTest(selectExtraSummary, selectNoSummary));
+    }
+
   }
 
   private List<FileRef> getFilesToCompact(MajorCompactionRequest request) {
@@ -185,6 +314,14 @@ public class ConfigurableCompactionStrategy extends CompactionStrategy {
   @Override
   public boolean shouldCompact(MajorCompactionRequest request) throws IOException {
     return getFilesToCompact(request).size() >= minFiles;
+  }
+
+  @Override
+  public void gatherInformation(MajorCompactionRequest request) throws IOException {
+    // Gather any information that requires blocking calls here. This is only called before getCompactionPlan() is called.
+    for (Test test : tests) {
+      test.gatherInformation(request);
+    }
   }
 
   @Override

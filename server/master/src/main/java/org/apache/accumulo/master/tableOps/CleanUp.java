@@ -25,6 +25,8 @@ import org.apache.accumulo.core.client.BatchScanner;
 import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.IteratorSetting;
 import org.apache.accumulo.core.client.Scanner;
+import org.apache.accumulo.core.client.impl.Namespace;
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.impl.thrift.ThriftSecurityException;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
@@ -61,7 +63,8 @@ class CleanUp extends MasterRepo {
 
   private static final long serialVersionUID = 1L;
 
-  private String tableId, namespaceId;
+  private Table.ID tableId;
+  private Namespace.ID namespaceId;
 
   private long creationTime;
 
@@ -76,7 +79,7 @@ class CleanUp extends MasterRepo {
 
   }
 
-  public CleanUp(String tableId, String namespaceId) {
+  public CleanUp(Table.ID tableId, Namespace.ID namespaceId) {
     this.tableId = tableId;
     this.namespaceId = namespaceId;
     creationTime = System.currentTimeMillis();
@@ -120,8 +123,7 @@ class CleanUp extends MasterRepo {
     try {
       // look for other tables that references this table's files
       Connector conn = master.getConnector();
-      BatchScanner bs = conn.createBatchScanner(MetadataTable.NAME, Authorizations.EMPTY, 8);
-      try {
+      try (BatchScanner bs = conn.createBatchScanner(MetadataTable.NAME, Authorizations.EMPTY, 8)) {
         Range allTables = MetadataSchema.TabletsSection.getRange();
         Range tableRange = MetadataSchema.TabletsSection.getRange(tableId);
         Range beforeTable = new Range(allTables.getStartKey(), true, tableRange.getStartKey(), false);
@@ -137,8 +139,6 @@ class CleanUp extends MasterRepo {
             refCount++;
           }
         }
-      } finally {
-        bs.close();
       }
 
     } catch (Exception e) {
@@ -174,7 +174,7 @@ class CleanUp extends MasterRepo {
           if (archiveFiles) {
             archiveFile(fs, dir, tableId);
           } else {
-            fs.deleteRecursively(new Path(dir, tableId));
+            fs.deleteRecursively(new Path(dir, tableId.canonicalID()));
           }
         }
       } catch (IOException e) {
@@ -212,8 +212,8 @@ class CleanUp extends MasterRepo {
     return null;
   }
 
-  protected void archiveFile(VolumeManager fs, String dir, String tableId) throws IOException {
-    Path tableDirectory = new Path(dir, tableId);
+  protected void archiveFile(VolumeManager fs, String dir, Table.ID tableId) throws IOException {
+    Path tableDirectory = new Path(dir, tableId.canonicalID());
     Volume v = fs.getVolumeByPath(tableDirectory);
     String basePath = v.getBasePath();
 

@@ -18,8 +18,8 @@ package org.apache.accumulo.server.fs;
 
 import java.io.IOException;
 import java.util.Collection;
-import java.util.Optional;
 
+import org.apache.accumulo.core.client.impl.Table;
 import org.apache.accumulo.core.data.Key;
 import org.apache.accumulo.core.volume.Volume;
 import org.apache.accumulo.server.ServerConstants;
@@ -28,6 +28,7 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.permission.FsPermission;
 
 /**
  * A wrapper around multiple hadoop FileSystem objects, which are assumed to be different volumes. This also concentrates a bunch of meta-operations like
@@ -125,6 +126,9 @@ public interface VolumeManager {
   boolean mkdirs(Path directory) throws IOException;
 
   // forward to the appropriate FileSystem object
+  boolean mkdirs(Path path, FsPermission permission) throws IOException;
+
+  // forward to the appropriate FileSystem object
   FSDataInputStream open(Path path) throws IOException;
 
   // forward to the appropriate FileSystem object, throws an exception if the paths are in different volumes
@@ -148,7 +152,7 @@ public interface VolumeManager {
   // Convert a file or directory metadata reference into a path
   Path getFullPath(Key key);
 
-  Path getFullPath(String tableId, String path);
+  Path getFullPath(Table.ID tableId, String path);
 
   // Given a filename, figure out the qualified path given multiple namespaces
   Path getFullPath(FileType fileType, String fileName) throws IOException;
@@ -157,7 +161,7 @@ public interface VolumeManager {
   ContentSummary getContentSummary(Path dir) throws IOException;
 
   // decide on which of the given locations to create a new file
-  String choose(Optional<String> tableId, String[] options);
+  String choose(VolumeChooserEnvironment env, String[] options);
 
   /**
    * Fetch the default Volume
