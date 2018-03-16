@@ -19,6 +19,8 @@ package org.apache.accumulo.core.client.impl;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static java.util.stream.Collectors.toSet;
 import static org.apache.accumulo.fate.util.UtilWaitThread.sleepUninterruptibly;
 
@@ -129,7 +131,7 @@ import org.apache.accumulo.core.util.OpTimer;
 import org.apache.accumulo.core.util.Pair;
 import org.apache.accumulo.core.util.TextUtil;
 import org.apache.accumulo.core.volume.VolumeConfiguration;
-import org.apache.accumulo.fate.zookeeper.Retry;
+import org.apache.accumulo.fate.util.Retry;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -458,6 +460,9 @@ public class TableOperationsImpl extends TableOperationsHelper {
           if (excep instanceof TableNotFoundException) {
             TableNotFoundException tnfe = (TableNotFoundException) excep;
             throw new TableNotFoundException(tableId.canonicalID(), tableName, "Table not found by background thread", tnfe);
+          } else if (excep instanceof TableOfflineException) {
+            log.debug("TableOfflineException occurred in background thread. Throwing new exception", excep);
+            throw new TableOfflineException(context.getInstance(), tableId.canonicalID());
           } else if (excep instanceof AccumuloSecurityException) {
             // base == background accumulo security exception
             AccumuloSecurityException base = (AccumuloSecurityException) excep;
@@ -1134,14 +1139,17 @@ public class TableOperationsImpl extends TableOperationsHelper {
 
       if (Tables.getTableState(context.getInstance(), tableId) != expectedState) {
         Tables.clearCache(context.getInstance());
-        if (Tables.getTableState(context.getInstance(), tableId) != expectedState) {
+        TableState currentState = Tables.getTableState(context.getInstance(), tableId);
+        if (currentState != expectedState) {
           if (!Tables.exists(context.getInstance(), tableId))
             throw new TableDeletedException(tableId.canonicalID());
+          if (currentState == TableState.DELETING)
+            throw new TableNotFoundException(tableId.canonicalID(), "", "Table is being deleted.");
           throw new AccumuloException("Unexpected table state " + tableId + " " + Tables.getTableState(context.getInstance(), tableId) + " != " + expectedState);
         }
       }
 
-      Range range = new KeyExtent(tableId, null, null).toMetadataRange();
+      Range range;
       if (startRow == null || lastRow == null)
         range = new KeyExtent(tableId, null, null).toMetadataRange();
       else
@@ -1646,7 +1654,8 @@ public class TableOperationsImpl extends TableOperationsHelper {
 
     locator.invalidateCache();
 
-    Retry retry = new Retry(Long.MAX_VALUE, 100, 100, 2000);
+    Retry retry = Retry.builder().infiniteRetries().retryAfter(100, MILLISECONDS).incrementBy(100, MILLISECONDS).maxWait(2, SECONDS)
+        .logInterval(3, TimeUnit.MINUTES).createRetry();
 
     while (!locator.binRanges(context, rangeList, binnedRanges).isEmpty()) {
 
