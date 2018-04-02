@@ -122,7 +122,7 @@ public class LogSorter {
             // Creating a 'finished' marker will cause recovery to proceed normally and the
             // empty file will be correctly ignored downstream.
             fs.mkdirs(new Path(destPath));
-            writeBuffer(destPath, Collections.<Pair<LogFileKey,LogFileValue>> emptyList(), part++);
+            writeBuffer(destPath, Collections.emptyList(), part++);
             fs.create(SortedLogState.getFinishedMarkerPath(destPath)).close();
             return;
           }
@@ -179,9 +179,8 @@ public class LogSorter {
       Path path = new Path(destPath, String.format("part-r-%05d", part));
       FileSystem ns = fs.getVolumeByPath(path).getFileSystem();
 
-      MapFile.Writer output = new MapFile.Writer(ns.getConf(), ns.makeQualified(path), MapFile.Writer.keyClass(LogFileKey.class),
-          MapFile.Writer.valueClass(LogFileValue.class));
-      try {
+      try (MapFile.Writer output = new MapFile.Writer(ns.getConf(), ns.makeQualified(path), MapFile.Writer.keyClass(LogFileKey.class),
+          MapFile.Writer.valueClass(LogFileValue.class))) {
         Collections.sort(buffer, new Comparator<Pair<LogFileKey,LogFileValue>>() {
           @Override
           public int compare(Pair<LogFileKey,LogFileValue> o1, Pair<LogFileKey,LogFileValue> o2) {
@@ -191,8 +190,6 @@ public class LogSorter {
         for (Pair<LogFileKey,LogFileValue> entry : buffer) {
           output.append(entry.getFirst(), entry.getSecond());
         }
-      } finally {
-        output.close();
       }
     }
 
@@ -223,6 +220,7 @@ public class LogSorter {
 
   ThreadPoolExecutor threadPool;
   private final Instance instance;
+  private double walBlockSize;
 
   public LogSorter(Instance instance, VolumeManager fs, AccumuloConfiguration conf) {
     this.instance = instance;
@@ -230,6 +228,7 @@ public class LogSorter {
     this.conf = conf;
     int threadPoolSize = conf.getCount(Property.TSERV_RECOVERY_MAX_CONCURRENT);
     this.threadPool = new SimpleThreadPool(threadPoolSize, this.getClass().getName());
+    this.walBlockSize = DfsLogger.getWalBlockSize(conf);
   }
 
   public void startWatchingForRecoveryLogs(ThreadPoolExecutor distWorkQThreadPool) throws KeeperException, InterruptedException {
@@ -244,7 +243,9 @@ public class LogSorter {
         RecoveryStatus status = new RecoveryStatus();
         status.name = entries.getKey();
         try {
-          status.progress = entries.getValue().getBytesCopied() / (0.0 + conf.getAsBytes(Property.TSERV_WALOG_MAX_SIZE));
+          double progress = entries.getValue().getBytesCopied() / walBlockSize;
+          // to be sure progress does not exceed 100%
+          status.progress = Math.min(progress, 99.9);
         } catch (IOException ex) {
           log.warn("Error getting bytes read");
         }
